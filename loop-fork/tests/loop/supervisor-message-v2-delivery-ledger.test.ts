@@ -1,5 +1,6 @@
 import {
   afterAll,
+  afterEach,
   beforeAll,
   describe,
   expect,
@@ -11,6 +12,7 @@ import { SQL } from "bun";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
 import {
   deriveSupervisorMessageV2DeliveryId,
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
@@ -47,6 +49,8 @@ const FOREIGN: TrustedSupervisorMessageV2Scope = {
 setDefaultTimeout(20_000);
 
 const OWNER = "v2-dispatcher:ledger-postgres-test";
+/** This ledger's deployment discriminator (its host's task queue). */
+const DEPLOYMENT = "ledger-test-queue";
 const NOW = new Date("2026-10-05T12:00:00.000Z");
 
 const inputFor = (
@@ -76,7 +80,8 @@ const envelopeFor = (
 ): SupervisorMessageV2DeliveryEnvelope => {
   const workflowId = deriveSupervisorMessageV2WorkflowId(
     scope,
-    input.dedupeKey
+    input.dedupeKey,
+    DEPLOYMENT
   );
   const deliveryId = deriveSupervisorMessageV2DeliveryId(
     scope,
@@ -183,12 +188,21 @@ const opened: { close(): Promise<void> }[] = [];
 beforeAll(async () => {
   postgres = await DisposablePostgres.create();
   ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { deployment: DEPLOYMENT }
   );
   await ledger.migrate();
   raw = new SQL(postgres.databaseUrl());
   await raw.connect();
 }, 60_000);
+
+/** Each per-test ledger holds a connection pool; release it before the
+ * server's client limit. */
+afterEach(async () => {
+  for (const resource of opened.splice(0).reverse()) {
+    await resource.close().catch(() => undefined);
+  }
+});
 
 afterAll(async () => {
   for (const resource of opened.reverse()) {
@@ -211,7 +225,8 @@ const freshDatabase = async (): Promise<string> => {
 const freshLedger =
   async (): Promise<PostgresSupervisorMessageV2DeliveryLedger> => {
     const isolated = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-      await freshDatabase()
+      await freshDatabase(),
+      { deployment: DEPLOYMENT }
     );
     opened.push(isolated);
     await isolated.migrate();
@@ -242,7 +257,9 @@ const harness = async (
 };
 
 const workflowIdOf = (input: SupervisorMessageV2Input) =>
-  deriveSupervisorMessageV2WorkflowId(SCOPE, input.dedupeKey);
+  deriveSupervisorMessageV2WorkflowId(SCOPE, input.dedupeKey, DEPLOYMENT);
+const legacyWorkflowIdOf = (input: SupervisorMessageV2Input) =>
+  deriveSupervisorMessageV2LegacyWorkflowId(SCOPE, input.dedupeKey);
 
 describe("V2 delivery ledger on PostgreSQL", () => {
   test("stores a bound envelope as a JSON string scalar, which a JSON path cannot read", async () => {
@@ -283,7 +300,8 @@ describe("V2 delivery ledger on PostgreSQL", () => {
     const input = inputFor(`foreign-completion-${randomUUID()}`, 3, FOREIGN);
     const foreignWorkflowId = deriveSupervisorMessageV2WorkflowId(
       FOREIGN,
-      input.dedupeKey
+      input.dedupeKey,
+      DEPLOYMENT
     );
     await ledger.recordStartIntent(foreignWorkflowId, FOREIGN, input);
     const envelope = envelopeFor(FOREIGN, input, 1);
@@ -352,11 +370,14 @@ describe("V2 delivery ledger on PostgreSQL", () => {
     opened.push({ close: () => legacySql.close({ timeout: 0 }) });
     await legacySql.connect();
     await legacySql`CREATE TABLE loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
-    const legacy =
-      await PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl);
+    const legacy = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      { deployment: DEPLOYMENT }
+    );
     try {
       const input = inputFor(`legacy-${randomUUID()}`);
-      const workflowId = workflowIdOf(input);
+      // A table this old predates the deployment discriminator too.
+      const workflowId = legacyWorkflowIdOf(input);
       await legacySql`INSERT INTO loop_supervisor_message_v2_start_intent VALUES (${workflowId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb)`;
 
       await legacy.migrate();
@@ -541,5 +562,302 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     await coordinator.receive(SCOPE, input, "resurrected-sender-retry");
 
     expect(delivered).toEqual([]);
+  });
+});
+
+/**
+ * The workflow id format change. A pre-discriminator host recorded intents
+ * (no `deployment` column) and started executions under the legacy id. These
+ * tests write such rows exactly as that host did and prove the new ledger and
+ * coordinator recover, acknowledge and deduplicate them under the legacy id,
+ * and never start the same message a second time under the new format.
+ */
+describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
+  /** The pre-discriminator schema and row, as the previous host wrote them. */
+  const legacyDatabase = async (input: SupervisorMessageV2Input) => {
+    const databaseUrl = await freshDatabase();
+    const legacySql = new SQL(databaseUrl);
+    opened.push({ close: () => legacySql.close({ timeout: 0 }) });
+    await legacySql.connect();
+    await legacySql`CREATE TABLE loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL, terminal_outcome TEXT CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated')), terminal_at TIMESTAMPTZ)`;
+    const legacyId = legacyWorkflowIdOf(input);
+    await legacySql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${legacyId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb)`;
+    const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      { deployment: DEPLOYMENT }
+    );
+    opened.push(upgraded);
+    await upgraded.migrate();
+    return { legacyId, legacySql, upgraded };
+  };
+
+  const coordinatorOver = (
+    ledger: PostgresSupervisorMessageV2DeliveryLedger
+  ) => {
+    const workflows = new RetentionWorkflowPort();
+    const delivered: string[] = [];
+    const coordinator = new SupervisorMessageV2Coordinator(
+      workflows,
+      {
+        deliver(envelope) {
+          delivered.push(envelope.deliveryId);
+          return Promise.resolve({ status: "accepted" });
+        },
+      },
+      ledger,
+      OWNER,
+      () => NOW
+    );
+    return { coordinator, delivered, workflows };
+  };
+
+  test("refuses a missing or invalid deployment at connect", async () => {
+    for (const options of [
+      undefined,
+      {},
+      { deployment: "" },
+      { deployment: "queue with spaces" },
+    ]) {
+      const refused = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+        postgres.databaseUrl(),
+        options as unknown as { deployment: string }
+      ).then(
+        async (opened) => {
+          await opened.close();
+          return "connected";
+        },
+        (error: Error) => error.message
+      );
+      expect(refused).toBe("V2 delivery ledger deployment is invalid");
+    }
+    expect(ledger.deployment).toBe(DEPLOYMENT);
+  });
+
+  test("migrates a pre-discriminator row in place: legacy id kept, deployment NULL, recoverable and authorized", async () => {
+    const input = inputFor(`legacy-row-${randomUUID()}`);
+    const { legacyId, legacySql, upgraded } = await legacyDatabase(input);
+    await upgraded.migrate();
+
+    const rows = await legacySql<
+      { deployment: string | null; workflow_id: string }[]
+    >`SELECT workflow_id, deployment FROM loop_supervisor_message_v2_start_intent`;
+    expect(rows).toEqual([{ deployment: null, workflow_id: legacyId }]);
+    expect(
+      (await upgraded.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([legacyId]);
+    expect((await upgraded.startIntent(legacyId, SCOPE)).dedupeKey).toBe(
+      input.dedupeKey
+    );
+    expect(
+      await upgraded.recipientAssignment({
+        recipient: input.to,
+        tenantId: SCOPE.tenantId,
+        workflowId: legacyId,
+      })
+    ).toEqual(SCOPE);
+    expect(await upgraded.workflowIdFor(SCOPE, input.dedupeKey)).toBe(legacyId);
+    // Another scope never resolves to this scope's legacy row.
+    expect(await upgraded.workflowIdFor(FOREIGN, input.dedupeKey)).toBe(
+      deriveSupervisorMessageV2WorkflowId(FOREIGN, input.dedupeKey, DEPLOYMENT)
+    );
+  });
+
+  test("a message accepted under the legacy id is not started twice across the format change", async () => {
+    const input = inputFor(`legacy-dedupe-${randomUUID()}`);
+    const { legacyId, upgraded } = await legacyDatabase(input);
+    const { coordinator, delivered, workflows } = coordinatorOver(upgraded);
+    // The previous host started the execution under the legacy id and the
+    // first delivery attempt went out.
+    workflows.start({
+      input: { input, trustedScope: SCOPE },
+      requestId: "legacy-host-start",
+      workflowId: legacyId,
+      workflowType: "supervisor-message.v2",
+    });
+    expect(await coordinator.recoverPending()).toBe(1);
+    expect(delivered).toEqual([
+      deriveSupervisorMessageV2DeliveryId(SCOPE, legacyId, 1),
+    ]);
+
+    // The sender retries the same dedupe key after the upgrade.
+    const retried = await coordinator.receive(SCOPE, input, "sender-retry");
+
+    expect(retried.workflowId).toBe(legacyId);
+    expect(retried.created).toBe(false);
+    expect(workflows.starts.filter((id) => id !== legacyId)).toEqual([]);
+    expect(delivered).toHaveLength(1);
+    expect(
+      (await upgraded.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([legacyId]);
+
+    // Acknowledged under the legacy id, and recorded on its legacy row.
+    await coordinator.claim(SCOPE, legacyId, input.to, "legacy-claim");
+    const acknowledged = await coordinator.acknowledge(
+      SCOPE,
+      legacyId,
+      input.to,
+      "legacy-ack"
+    );
+    expect(acknowledged.phase).toBe("acknowledged");
+    expect(await upgraded.terminalOutcome(legacyId, SCOPE)).toBe(
+      "acknowledged"
+    );
+  });
+
+  test("a legacy intent whose execution never started is recovered under its legacy id only", async () => {
+    const input = inputFor(`legacy-unstarted-${randomUUID()}`);
+    const { legacyId, upgraded } = await legacyDatabase(input);
+    const { coordinator, delivered, workflows } = coordinatorOver(upgraded);
+
+    await coordinator.recoverPending();
+    await coordinator.receive(SCOPE, input, "sender-retry");
+
+    expect([...new Set(workflows.starts)]).toEqual([legacyId]);
+    expect(delivered).toEqual([
+      deriveSupervisorMessageV2DeliveryId(SCOPE, legacyId, 1),
+    ]);
+  });
+
+  test("refuses to record a deployment-format intent for a dedupe key held under its legacy id", async () => {
+    const input = inputFor(`legacy-held-${randomUUID()}`);
+    const { legacySql, upgraded } = await legacyDatabase(input);
+    const current = workflowIdOf(input);
+
+    const refused = await upgraded
+      .recordStartIntent(current, SCOPE, input)
+      .then(
+        () => "recorded",
+        (error: Error) => error.message
+      );
+
+    expect(refused).toBe(
+      "V2 workflow start intent is held under its legacy workflow id"
+    );
+    const rows = await legacySql<
+      { count: number }[]
+    >`SELECT count(*)::integer AS count FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${current}`;
+    expect(rows[0]?.count).toBe(0);
+  });
+
+  test("recognises an id only with the deployment that owns its format", async () => {
+    const legacyInput = inputFor(`legacy-owner-${randomUUID()}`);
+    const { legacyId, legacySql, upgraded } = await legacyDatabase(legacyInput);
+    const input = inputFor(`current-owner-${randomUUID()}`);
+    const current = workflowIdOf(input);
+    await upgraded.recordStartIntent(current, SCOPE, input);
+    const refusal = (workflowId: string) =>
+      upgraded.startIntent(workflowId, SCOPE).then(
+        () => "read",
+        (error: Error) => error.message
+      );
+    expect(await refusal(current)).toBe("read");
+    expect(await refusal(legacyId)).toBe("read");
+
+    // A deployment-format row recorded as another deployment's, and a
+    // legacy-format row that claims a deployment, are neither of them ours.
+    await legacySql`UPDATE loop_supervisor_message_v2_start_intent SET deployment = 'another-deployment-queue'`;
+
+    for (const workflowId of [current, legacyId]) {
+      expect(await refusal(workflowId)).toBe(
+        "V2 workflow start intent has an invalid workflow binding"
+      );
+    }
+    const rerecorded = await upgraded
+      .recordStartIntent(current, SCOPE, input)
+      .then(
+        () => "recorded",
+        (error: Error) => error.message
+      );
+    expect(rerecorded).toBe(
+      "V2 workflow start intent conflicts with the existing binding"
+    );
+    expect(await upgraded.workflowIdFor(SCOPE, legacyInput.dedupeKey)).toBe(
+      workflowIdOf(legacyInput)
+    );
+    expect(await upgraded.recoverableStarts()).toEqual([]);
+
+    // A deployment-format id on a row that claims no deployment is not a
+    // legacy row: recovery refuses it rather than adopting it.
+    await legacySql`UPDATE loop_supervisor_message_v2_start_intent SET deployment = NULL WHERE workflow_id = ${current}`;
+    const swept = await upgraded.recoverableStarts().then(
+      () => "listed",
+      (error: Error) => error.message
+    );
+    expect(swept).toBe(
+      "V2 recovery ledger row has an invalid workflow binding"
+    );
+  });
+
+  test("never mints a legacy-format intent for a new message", async () => {
+    const isolated = await freshLedger();
+    const input = inputFor(`legacy-mint-${randomUUID()}`);
+
+    const refused = await isolated
+      .recordStartIntent(legacyWorkflowIdOf(input), SCOPE, input)
+      .then(
+        () => "recorded",
+        (error: Error) => error.message
+      );
+
+    expect(refused).toBe(
+      "V2 legacy workflow id has no recorded start intent; a new message uses its deployment workflow id"
+    );
+    expect(await isolated.workflowIdFor(SCOPE, input.dedupeKey)).toBe(
+      workflowIdOf(input)
+    );
+    expect(await isolated.recoverableStarts()).toEqual([]);
+  });
+
+  test("records the deployment on a new intent and keeps another deployment's intents out of recovery and authorization", async () => {
+    const databaseUrl = await freshDatabase();
+    const here = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      { deployment: DEPLOYMENT }
+    );
+    opened.push(here);
+    await here.migrate();
+    const there = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      { deployment: "another-deployment-queue" }
+    );
+    opened.push(there);
+    await there.migrate();
+    const input = inputFor(`shared-db-${randomUUID()}`);
+    const workflowId = workflowIdOf(input);
+    await here.recordStartIntent(workflowId, SCOPE, input);
+
+    const shared = new SQL(databaseUrl);
+    opened.push({ close: () => shared.close({ timeout: 0 }) });
+    await shared.connect();
+    expect(
+      await shared<
+        { deployment: string | null; workflow_id: string }[]
+      >`SELECT workflow_id, deployment FROM loop_supervisor_message_v2_start_intent`
+    ).toEqual([{ deployment: DEPLOYMENT, workflow_id: workflowId }]);
+    expect(
+      (await here.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([workflowId]);
+    expect(await there.recoverableStarts()).toEqual([]);
+    const foreignRead = await there.startIntent(workflowId, SCOPE).then(
+      () => "read",
+      (error: Error) => error.message
+    );
+    expect(foreignRead).toBe(
+      "V2 workflow start intent has an invalid workflow binding"
+    );
+    expect(
+      await there.recipientAssignment({
+        recipient: input.to,
+        tenantId: SCOPE.tenantId,
+        workflowId,
+      })
+    ).toBeUndefined();
+    // The same message on the other deployment gets its own id and intent.
+    const theirs = await there.workflowIdFor(SCOPE, input.dedupeKey);
+    expect(theirs).not.toBe(workflowId);
+    await there.recordStartIntent(theirs, SCOPE, input);
+    expect(
+      (await there.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([theirs]);
   });
 });

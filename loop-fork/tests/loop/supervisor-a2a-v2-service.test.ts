@@ -331,6 +331,7 @@ const clientFor = (
 
 test("service factory closes every acquired resource after a partial migration failure without disclosing its database URL", async () => {
   const closes: string[] = [];
+  const ledgerDeployments: string[] = [];
   const failure = await createSupervisorA2AV2Service({
     ...({
       card: {
@@ -360,7 +361,7 @@ test("service factory closes every acquired resource after a partial migration f
         nativeConnection: {},
         receipts: { record: () => undefined },
         store: {} as JsonlSupervisorThreadStore,
-        taskQueue: "partial-cleanup",
+        taskQueue: "partial-cleanup-queue",
         workflowBundle: { code: "unused" },
         workflowClient: {},
       },
@@ -381,15 +382,17 @@ test("service factory closes every acquired resource after a partial migration f
       supervisorId: RECIPIENT,
     } as const),
     dependencies: {
-      connectLedger: () =>
-        Promise.resolve({
+      connectLedger: (_databaseUrl, options) => {
+        ledgerDeployments.push(options.deployment);
+        return Promise.resolve({
           close: () => {
             closes.push("ledger");
             return Promise.resolve();
           },
           migrate: () =>
             Promise.reject(new Error("controlled second migration failure")),
-        }) as never,
+        }) as never;
+      },
       connectSessions: () =>
         Promise.reject(
           new Error("must not connect sessions after ledger migration failure")
@@ -421,9 +424,15 @@ test("service factory closes every acquired resource after a partial migration f
   );
   expect(failure).not.toContain("private-password");
   expect(closes).toEqual(["ledger", "task-store"]);
+  // The ledger mints workflow ids for the host's deployment: its task queue.
+  expect(ledgerDeployments).toEqual(["partial-cleanup-queue"]);
 });
 
-const BIND_MESSAGE = deriveSupervisorMessageV2WorkflowId(SCOPE, "bind");
+const BIND_MESSAGE = deriveSupervisorMessageV2WorkflowId(
+  SCOPE,
+  "bind",
+  "binding-wiring"
+);
 const BIND_GRAPH = deriveSupervisorMessageV2ResultGraphWorkflowId(
   KEY,
   SCOPE,
@@ -567,8 +576,11 @@ test("result binding refuses a graph not derived from the message, or a graph ta
   };
   const unconfigured = await create();
   try {
-    // The host's key reaches the durable ledger, which re-derives on its own.
-    expect(ledgerOptions).toEqual([{ resultGraphKey: KEY }]);
+    // The host's key and its deployment (task queue) reach the durable
+    // ledger, which re-derives on its own.
+    expect(ledgerOptions).toEqual([
+      { deployment: "binding-wiring", resultGraphKey: KEY },
+    ]);
     await expect(unconfigured.bindResult(SCOPE, binding)).rejects.toThrow(
       "not configured"
     );
@@ -970,7 +982,8 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     });
     const assignmentLedger =
       await PostgresSupervisorMessageV2DeliveryLedger.connect(
-        postgres.databaseUrl()
+        postgres.databaseUrl(),
+        { deployment: taskQueue }
       );
     try {
       await expect(
@@ -1256,7 +1269,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     );
     const reservation = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       postgres.databaseUrl(),
-      { resultGraphKey: KEY }
+      { deployment: taskQueue, resultGraphKey: KEY }
     );
     try {
       // The ledger refuses it on its own and records nothing for the peer.
@@ -1497,7 +1510,8 @@ test("end to end on PostgreSQL and Temporal: send a message, start its result gr
           input: resultGraphInput(artifactRef),
           messageWorkflowId: deriveSupervisorMessageV2WorkflowId(
             SCOPE,
-            "never-sent"
+            "never-sent",
+            taskQueue
           ),
           requestId: "keyed-graph-unknown",
         })

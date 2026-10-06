@@ -12,6 +12,7 @@ import {
 } from "../../src/loop/supervisor-a2a-v2-service";
 import {
   deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2Input,
@@ -53,6 +54,8 @@ const canonical = (value: unknown): string =>
       : entry
   );
 
+/** The ledger's deployment discriminator: the host's task queue. */
+const DEPLOYMENT = "result-binding";
 let postgres: DisposablePostgres;
 let raw: SQL;
 let ledger: PostgresSupervisorMessageV2DeliveryLedger;
@@ -64,7 +67,7 @@ beforeAll(async () => {
   await raw.connect();
   ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { resultGraphKey: KEY }
+    { deployment: DEPLOYMENT, resultGraphKey: KEY }
   );
   tasks = await PostgresA2ATaskStore.connect({
     databaseUrl: postgres.databaseUrl(),
@@ -113,7 +116,11 @@ const sendMessage = async (
   scope: TrustedSupervisorMessageV2Scope,
   dedupeKey: string
 ): Promise<string> => {
-  const workflowId = deriveSupervisorMessageV2WorkflowId(scope, dedupeKey);
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    scope,
+    dedupeKey,
+    DEPLOYMENT
+  );
   await ledger.recordStartIntent(workflowId, scope, inputFor(scope, dedupeKey));
   return workflowId;
 };
@@ -577,19 +584,21 @@ test("migration backfills reservations once for existing unkeyed derived binding
   const legacy = new SQL(isolated.databaseUrl());
   const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     isolated.databaseUrl(),
-    { resultGraphKey: KEY }
+    { deployment: DEPLOYMENT, resultGraphKey: KEY }
   );
   try {
     await legacy.connect();
     await createBaseTables(legacy);
     const scope = tenant("backfill");
+    // Start intents as the base revision wrote them: the legacy workflow id
+    // and no deployment column. Their bindings must keep working.
     const seed = async (dedupeKey: string) => {
-      const workflowId = deriveSupervisorMessageV2WorkflowId(scope, dedupeKey);
-      await upgraded.recordStartIntent(
-        workflowId,
+      const workflowId = deriveSupervisorMessageV2LegacyWorkflowId(
         scope,
-        inputFor(scope, dedupeKey)
+        dedupeKey
       );
+      await legacy`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json)
+        VALUES (${workflowId}, ${scope.tenantId}, ${scope.principal}, ${canonical(inputFor(scope, dedupeKey))}::jsonb)`;
       return workflowId;
     };
     const insertLegacy = (binding: SupervisorA2AResultBinding) =>
@@ -771,11 +780,13 @@ test("no new binding may name an unkeyed v2 graph, and a ledger without the key 
     )
   ).rejects.toThrow("not derived from this message");
   const keyless = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { deployment: DEPLOYMENT }
   );
   const otherKey = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
     {
+      deployment: DEPLOYMENT,
       resultGraphKey: SupervisorResultGraphKey.fromSecret(
         randomBytes(32).toString("hex")
       ),
@@ -818,11 +829,11 @@ test("two binders racing for an ended holder's graph task: exactly one takes it 
   // Separate clients, so the two transactions really run concurrently.
   const left = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { resultGraphKey: KEY }
+    { deployment: DEPLOYMENT, resultGraphKey: KEY }
   );
   const right = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { resultGraphKey: KEY }
+    { deployment: DEPLOYMENT, resultGraphKey: KEY }
   );
   try {
     // Both binders read the ended holder before either swaps it.
@@ -889,7 +900,7 @@ test("migration drops the retired per-graph-task unique index an unreleased revi
   const legacy = new SQL(isolated.databaseUrl());
   const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     isolated.databaseUrl(),
-    { resultGraphKey: KEY }
+    { deployment: DEPLOYMENT, resultGraphKey: KEY }
   );
   try {
     await legacy.connect();
@@ -920,10 +931,6 @@ test("migration drops the retired per-graph-task unique index an unreleased revi
 test("service start logs each binding that will never publish once, with ids only, and the assignment route lists its tenant's", async () => {
   const isolated = await DisposablePostgres.create();
   const legacy = new SQL(isolated.databaseUrl());
-  const seeding = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    isolated.databaseUrl(),
-    { resultGraphKey: KEY }
-  );
   const lines: string[] = [];
   let service: SupervisorA2AV2Service | undefined;
   try {
@@ -936,12 +943,14 @@ test("service start logs each binding that will never publish once, with ids onl
       dedupeKey: string,
       a2aTaskId: string
     ) => {
-      const workflowId = deriveSupervisorMessageV2WorkflowId(owner, dedupeKey);
-      await seeding.recordStartIntent(
-        workflowId,
+      // Body-chosen bindings predate the deployment discriminator: their
+      // start intents carry the legacy workflow id and no deployment.
+      const workflowId = deriveSupervisorMessageV2LegacyWorkflowId(
         owner,
-        inputFor(owner, dedupeKey)
+        dedupeKey
       );
+      await legacy`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json)
+        VALUES (${workflowId}, ${owner.tenantId}, ${owner.principal}, ${canonical(inputFor(owner, dedupeKey))}::jsonb)`;
       const binding = {
         ...bindingFor(owner, workflowId, a2aTaskId),
         graphWorkflowId: "task-graph:chosen-by-body",
@@ -990,7 +999,6 @@ test("service start logs each binding that will never publish once, with ids onl
     });
   } finally {
     await service?.close();
-    await seeding.close();
     await legacy.close();
     await isolated.close();
   }

@@ -38,6 +38,8 @@ export interface TemporalWorkflowPortOptions {
 const sleep = (durationMs: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, durationMs));
 
+type ExecutionDescription = Awaited<ReturnType<WorkflowHandle["describe"]>>;
+
 const TASK_QUEUE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 
 export class TemporalWorkflowPort implements WorkflowPort {
@@ -75,8 +77,10 @@ export class TemporalWorkflowPort implements WorkflowPort {
     });
   }
 
-  inspect(workflowId: string): Promise<WorkflowInspection> {
-    return this.#handle(workflowId).query(temporalInspectionQuery);
+  async inspect(workflowId: string): Promise<WorkflowInspection> {
+    return (await this.#owned(workflowId)).handle.query(
+      temporalInspectionQuery
+    );
   }
 
   async isClosed(workflowId: string): Promise<boolean> {
@@ -89,21 +93,20 @@ export class TemporalWorkflowPort implements WorkflowPort {
    * conflict, so no caller can read, adopt or record a foreign outcome.
    */
   async presence(workflowId: string): Promise<WorkflowPresence> {
-    let description: Awaited<ReturnType<WorkflowHandle["describe"]>>;
+    let description: ExecutionDescription;
     try {
-      description = await this.#handle(workflowId).describe();
+      ({ description } = await this.#owned(workflowId));
     } catch (error) {
       if (error instanceof WorkflowNotFoundError) {
         return "missing";
       }
       throw error;
     }
-    this.#requireOwnTaskQueue(workflowId, description.taskQueue);
     return description.status.name === "RUNNING" ? "running" : "closed";
   }
 
-  query(command: WorkflowQueryCommand): Promise<WorkflowQueryResult> {
-    return this.#handle(command.workflowId).query(
+  async query(command: WorkflowQueryCommand): Promise<WorkflowQueryResult> {
+    return (await this.#owned(command.workflowId)).handle.query(
       temporalPortQuery,
       command.name,
       command.args
@@ -143,11 +146,7 @@ export class TemporalWorkflowPort implements WorkflowPort {
         throw error;
       }
       created = false;
-      handle = this.#handle(command.workflowId);
-      this.#requireOwnTaskQueue(
-        command.workflowId,
-        (await handle.describe()).taskQueue
-      );
+      ({ handle } = await this.#owned(command.workflowId));
     }
     const snapshot = await handle.query(temporalStartSnapshotQuery);
     if (snapshot.inspection.workflowType !== command.workflowType) {
@@ -169,7 +168,7 @@ export class TemporalWorkflowPort implements WorkflowPort {
     workflowId: string,
     command: TemporalWorkflowCommand
   ): Promise<WorkflowCommandReceipt> {
-    const handle = this.#handle(workflowId);
+    const { handle } = await this.#owned(workflowId);
     const key = `${command.kind}:${command.requestId}`;
     const existing = await handle.query(temporalCommandOutcomeQuery, key);
     if (existing) {
@@ -189,8 +188,23 @@ export class TemporalWorkflowPort implements WorkflowPort {
     );
   }
 
-  #handle(workflowId: string): WorkflowHandle {
-    return this.#client.getHandle(workflowId);
+  /**
+   * The one way this port addresses an existing execution. Inspect, query,
+   * every signal path (claim, acknowledge, delivery outcomes, retry) and
+   * cancel, presence, and start's adoption of an existing ID all go through
+   * here: the execution is described, refused unless it runs on this port's
+   * task queue, and then addressed by the exact run that was verified, so an
+   * ID whose run changes in between cannot redirect the call to a foreign run.
+   */
+  async #owned(
+    workflowId: string
+  ): Promise<{ description: ExecutionDescription; handle: WorkflowHandle }> {
+    const description = await this.#client.getHandle(workflowId).describe();
+    this.#requireOwnTaskQueue(workflowId, description.taskQueue);
+    return {
+      description,
+      handle: this.#client.getHandle(workflowId, description.runId),
+    };
   }
 
   /**

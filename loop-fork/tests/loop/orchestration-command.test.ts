@@ -105,7 +105,11 @@ test("result-graph-id prints the id the server derives from the config's key env
   const lines: string[] = [];
   try {
     const scope = { principal: "principal:harness", tenantId: "tenant:local" };
-    const message = deriveSupervisorMessageV2WorkflowId(scope, "cli");
+    const message = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      "cli",
+      "loop-orchestration"
+    );
     const handled = await runOrchestrationCommand(
       ["orchestration", "result-graph-id", configPath, message],
       runner,

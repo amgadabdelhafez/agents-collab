@@ -393,6 +393,9 @@ const compositionFixture = (input: {
   /** Extra a2aV2 config fields and the environment they name. */
   a2aExtra?: Record<string, unknown>;
   envExtra?: Record<string, string>;
+  /** The deployment (task queue); a fresh one unless the test derives ids
+   * for it before the config exists. */
+  taskQueue?: string;
   tenant: string;
   thread: string;
 }) => {
@@ -423,7 +426,8 @@ const compositionFixture = (input: {
     );
   writeSeat(input.thread);
   const port = freePort();
-  const taskQueue = `orchestration-composition-${randomUUID().slice(0, 8)}`;
+  const taskQueue =
+    input.taskQueue ?? `orchestration-composition-${randomUUID().slice(0, 8)}`;
   const configPath = join(root, "orchestration.json");
   writeFileSync(
     configPath,
@@ -643,9 +647,15 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
   }
   const v2Scope = fixtureV2.expectedScope;
   const dedupeKey = `foreign-${randomUUID().slice(0, 8)}`;
-  const workflowId = deriveSupervisorMessageV2WorkflowId(v2Scope, dedupeKey);
+  // The server's ledger mints ids for its deployment, its task queue.
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    v2Scope,
+    dedupeKey,
+    fixture.taskQueue
+  );
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { deployment: fixture.taskQueue }
   );
   const errors = spyOn(console, "error");
   const stop = new AbortController();
@@ -715,9 +725,12 @@ test("the orchestration server starts a message's result graph under its keyed i
     throw new Error("missing V2 fixture");
   }
   const dedupeKey = `keyed-${randomUUID().slice(0, 8)}`;
+  // The server mints message ids for its deployment, its task queue.
+  const taskQueue = `orchestration-composition-${randomUUID().slice(0, 8)}`;
   const messageWorkflowId = deriveSupervisorMessageV2WorkflowId(
     scope,
-    dedupeKey
+    dedupeKey,
+    taskQueue
   );
   // A throwaway host secret, passed only through the environment.
   const secret = randomBytes(32).toString("hex");
@@ -742,11 +755,13 @@ test("the orchestration server starts a message's result graph under its keyed i
       resultGraphKeyEnv: "LOOP_TEST_RESULT_GRAPH_KEY",
     },
     envExtra: { LOOP_TEST_RESULT_GRAPH_KEY: secret },
+    taskQueue,
     tenant: config.tenant,
     thread: "thread-a",
   });
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { deployment: taskQueue }
   );
   const tasks = await PostgresA2ATaskStore.connect({
     databaseUrl: postgres.databaseUrl(),
@@ -886,7 +901,10 @@ test("the orchestration server starts a message's result graph under its keyed i
     ).resolves.toBeUndefined(); // this ledger holds no key: it cannot verify
     const keyed = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       postgres.databaseUrl(),
-      { resultGraphKey: SupervisorResultGraphKey.fromSecret(secret) }
+      {
+        deployment: taskQueue,
+        resultGraphKey: SupervisorResultGraphKey.fromSecret(secret),
+      }
     );
     try {
       await expect(

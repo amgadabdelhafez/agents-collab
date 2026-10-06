@@ -115,6 +115,10 @@ type SessionResource = Pick<
  * Temporal constructors below.
  */
 export interface SupervisorA2AV2ServiceDependencies {
+  /**
+   * `options.deployment` is the workflow-id discriminator: the host's Temporal
+   * task queue, the same deployment discriminator its workflow port enforces.
+   */
   connectLedger(
     databaseUrl: string,
     options: PostgresSupervisorMessageV2DeliveryLedgerOptions
@@ -626,7 +630,10 @@ export const createSupervisorA2AV2Service = async (
     });
     await taskStore.migrate();
     stage = "delivery-ledger";
+    // Workflow ids are minted for this host's deployment: the task queue its
+    // worker polls and its workflow port starts and adopts executions on.
     ledger = await dependencies.connectLedger(options.databaseUrl, {
+      deployment: options.host.taskQueue,
       resultGraphKey: options.resultGraphKey,
     });
     await ledger.migrate();

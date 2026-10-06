@@ -190,7 +190,11 @@ test("result-graph-id computes the keyed id the server derives, from the configu
   const secret = randomBytes(32).toString("hex");
   try {
     const scope = { principal: "principal:harness", tenantId: "tenant:local" };
-    const message = deriveSupervisorMessageV2WorkflowId(scope, "cli-proof");
+    const message = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      "cli-proof",
+      "loop-orchestration"
+    );
     const computed = resultGraphWorkflowIdForConfig(file.path, message, {
       LOOP_A2A_V2_RESULT_GRAPH_KEY: secret,
     });
@@ -233,7 +237,8 @@ test("result-graph-id computes the keyed id the server derives, from the configu
         keyless.path,
         deriveSupervisorMessageV2WorkflowId(
           { principal: "principal:harness", tenantId: "tenant:local" },
-          "cli-proof"
+          "cli-proof",
+          "loop-orchestration"
         ),
         {}
       )
@@ -248,7 +253,8 @@ test("result-graph-id computes the keyed id the server derives, from the configu
         v1Only.path,
         deriveSupervisorMessageV2WorkflowId(
           { principal: "principal:harness", tenantId: "tenant:local" },
-          "cli-proof"
+          "cli-proof",
+          "loop-orchestration"
         ),
         {}
       )

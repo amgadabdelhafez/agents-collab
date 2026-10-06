@@ -1,6 +1,5 @@
 import {
   deriveSupervisorMessageV2DeliveryId,
-  deriveSupervisorMessageV2WorkflowId,
   parseSupervisorMessageV2Input,
   parseSupervisorMessageV2Projection,
   parseSupervisorMessageV2State,
@@ -292,6 +291,11 @@ export interface SupervisorMessageV2DeliveryLedger {
     owner: string,
     fence: number
   ): Promise<void>;
+  /**
+   * The deployment discriminator this ledger mints workflow ids for: the
+   * Temporal task queue of the host that owns it.
+   */
+  readonly deployment: string;
   /** Whether any delivery of this scoped workflow was externally completed. */
   hasCompletedDelivery(
     workflowId: string,
@@ -331,6 +335,15 @@ export interface SupervisorMessageV2DeliveryLedger {
     workflowId: string,
     trustedScope: TrustedSupervisorMessageV2Scope
   ): Promise<SupervisorMessageV2TerminalOutcome | undefined>;
+  /**
+   * The workflow id a received message runs under. A dedupe key this scope
+   * recorded before workflow ids carried a deployment keeps its legacy id;
+   * any other resolves to this deployment's id.
+   */
+  workflowIdFor(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    dedupeKey: string
+  ): Promise<string>;
 }
 
 export interface SupervisorMessageV2ReceiveResult {
@@ -631,6 +644,17 @@ export class SupervisorMessageV2Coordinator {
     if (!DISPATCH_OWNER.test(dispatchOwner)) {
       throw new Error("SupervisorMessage V2 dispatch owner is invalid");
     }
+    // Workflow ids carry the ledger's deployment; an engine-backed port only
+    // starts and adopts executions on its task queue. A ledger minting ids
+    // for another deployment would put them on a queue that never owns them.
+    if (
+      workflows.taskQueue !== undefined &&
+      workflows.taskQueue !== ledger.deployment
+    ) {
+      throw new Error(
+        "SupervisorMessage V2 ledger deployment does not match the workflow port task queue"
+      );
+    }
     this.#delivery = delivery;
     this.#dispatchOwner = dispatchOwner;
     this.#ledger = ledger;
@@ -646,7 +670,9 @@ export class SupervisorMessageV2Coordinator {
     requestId: string
   ): Promise<SupervisorMessageV2ReceiveResult> {
     const parsed = parseSupervisorMessageV2Input(input, trustedScope);
-    const workflowId = deriveSupervisorMessageV2WorkflowId(
+    // The ledger resolves the id: a dedupe key accepted before the format
+    // change keeps its legacy id, so the message is never started twice.
+    const workflowId = await this.#ledger.workflowIdFor(
       trustedScope,
       parsed.dedupeKey
     );

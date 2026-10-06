@@ -206,4 +206,145 @@ describe("Temporal WorkflowPort execution ownership", () => {
       name: "WorkflowError",
     });
   }, 60_000);
+
+  /**
+   * Every method that addresses an existing execution goes through the one
+   * owned-handle check. Each test starts the owner's execution, has the other
+   * deployment address it by the same ID, and proves the call is refused and
+   * the owner's execution is unchanged. Values are settled first: a failing
+   * `expect(promise).rejects` stalls under this runner with Temporal open.
+   */
+  const settle = async (promise: Promise<unknown>) => {
+    try {
+      return { value: await promise };
+    } catch (error) {
+      return {
+        error: {
+          code: (error as { code?: unknown }).code,
+          name: (error as Error).name,
+        },
+      };
+    }
+  };
+  const REFUSED = { error: { code: "conflict", name: "WorkflowError" } };
+  const startOwned = async (suffix: string): Promise<string> => {
+    const workflowId = `port-owned-${suffix}-${process.pid}`;
+    await owner.start({
+      input: singleNodeGraph,
+      requestId: `start-${suffix}`,
+      workflowId,
+      workflowType: TASK_GRAPH_WORKFLOW_TYPE,
+    });
+    return workflowId;
+  };
+  const revisionOf = async (workflowId: string) =>
+    (await owner.inspect(workflowId)).revision;
+
+  test("refuses to inspect a same-ID execution owned by another task queue", async () => {
+    const workflowId = await startOwned("inspect");
+    expect(await settle(foreign.inspect(workflowId))).toEqual(REFUSED);
+    expect((await owner.inspect(workflowId)).workflowId).toBe(workflowId);
+  }, 60_000);
+
+  test("refuses to query a same-ID execution owned by another task queue", async () => {
+    const workflowId = await startOwned("query");
+    expect(await settle(foreign.query({ name: "status", workflowId }))).toEqual(
+      REFUSED
+    );
+    expect(await settle(foreign.query({ name: "ready", workflowId }))).toEqual(
+      REFUSED
+    );
+    expect((await owner.query({ name: "ready", workflowId })).value).toEqual([
+      "only",
+    ]);
+  }, 60_000);
+
+  test("refuses to signal a same-ID execution owned by another task queue and leaves it unchanged", async () => {
+    const workflowId = await startOwned("signal");
+    const before = await revisionOf(workflowId);
+    expect(
+      await settle(
+        foreign.signal({
+          name: "claim",
+          payload: { taskId: "only", workerId: "foreign-worker" },
+          requestId: "foreign-claim",
+          workflowId,
+        })
+      )
+    ).toEqual(REFUSED);
+    expect(await revisionOf(workflowId)).toBe(before);
+    // The owner can still make the very claim the foreign port was refused.
+    expect(
+      await settle(
+        owner.signal({
+          name: "claim",
+          payload: { taskId: "only", workerId: "owner-worker" },
+          requestId: "owner-claim",
+          workflowId,
+        })
+      )
+    ).toMatchObject({ value: { status: "running" } });
+  }, 60_000);
+
+  test("refuses to cancel a same-ID execution owned by another task queue and leaves it running", async () => {
+    const workflowId = await startOwned("cancel");
+    const before = await revisionOf(workflowId);
+    expect(
+      await settle(
+        foreign.cancel({
+          reason: "foreign cancel",
+          requestId: "foreign-cancel",
+          workflowId,
+        })
+      )
+    ).toEqual(REFUSED);
+    expect(await revisionOf(workflowId)).toBe(before);
+    expect((await owner.inspect(workflowId)).status).toBe("running");
+  }, 60_000);
+});
+
+describe("Temporal WorkflowPort owned handle", () => {
+  /**
+   * A fake client: `describe` reports the execution by ID, and every handle
+   * the port asks for is recorded with the run it pins. The port must use the
+   * exact run it verified, so an ID whose run changes between the ownership
+   * check and the call can never redirect a query or signal to a foreign run.
+   */
+  const fakeClient = (taskQueue: string) => {
+    const handles: { runId: string | undefined; workflowId: string }[] = [];
+    const client = {
+      getHandle(workflowId: string, runId?: string) {
+        handles.push({ runId, workflowId });
+        return {
+          describe: () =>
+            Promise.resolve({
+              runId: "verified-run",
+              status: { name: "RUNNING" },
+              taskQueue,
+            }),
+          query: () =>
+            Promise.resolve({
+              createdAt: "2026-10-05T00:00:00.000Z",
+              history: [],
+              revision: 1,
+              status: "running",
+              updatedAt: "2026-10-05T00:00:00.000Z",
+              workflowId,
+              workflowType: "fake",
+            }),
+        };
+      },
+    };
+    return { client, handles };
+  };
+
+  test("addresses the exact run whose task queue it verified", async () => {
+    const { client, handles } = fakeClient("owned-queue");
+    const port = new TemporalWorkflowPort(client, { taskQueue: "owned-queue" });
+    await port.inspect("owned-id");
+    expect(handles.at(-1)).toEqual({
+      runId: "verified-run",
+      workflowId: "owned-id",
+    });
+  });
 });
