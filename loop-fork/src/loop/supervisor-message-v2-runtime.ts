@@ -83,23 +83,63 @@ export class SupervisorMessageV2ReadinessUnavailableError extends Error {
 /** How long a readiness-store outage may defer one recipient's deliveries. */
 export const SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS = 900_000;
 /**
- * An outage nothing observed for this long is over: recovery sweeps every
- * pending delivery at least this often (its interval's ceiling), so a gap this
- * long means no delivery waited on the store, not one continuous outage.
+ * An outage nothing observed for this long, with no message it failed still
+ * waiting on its retry, is over. A delivery the outage defers stays pending
+ * and every recovery sweep (at most an hour apart) checks it again, so a gap
+ * of twice that means no delivery was waiting on the store, even if one
+ * sweep was skipped while another ran long.
  */
-const READINESS_OUTAGE_UNOBSERVED_MS = 3_600_000;
+const READINESS_OUTAGE_UNOBSERVED_MS = 7_200_000;
 /** The fixed, opaque delivery_failed reason once an outage is past its bound. */
 const READINESS_UNAVAILABLE_REASON = "session readiness store is unavailable";
+
+/** A deferral bound is whole milliseconds from one second to one day. */
+const requireDeferralBoundMs = (
+  value: number | undefined,
+  fallback: number,
+  label: string
+): number => {
+  const boundMs = value ?? fallback;
+  if (
+    !Number.isSafeInteger(boundMs) ||
+    boundMs < 1000 ||
+    boundMs > 86_400_000
+  ) {
+    throw new Error(`${label} is invalid`);
+  }
+  return boundMs;
+};
 
 /** Cumulative since process start, except the current recipient count. */
 export interface SupervisorMessageV2ReadinessOutageSnapshot {
   boundMs: number;
-  /** Deliveries left pending, without an attempt, because the store was down. */
+  /**
+   * Delivery passes left pending, without an attempt, because the store was
+   * down. One message deferred on several recovery sweeps counts each time.
+   */
   deferredDeliveries: number;
-  /** Deliveries failed as a retryable attempt because the outage outlasted the bound. */
+  /**
+   * Delivery attempts recorded as failed because the outage outlasted the
+   * bound: counted only once the failure was signalled under this
+   * dispatcher's lease, never for a verdict another dispatcher's lease, a
+   * closed message, or an already accepted delivery absorbed.
+   */
   outageFailures: number;
-  /** Recipients whose deliveries currently wait on the readiness store. */
+  /**
+   * Recipients a delivery found the store unable to answer for within the
+   * last two hours, with no answer for them since.
+   */
   recipientsDeferred: number;
+}
+
+/** One recipient's open readiness-store outage (epoch ms). */
+interface ReadinessOutage {
+  exceeded: boolean;
+  /** Until when a message this outage failed waits on its retry delay. */
+  heldUntil: number;
+  /** The last delivery that found the store unable to answer. */
+  observedAt: number;
+  since: number;
 }
 
 /**
@@ -109,32 +149,41 @@ export interface SupervisorMessageV2ReadinessOutageSnapshot {
  * starts deferring deliveries, once if it outlasts the bound, and once when the
  * store answers for that recipient again. Past the bound, each delivery is a
  * normal retryable failure that consumes an attempt, so the message's own
- * retry policy ends it. State is in memory: a restarted process starts the
+ * retry policy ends it.
+ *
+ * The bound is measured from the first failure a delivery observed for that
+ * recipient. An outage ends when the store answers for that recipient (ready
+ * or not), or when nothing can still be waiting on it: no delivery observed
+ * it for two hours (a deferred delivery is observed by every sweep) and no
+ * message it failed is still waiting on its retry delay. So a message that
+ * waits out a long retry mid-outage meets the bound measured from the
+ * outage's start, not a fresh one, while a later, separate outage gets a
+ * bound of its own and no recipient stays reported after its outage ended.
+ * Only an answer for the recipient itself ends its outage: a failure the
+ * store keeps for one recipient while it answers others is still bounded.
+ *
+ * One window remains: when a message the outage failed is cancelled or
+ * delivered elsewhere while it waits on its retry delay, and nothing asks
+ * the store about that recipient before a new outage starts within that
+ * delay, the two count as one (each failed attempt is still retryable under
+ * the message's policy). State is in memory: a restarted process starts the
  * bound again for an outage still in progress.
  */
 export class SupervisorMessageV2ReadinessOutageTracker {
   readonly #boundMs: number;
   readonly #log: (line: string) => void;
-  readonly #outages = new Map<
-    string,
-    { exceeded: boolean; observedAt: number; since: number }
-  >();
+  readonly #outages = new Map<string, ReadinessOutage>();
   #deferred = 0;
   #failed = 0;
 
   constructor(
     options: { boundMs?: number; log?: (line: string) => void } = {}
   ) {
-    const boundMs =
-      options.boundMs ?? SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS;
-    if (
-      !Number.isSafeInteger(boundMs) ||
-      boundMs < 1000 ||
-      boundMs > 86_400_000
-    ) {
-      throw new Error("V2 readiness outage bound is invalid");
-    }
-    this.#boundMs = boundMs;
+    this.#boundMs = requireDeferralBoundMs(
+      options.boundMs,
+      SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS,
+      "V2 readiness outage bound"
+    );
     this.#log = options.log ?? ((line) => console.error(line));
   }
 
@@ -142,8 +191,8 @@ export class SupervisorMessageV2ReadinessOutageTracker {
   unavailable(recipient: string, now: Date): "defer" | "fail" {
     const at = now.getTime();
     let outage = this.#outages.get(recipient);
-    if (!outage || this.#unobserved(outage, at)) {
-      outage = { exceeded: false, observedAt: at, since: at };
+    if (!outage || this.#over(outage, at)) {
+      outage = { exceeded: false, heldUntil: at, observedAt: at, since: at };
       this.#outages.set(recipient, outage);
       this.#log(
         `V2 delivery to ${recipient} deferred: ${READINESS_UNAVAILABLE_REASON}`
@@ -160,8 +209,20 @@ export class SupervisorMessageV2ReadinessOutageTracker {
         `V2 delivery to ${recipient} still deferred after ${this.#boundMs}ms: the readiness store outage now fails delivery attempts`
       );
     }
-    this.#failed += 1;
     return "fail";
+  }
+
+  /**
+   * A "fail" verdict became a delivery_failed recorded under a lease. With
+   * `retryAt`, the message waits on its retry until then: the outage stays
+   * open for it however long that is.
+   */
+  failedAttempt(recipient: string, retryAt?: Date): void {
+    this.#failed += 1;
+    const outage = this.#outages.get(recipient);
+    if (outage && retryAt) {
+      outage.heldUntil = Math.max(outage.heldUntil, retryAt.getTime());
+    }
   }
 
   /** The store answered for this recipient, ready or not: its outage is over. */
@@ -176,23 +237,184 @@ export class SupervisorMessageV2ReadinessOutageTracker {
     );
   }
 
-  snapshot(now: Date = new Date()): SupervisorMessageV2ReadinessOutageSnapshot {
+  /**
+   * The recipients a delivery found in an outage within the last two hours,
+   * sorted. Detail for authenticated callers only.
+   */
+  recipients(now: Date = new Date()): string[] {
     const at = now.getTime();
+    return [...this.#outages]
+      .filter(([, outage]) => this.#observedRecently(outage, at))
+      .map(([recipient]) => recipient)
+      .sort();
+  }
+
+  snapshot(now: Date = new Date()): SupervisorMessageV2ReadinessOutageSnapshot {
     return {
       boundMs: this.#boundMs,
       deferredDeliveries: this.#deferred,
       outageFailures: this.#failed,
-      recipientsDeferred: [...this.#outages.values()].filter(
-        (outage) => !this.#unobserved(outage, at)
-      ).length,
+      recipientsDeferred: this.recipients(now).length,
     };
   }
 
-  #unobserved(outage: { observedAt: number }, at: number): boolean {
+  #observedRecently(outage: ReadinessOutage, at: number): boolean {
+    return at - outage.observedAt <= READINESS_OUTAGE_UNOBSERVED_MS;
+  }
+
+  /** Nothing observed it lately and no message it failed still waits on it. */
+  #over(outage: ReadinessOutage, at: number): boolean {
     return (
-      at - outage.observedAt >
-      Math.max(this.#boundMs, READINESS_OUTAGE_UNOBSERVED_MS)
+      at - Math.max(outage.observedAt, outage.heldUntil) >
+      READINESS_OUTAGE_UNOBSERVED_MS
     );
+  }
+}
+
+/** How long a recipient that is not enrolled may defer its deliveries. */
+export const SUPERVISOR_MESSAGE_V2_NOT_ENROLLED_BOUND_MS = 900_000;
+/** The fixed, opaque delivery_failed reason once not-enrolled is past its bound. */
+const NOT_ENROLLED_REASON = "recipient session is not enrolled";
+
+/** What the delivery boundary learned about the recipient before claiming. */
+type DeliveryReadiness =
+  | "deferred"
+  | "not-enrolled"
+  | "ready"
+  | "unavailable"
+  | "unready";
+
+/** The fixed, opaque delivery_failed reason for a refusal before the provider. */
+const readinessFailureReason = (
+  readiness: Exclude<DeliveryReadiness, "deferred" | "ready">
+): string => {
+  if (readiness === "unavailable") {
+    return READINESS_UNAVAILABLE_REASON;
+  }
+  if (readiness === "not-enrolled") {
+    return NOT_ENROLLED_REASON;
+  }
+  return "recipient session is not ready";
+};
+
+/**
+ * Says whether a recipient is enrolled now, as the server's own enrollment
+ * pass last found it: the instant (epoch ms) its current not-enrolled spell
+ * began, or undefined while it is enrolled or not one of the enrolled seats.
+ */
+export interface SupervisorMessageV2RecipientEnrollmentPort {
+  notEnrolledSince(recipient: string): number | undefined;
+}
+
+/** Cumulative since process start, except the current recipient count. */
+export interface SupervisorMessageV2NotEnrolledSnapshot {
+  boundMs: number;
+  /**
+   * Delivery passes left pending, without an attempt, because the recipient
+   * was not enrolled. One message deferred on several sweeps counts each time.
+   */
+  deferredDeliveries: number;
+  /** Delivery attempts recorded as failed because not-enrolled outlasted the bound. */
+  notEnrolledFailures: number;
+  /** Recipients whose deliveries wait now because they are not enrolled. */
+  recipientsDeferred: number;
+}
+
+/**
+ * Bounds the deferral of deliveries to a recipient that is not enrolled (a
+ * seat that is stopped or unreachable, as the enrollment sweep last found
+ * it). Such a recipient's deliveries would otherwise each spend an attempt on
+ * the store's readiness refusal and could dead-letter while the seat is
+ * merely down. Instead, while the store also says the recipient is not ready,
+ * a delivery is deferred without an attempt or a lease. The bound is measured
+ * from when the enrollment pass first found the recipient not enrolled (the
+ * sweep re-checks it continuously), so no retry delay can restart it. Past
+ * the bound each delivery is a normal retryable failure with a fixed opaque
+ * reason, so the message's own retry policy ends it. Logged once per spell
+ * when deferral starts, once if it outlasts the bound, and once when the
+ * recipient's delivery resumes. State is in memory, as the enrollment's is: a
+ * restarted process starts the bound again.
+ */
+export class SupervisorMessageV2NotEnrolledDeferral {
+  readonly #boundMs: number;
+  readonly #enrollment: SupervisorMessageV2RecipientEnrollmentPort | undefined;
+  readonly #log: (line: string) => void;
+  readonly #spells = new Map<string, { exceeded: boolean; since: number }>();
+  #deferred = 0;
+  #failed = 0;
+
+  constructor(
+    options: {
+      boundMs?: number;
+      enrollment?: SupervisorMessageV2RecipientEnrollmentPort;
+      log?: (line: string) => void;
+    } = {}
+  ) {
+    this.#boundMs = requireDeferralBoundMs(
+      options.boundMs,
+      SUPERVISOR_MESSAGE_V2_NOT_ENROLLED_BOUND_MS,
+      "V2 not-enrolled deferral bound"
+    );
+    this.#enrollment = options.enrollment;
+    this.#log = options.log ?? ((line) => console.error(line));
+  }
+
+  /**
+   * The store refused this recipient as not ready. Undefined when it is
+   * enrolled (the refusal is an ordinary attempt); otherwise defer within the
+   * bound, or fail the attempt past it.
+   */
+  unready(recipient: string, now: Date): "defer" | "fail" | undefined {
+    const since = this.#enrollment?.notEnrolledSince(recipient);
+    if (since === undefined) {
+      return undefined;
+    }
+    let spell = this.#spells.get(recipient);
+    if (spell?.since !== since) {
+      spell = { exceeded: false, since };
+      this.#spells.set(recipient, spell);
+      this.#log(`V2 delivery to ${recipient} deferred: ${NOT_ENROLLED_REASON}`);
+    }
+    if (now.getTime() - since < this.#boundMs) {
+      this.#deferred += 1;
+      return "defer";
+    }
+    if (!spell.exceeded) {
+      spell.exceeded = true;
+      this.#log(
+        `V2 delivery to ${recipient} still deferred after ${this.#boundMs}ms not enrolled: delivery attempts now fail`
+      );
+    }
+    return "fail";
+  }
+
+  /** A "fail" verdict became a delivery_failed recorded under a lease. */
+  failedAttempt(): void {
+    this.#failed += 1;
+  }
+
+  /** The store found the recipient ready: any deferral of it is over. */
+  ready(recipient: string, now: Date): void {
+    const spell = this.#spells.get(recipient);
+    if (!spell) {
+      return;
+    }
+    this.#spells.delete(recipient);
+    this.#log(
+      `V2 delivery to ${recipient} resumed after ${now.getTime() - spell.since}ms: recipient session is enrolled and ready`
+    );
+  }
+
+  snapshot(): SupervisorMessageV2NotEnrolledSnapshot {
+    return {
+      boundMs: this.#boundMs,
+      deferredDeliveries: this.#deferred,
+      notEnrolledFailures: this.#failed,
+      recipientsDeferred: [...this.#spells].filter(
+        ([recipient, spell]) =>
+          this.#enrollment?.notEnrolledSince(recipient) === spell.since
+      ).length,
+    };
   }
 }
 
@@ -900,6 +1122,7 @@ export class SupervisorMessageV2Coordinator {
   readonly #dispatchOwner: string;
   readonly #ledger: SupervisorMessageV2DeliveryLedger;
   readonly #leaseMs: number;
+  readonly #notEnrolled: SupervisorMessageV2NotEnrolledDeferral;
   readonly #now: () => Date;
   readonly #readiness: SupervisorMessageV2DeliveryReadinessPort | undefined;
   readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
@@ -912,7 +1135,8 @@ export class SupervisorMessageV2Coordinator {
     dispatchOwner: string,
     now: () => Date = () => new Date(),
     readiness?: SupervisorMessageV2DeliveryReadinessPort,
-    readinessOutage?: SupervisorMessageV2ReadinessOutageTracker
+    readinessOutage?: SupervisorMessageV2ReadinessOutageTracker,
+    notEnrolled?: SupervisorMessageV2NotEnrolledDeferral
   ) {
     if (!DISPATCH_OWNER.test(dispatchOwner)) {
       throw new Error("SupervisorMessage V2 dispatch owner is invalid");
@@ -936,6 +1160,9 @@ export class SupervisorMessageV2Coordinator {
     this.#readiness = readiness;
     this.#readinessOutage =
       readinessOutage ?? new SupervisorMessageV2ReadinessOutageTracker();
+    // Without an enrollment port no recipient is ever "not enrolled".
+    this.#notEnrolled =
+      notEnrolled ?? new SupervisorMessageV2NotEnrolledDeferral();
     this.#workflows = workflows;
   }
 
@@ -1252,11 +1479,12 @@ export class SupervisorMessageV2Coordinator {
     // reaches workflow state.
     const readiness = await this.#readinessOf(trustedScope, envelope.target);
     if (readiness === "deferred") {
-      // The readiness store could not answer: that says nothing about the
-      // seat. Leave the delivery pending without claiming a lease or
-      // spending one of the message's attempts; the existing recovery
-      // sweep retries it once the store answers again. Past the outage
-      // bound it is "unavailable" instead: a normal retryable failure.
+      // The readiness store could not answer (that says nothing about the
+      // seat), or the recipient is not enrolled (its seat is down). Leave
+      // the delivery pending without claiming a lease or spending one of the
+      // message's attempts; the existing recovery sweep retries it. Past its
+      // bound it is "unavailable" or "not-enrolled" instead: a normal
+      // retryable failure.
       return "deferred";
     }
     const claim = await this.#ledger.claim(
@@ -1284,10 +1512,7 @@ export class SupervisorMessageV2Coordinator {
         readiness === "ready"
           ? await this.#delivery.deliver(envelope)
           : {
-              reason:
-                readiness === "unavailable"
-                  ? READINESS_UNAVAILABLE_REASON
-                  : "recipient session is not ready",
+              reason: readinessFailureReason(readiness),
               status: "transient-failure",
             };
     } catch (error) {
@@ -1319,6 +1544,12 @@ export class SupervisorMessageV2Coordinator {
       requestId: outcomeRequestId,
       workflowId,
     });
+    await this.#countBoundFailure(
+      readiness,
+      trustedScope,
+      workflowId,
+      envelope.target
+    );
     if (outcome.status !== "accepted" && receipt.status !== "running") {
       // The failure ended the message. Label it from its state, as a sweep
       // would: a failed last attempt is exhausted whatever its kind.
@@ -1339,11 +1570,58 @@ export class SupervisorMessageV2Coordinator {
     return "attempted";
   }
 
-  /** The recipient's readiness, or "deferred" while an outage is in bound. */
+  /**
+   * Counted only once its delivery_failed was signalled under this attempt's
+   * lease, so a verdict a busy or closed claim absorbed is never counted.
+   * A message an outage failed that has a retry scheduled waits on it: the
+   * outage stays open for it until that retry is due. One the failure ended
+   * has none.
+   */
+  async #countBoundFailure(
+    readiness: DeliveryReadiness,
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string,
+    recipient: string
+  ): Promise<void> {
+    if (readiness === "unavailable") {
+      this.#readinessOutage.failedAttempt(
+        recipient,
+        await this.#nextRetryAt(trustedScope, workflowId)
+      );
+    } else if (readiness === "not-enrolled") {
+      this.#notEnrolled.failedAttempt();
+    }
+  }
+
+  /**
+   * When the message's next retry falls due. Bookkeeping only: if the engine
+   * cannot say, the outage is held by its observations alone.
+   */
+  async #nextRetryAt(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<Date | undefined> {
+    try {
+      const { value } = await this.#workflows.query({
+        args: { trustedScope },
+        name: "status",
+        workflowId,
+      });
+      const next = (value as SupervisorMessageV2Projection).nextRetryAt;
+      return next === null ? undefined : new Date(next);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The recipient's readiness, or "deferred" while a store outage or a
+   * not-enrolled recipient is within its bound.
+   */
   async #readinessOf(
     trustedScope: TrustedSupervisorMessageV2Scope,
     recipient: string
-  ): Promise<"deferred" | "ready" | "unavailable" | "unready"> {
+  ): Promise<DeliveryReadiness> {
     try {
       await this.#readiness?.assertReady(trustedScope, recipient);
     } catch (error) {
@@ -1354,9 +1632,20 @@ export class SupervisorMessageV2Coordinator {
           : "unavailable";
       }
       this.#readinessOutage.answered(recipient, this.#now());
-      return "unready";
+      // The store says not ready. A recipient the enrollment sweep finds not
+      // enrolled (its seat is down) waits within its bound; an enrolled one
+      // spends the attempt, as before. A seat that stops while the server
+      // runs counts as enrolled until the next enrollment pass finds it
+      // down (about one reconciliation tick): a delivery in that window
+      // spends its attempt as an ordinary unready refusal.
+      const notEnrolled = this.#notEnrolled.unready(recipient, this.#now());
+      if (notEnrolled === "defer") {
+        return "deferred";
+      }
+      return notEnrolled === "fail" ? "not-enrolled" : "unready";
     }
     this.#readinessOutage.answered(recipient, this.#now());
+    this.#notEnrolled.ready(recipient, this.#now());
     return "ready";
   }
 

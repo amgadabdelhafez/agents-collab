@@ -1001,6 +1001,9 @@ test("service start logs each binding that will never publish once, with ids onl
     );
     expect(listed?.status).toBe(200);
     expect(await listed?.json()).toEqual({
+      // The host's per-seat delivery status (none configured here).
+      notEnrolled: [],
+      readinessOutage: [],
       schema: "supervisor-result-assignment-status.v1",
       unpublishable: [
         {

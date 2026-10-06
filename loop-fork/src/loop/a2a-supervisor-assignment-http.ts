@@ -63,20 +63,44 @@ const readJsonBody = async (
   }
 };
 
-const listUnpublishable = async (
+/**
+ * Per-seat delivery detail that the unauthenticated /healthz reports only as
+ * counts: the host's seats that are not enrolled now, and the recipients a
+ * session readiness-store outage currently defers. Seat ids only.
+ */
+export interface SupervisorA2AAssignmentDeliveryStatus {
+  notEnrolled: readonly string[];
+  readinessOutage: readonly string[];
+}
+
+const assignmentStatus = async (
   scope: TrustedSupervisorMessageV2Scope,
-  list: (
-    scope: TrustedSupervisorMessageV2Scope
-  ) => Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>
+  list:
+    | ((
+        scope: TrustedSupervisorMessageV2Scope
+      ) => Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>)
+    | undefined,
+  deliveryStatus: (() => SupervisorA2AAssignmentDeliveryStatus) | undefined
 ): Promise<Response> => {
   try {
-    const entries = await list(scope);
+    const entries = list ? await list(scope) : undefined;
+    const delivery = deliveryStatus?.();
     return Response.json(
       {
+        ...(delivery
+          ? {
+              notEnrolled: [...delivery.notEnrolled],
+              readinessOutage: [...delivery.readinessOutage],
+            }
+          : {}),
         schema: "supervisor-result-assignment-status.v1",
-        unpublishable: entries.map(
-          ({ tenantId: _tenantId, ...entry }) => entry
-        ),
+        ...(entries
+          ? {
+              unpublishable: entries.map(
+                ({ tenantId: _tenantId, ...entry }) => entry
+              ),
+            }
+          : {}),
       },
       { headers: { "cache-control": "no-store" } }
     );
@@ -94,8 +118,12 @@ const listUnpublishable = async (
  * host allowlist, task/message/recipient and the graph, and reserves for
  * this A2A task before recording it.
  *
- * GET on the same path is the inspection surface: the recorded bindings of
- * this route's tenant that will never publish (ids only). */
+ * GET on the same path is the inspection surface for the control principal:
+ * the recorded bindings of this route's tenant that will never publish, and
+ * the host's per-seat delivery status (ids only). Each section is present
+ * only when the host provides it: `unpublishable` needs a ledger that can
+ * list them (the PostgreSQL ledger can), `notEnrolled` and `readinessOutage`
+ * need the delivery status. With neither, GET is 405 as before. */
 export const createSupervisorA2AAssignmentHttpHandler =
   (options: {
     authenticator: SupervisorA2AAuthenticator;
@@ -106,6 +134,7 @@ export const createSupervisorA2AAssignmentHttpHandler =
       scope: TrustedSupervisorMessageV2Scope,
       binding: SupervisorA2AResultBinding
     ): Promise<void>;
+    deliveryStatus?(): SupervisorA2AAssignmentDeliveryStatus;
     unpublishable?(
       scope: TrustedSupervisorMessageV2Scope
     ): Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>;
@@ -114,9 +143,12 @@ export const createSupervisorA2AAssignmentHttpHandler =
     if (new URL(request.url).pathname !== options.pathname) {
       return reply(404, "not-found");
     }
+    const inspectable = Boolean(
+      options.unpublishable || options.deliveryStatus
+    );
     if (
       request.method !== "POST" &&
-      !(request.method === "GET" && options.unpublishable)
+      !(request.method === "GET" && inspectable)
     ) {
       return reply(405, "method-not-allowed");
     }
@@ -124,8 +156,12 @@ export const createSupervisorA2AAssignmentHttpHandler =
     if (scope instanceof Response) {
       return scope;
     }
-    if (request.method === "GET" && options.unpublishable) {
-      return listUnpublishable(scope, options.unpublishable);
+    if (request.method === "GET") {
+      return assignmentStatus(
+        scope,
+        options.unpublishable?.bind(options),
+        options.deliveryStatus?.bind(options)
+      );
     }
     const body = await readJsonBody(request, 8192, "invalid-binding");
     if (body instanceof Response) {

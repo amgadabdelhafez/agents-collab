@@ -196,6 +196,72 @@ test("assignment route lists only what its service returns for the authenticated
   ).toBe(405);
 });
 
+test("assignment route GET names the seats that are not enrolled and the recipients a readiness outage defers, only to the control principal", async () => {
+  let reads = 0;
+  const handler = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    deliveryStatus: () => {
+      reads += 1;
+      return {
+        notEnrolled: ["supervisor:harness-peer"],
+        readinessOutage: ["supervisor:harness"],
+      };
+    },
+    pathname: "/assign",
+    principal: "principal:control",
+    tenant: "tenant:owned",
+    unpublishable: () => Promise.resolve([]),
+  });
+  const get = (authorization?: string) =>
+    handler(
+      new Request("http://local/assign", {
+        headers: authorization ? { authorization } : {},
+      })
+    );
+  const unauthenticated = await get();
+  expect(unauthenticated.status).toBe(401);
+  expect(await unauthenticated.text()).not.toContain("supervisor:");
+  const other = await get("Bearer other");
+  expect(other.status).toBe(403);
+  expect(await other.text()).not.toContain("supervisor:harness");
+  expect(reads).toBe(0);
+  const listed = await get("Bearer fixture");
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({
+    notEnrolled: ["supervisor:harness-peer"],
+    readinessOutage: ["supervisor:harness"],
+    schema: "supervisor-result-assignment-status.v1",
+    unpublishable: [],
+  });
+  // A route with only the delivery status still answers GET.
+  const statusOnly = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    deliveryStatus: () => ({ notEnrolled: [], readinessOutage: [] }),
+    pathname: "/assign",
+    principal: "principal:control",
+    tenant: "tenant:owned",
+  });
+  const only = await statusOnly(
+    new Request("http://local/assign", {
+      headers: { authorization: "Bearer fixture" },
+    })
+  );
+  expect(only.status).toBe(200);
+  expect(await only.json()).toEqual({
+    notEnrolled: [],
+    readinessOutage: [],
+    schema: "supervisor-result-assignment-status.v1",
+  });
+});
+
 const createStartHandler = (
   start: Parameters<
     typeof createSupervisorA2AResultGraphStartHttpHandler

@@ -11,9 +11,11 @@ import {
 } from "../../src/loop/supervisor-message-v2-contract";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import {
+  SUPERVISOR_MESSAGE_V2_NOT_ENROLLED_BOUND_MS,
   SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS,
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  SupervisorMessageV2NotEnrolledDeferral,
   SupervisorMessageV2ReadinessOutageTracker,
   SupervisorMessageV2ReadinessUnavailableError,
   SupervisorMessageV2RecoveryRunner,
@@ -220,11 +222,23 @@ class RecordingWorkflowPort extends InMemoryWorkflowPort {
   }
 }
 
-const harness = (options: { outageBoundMs?: number } = {}) => {
+const harness = (
+  options: { notEnrolledBoundMs?: number; outageBoundMs?: number } = {}
+) => {
   let clock = Date.parse("2026-09-20T05:00:00.000Z");
   const logs: string[] = [];
   const outage = new SupervisorMessageV2ReadinessOutageTracker({
     boundMs: options.outageBoundMs,
+    log: (line) => logs.push(line),
+  });
+  // When each recipient stopped being enrolled, as the server's enrollment
+  // reports it; absent, the recipient is enrolled.
+  const notEnrolledSince = new Map<string, number>();
+  const notEnrolled = new SupervisorMessageV2NotEnrolledDeferral({
+    boundMs: options.notEnrolledBoundMs,
+    enrollment: {
+      notEnrolledSince: (recipient) => notEnrolledSince.get(recipient),
+    },
     log: (line) => logs.push(line),
   });
   const workflows = new RecordingWorkflowPort({
@@ -272,7 +286,8 @@ const harness = (options: { outageBoundMs?: number } = {}) => {
         return Promise.resolve({ status: "ready" });
       },
     },
-    outage
+    outage,
+    notEnrolled
   );
   const status = (workflowId: string) => coordinator.status(scope, workflowId);
   const signals = (workflowId: string) =>
@@ -293,6 +308,8 @@ const harness = (options: { outageBoundMs?: number } = {}) => {
     delivered,
     ledger,
     logs,
+    notEnrolled,
+    notEnrolledSince,
     outage,
     providerDown,
     readinessChecks,
@@ -777,25 +794,174 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
     ]);
   });
 
-  test("an outage not observed for over an hour restarts its bound and leaves the recipient count", async () => {
+  test("an outage nothing observed for over two hours, with no message waiting on it, is over: the next failure starts a new bound", async () => {
     const h = harness({ outageBoundMs: 60_000 });
     h.readinessStore.down = true;
-    const { workflowId } = await h.coordinator.receive(
+    const first = await h.coordinator.receive(
       scope,
       inputFor("stale-outage"),
       "request:stale-outage"
     );
+    // The deferred message leaves the pending state without another
+    // readiness check (here another dispatcher delivers it), so nothing
+    // asks the store about this recipient again.
+    const envelope = h.workflows.query({
+      args: { trustedScope: scope, workflowId: first.workflowId },
+      name: "delivery_request",
+      workflowId: first.workflowId,
+    }).value as SupervisorMessageV2DeliveryEnvelope;
+    await h.ledger.claim(envelope, scope, "v2-dispatcher:other", h.at());
+    h.advance(7_200_000);
+    // Still within two hours of its last observation: the same outage.
     expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(1);
-    h.advance(3_600_001);
-    // Nothing observed this recipient's outage for over an hour.
+    h.advance(1);
+    // Nothing observed it for over two hours: no phantom recipient.
     expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(0);
-    expect(await h.coordinator.recoverPending()).toBe(0);
-    expect((await h.status(workflowId)).deliveryAttempts).toBe(0);
+    expect(h.outage.recipients(h.at())).toEqual([]);
+    // A later, separate outage defers under its own bound instead of
+    // failing the new message's first attempt at once.
+    const second = await h.coordinator.receive(
+      scope,
+      inputFor("stale-outage-later"),
+      "request:stale-outage-later"
+    );
+    expect(await h.status(second.workflowId)).toMatchObject({
+      deliveryAttempts: 0,
+      phase: "routed",
+    });
+    expect(h.outage.recipients(h.at())).toEqual(["supervisor:target"]);
     expect(h.logs).toEqual([
       entered("supervisor:target"),
       entered("supervisor:target"),
     ]);
-    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(1);
+  });
+
+  test("a later outage defers again after a message it failed has ended, even when that message waited on a long retry", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    h.readinessStore.down = true;
+    const input = inputFor("ended-outage");
+    input.policy = {
+      ...input.policy,
+      maxDeliveryAttempts: 2,
+      retryDelayMs: 86_400_000,
+    };
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      input,
+      "request:ended-outage"
+    );
+    h.advance(60_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    h.advance(86_400_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    // The outage failed its last attempt: nothing waits on the outage now.
+    expect(await h.status(workflowId)).toMatchObject({
+      deliveryAttempts: 2,
+      phase: "dead-lettered",
+    });
+    // The store recovers and fails again three hours later, with nothing
+    // having asked it about this recipient in between.
+    h.advance(10_800_000);
+    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(0);
+    const later = await h.coordinator.receive(
+      scope,
+      inputFor("ended-outage-later"),
+      "request:ended-outage-later"
+    );
+    expect(await h.status(later.workflowId)).toMatchObject({
+      deliveryAttempts: 0,
+      phase: "routed",
+    });
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      exceeded("supervisor:target", 60_000),
+      entered("supervisor:target"),
+    ]);
+  });
+
+  test("a store answer for one recipient does not end another recipient's outage", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    h.readinessStore.downFor.add("supervisor:a");
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("partial-a", "supervisor:a"),
+      "request:partial-a"
+    );
+    h.advance(30_000);
+    await h.coordinator.receive(
+      scope,
+      inputFor("partial-b", "supervisor:b"),
+      "request:partial-b"
+    );
+    expect(h.delivered).toHaveLength(1);
+    // A failure the store keeps for one recipient still meets its bound,
+    // measured from that recipient's first failure.
+    h.advance(30_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    expect(h.outage.recipients(h.at())).toEqual(["supervisor:a"]);
+  });
+
+  test("an outage is measured from its start, however long a message waits on its retry delay", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    h.readinessStore.down = true;
+    const input = inputFor("long-retry-outage");
+    input.policy = { ...input.policy, retryDelayMs: 86_400_000 };
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      input,
+      "request:long-retry-outage"
+    );
+    h.advance(60_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect(await h.status(workflowId)).toMatchObject({
+      deliveryAttempts: 1,
+      phase: "retry-scheduled",
+    });
+    // Nothing observes the outage while the message waits a day; only
+    // deliveries a sweep observed within two hours are reported.
+    h.advance(10_800_000);
+    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(0);
+    // The retry falls due a day later, the store still down: that is a
+    // second failed attempt, not a fresh bound of deferral.
+    h.advance(86_400_000 - 10_800_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(2);
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      exceeded("supervisor:target", 60_000),
+    ]);
+    expect(h.outage.snapshot(h.at())).toMatchObject({
+      outageFailures: 2,
+      recipientsDeferred: 1,
+    });
+  });
+
+  test("outage failures count only the attempts the outage failed, not a verdict another dispatcher's lease absorbed", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    h.readinessStore.down = true;
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("held-outage"),
+      "request:held-outage"
+    );
+    h.advance(60_000);
+    // Another dispatcher holds this attempt's lease when the bound passes.
+    const envelope = h.workflows.query({
+      args: { trustedScope: scope, workflowId },
+      name: "delivery_request",
+      workflowId,
+    }).value as SupervisorMessageV2DeliveryEnvelope;
+    await h.ledger.claim(envelope, scope, "v2-dispatcher:other", h.at());
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(0);
+    expect(h.signals(workflowId)).toEqual([]);
+    expect(h.outage.snapshot(h.at()).outageFailures).toBe(0);
+    // Once that lease lapses this dispatcher fails the attempt: one failure.
+    h.advance(LEASE_MS);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    expect(h.outage.snapshot(h.at()).outageFailures).toBe(1);
   });
 
   test("the outage bound is a whole number of milliseconds from one second to one day, fifteen minutes by default", () => {
@@ -856,6 +1022,166 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
     } finally {
       errors.mockRestore();
     }
+  });
+});
+
+describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
+  const target = "supervisor:target";
+  const entered = (recipient: string) =>
+    `V2 delivery to ${recipient} deferred: recipient session is not enrolled`;
+  const exceeded = (recipient: string, boundMs: number) =>
+    `V2 delivery to ${recipient} still deferred after ${boundMs}ms not enrolled: delivery attempts now fail`;
+  const resumed = (recipient: string, afterMs: number) =>
+    `V2 delivery to ${recipient} resumed after ${afterMs}ms: recipient session is enrolled and ready`;
+
+  test("a not-enrolled recipient's deliveries wait without an attempt or a lease, then deliver once it is enrolled", async () => {
+    const h = harness({ notEnrolledBoundMs: 60_000 });
+    h.unready.add(target);
+    h.notEnrolledSince.set(target, h.at().getTime());
+    const { workflowId, projection } = await h.coordinator.receive(
+      scope,
+      inputFor("not-enrolled-wait"),
+      "request:not-enrolled-wait"
+    );
+    expect(projection.deliveryAttempts).toBe(0);
+    for (let sweep = 0; sweep < 3; sweep += 1) {
+      h.advance(10_000);
+      expect(await h.coordinator.recoverPending()).toBe(0);
+    }
+    const during = await h.status(workflowId);
+    expect(during.phase).toBe("routed");
+    expect(during.deliveryAttempts).toBe(0);
+    expect(h.signals(workflowId)).toEqual([]);
+    expect(h.ledger.deliveries.size).toBe(0);
+    expect(h.notEnrolled.snapshot()).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 4,
+      notEnrolledFailures: 0,
+      recipientsDeferred: 1,
+    });
+
+    // The sweep enrolls the seat: nothing waits on enrollment any more,
+    // before any delivery observes it. Its next delivery goes through.
+    h.notEnrolledSince.delete(target);
+    expect(h.notEnrolled.snapshot().recipientsDeferred).toBe(0);
+    h.unready.delete(target);
+    h.advance(1000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    expect(h.delivered).toHaveLength(1);
+    expect(h.logs).toEqual([entered(target), resumed(target, 31_000)]);
+    expect(h.notEnrolled.snapshot().recipientsDeferred).toBe(0);
+  });
+
+  test("past its bound, measured from when the recipient stopped being enrolled, each delivery is a retryable attempt up to the policy bound", async () => {
+    const h = harness({ notEnrolledBoundMs: 60_000 });
+    h.unready.add(target);
+    // The seat stopped being enrolled 50 seconds before this message.
+    h.notEnrolledSince.set(target, h.at().getTime() - 50_000);
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("not-enrolled-bound"),
+      "request:not-enrolled-bound"
+    );
+    h.advance(9999);
+    expect(await h.coordinator.recoverPending()).toBe(0);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(0);
+    h.advance(1);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect(await h.status(workflowId)).toMatchObject({
+      deliveryAttempts: 1,
+      phase: "retry-scheduled",
+    });
+    // A normal attempt under a lease, with a fixed opaque reason.
+    expect(h.ledger.deliveries.size).toBe(1);
+    expect(h.signalPayloads(workflowId)).toEqual([
+      {
+        name: "delivery_failed",
+        payload: {
+          permanent: false,
+          reason: "recipient session is not enrolled",
+        },
+      },
+    ]);
+    for (let attempt = 2; attempt <= 5; attempt += 1) {
+      h.advance(500);
+      await h.coordinator.recoverPending();
+      expect((await h.status(workflowId)).deliveryAttempts).toBe(attempt);
+    }
+    expect((await h.status(workflowId)).phase).toBe("dead-lettered");
+    expect(h.delivered).toHaveLength(0);
+    expect(h.logs).toEqual([entered(target), exceeded(target, 60_000)]);
+    expect(h.notEnrolled.snapshot()).toMatchObject({
+      deferredDeliveries: 2,
+      notEnrolledFailures: 5,
+    });
+  });
+
+  test("the not-enrolled bound does not restart while a message waits on a long retry delay", async () => {
+    const h = harness({ notEnrolledBoundMs: 60_000 });
+    h.unready.add(target);
+    h.notEnrolledSince.set(target, h.at().getTime());
+    const input = inputFor("not-enrolled-long-retry");
+    input.policy = { ...input.policy, retryDelayMs: 7_200_000 };
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      input,
+      "request:not-enrolled-long-retry"
+    );
+    h.advance(60_000);
+    await h.coordinator.recoverPending();
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    h.advance(7_200_000);
+    await h.coordinator.recoverPending();
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(2);
+    expect(h.logs).toEqual([entered(target), exceeded(target, 60_000)]);
+  });
+
+  test("an enrolled recipient whose seat is not ready still spends an attempt", async () => {
+    const h = harness({ notEnrolledBoundMs: 60_000 });
+    h.unready.add(target);
+    const { projection } = await h.coordinator.receive(
+      scope,
+      inputFor("enrolled-unready"),
+      "request:enrolled-unready"
+    );
+    expect(projection.deliveryAttempts).toBe(1);
+    expect(h.logs).toEqual([]);
+    expect(h.notEnrolled.snapshot()).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 0,
+      notEnrolledFailures: 0,
+      recipientsDeferred: 0,
+    });
+  });
+
+  test("a not-enrolled recipient the store still finds ready is delivered", async () => {
+    const h = harness({ notEnrolledBoundMs: 60_000 });
+    h.notEnrolledSince.set(target, h.at().getTime());
+    const { projection } = await h.coordinator.receive(
+      scope,
+      inputFor("not-enrolled-ready"),
+      "request:not-enrolled-ready"
+    );
+    expect(projection.deliveryAttempts).toBe(1);
+    expect(h.delivered).toHaveLength(1);
+    expect(h.notEnrolled.snapshot().deferredDeliveries).toBe(0);
+  });
+
+  test("the not-enrolled bound is a whole number of milliseconds from one second to one day, fifteen minutes by default", () => {
+    expect(SUPERVISOR_MESSAGE_V2_NOT_ENROLLED_BOUND_MS).toBe(900_000);
+    expect(
+      new SupervisorMessageV2NotEnrolledDeferral().snapshot().boundMs
+    ).toBe(900_000);
+    for (const boundMs of [999, 86_400_001, 1500.5, Number.NaN]) {
+      expect(
+        () => new SupervisorMessageV2NotEnrolledDeferral({ boundMs })
+      ).toThrow("V2 not-enrolled deferral bound is invalid");
+    }
+    // Without an enrollment port nothing is ever reported as not enrolled.
+    expect(
+      new SupervisorMessageV2NotEnrolledDeferral().unready(target, new Date())
+    ).toBeUndefined();
   });
 });
 
