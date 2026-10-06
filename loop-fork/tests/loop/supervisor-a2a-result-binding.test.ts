@@ -56,6 +56,12 @@ const canonical = (value: unknown): string =>
 
 /** The ledger's deployment discriminator: the host's task queue. */
 const DEPLOYMENT = "result-binding";
+/** These ledgers opted in to deployment-scoped workflow ids. */
+const LEDGER_OPTIONS = {
+  buildId: "result-binding.v1",
+  deployment: DEPLOYMENT,
+  workflowIdFormat: "deployment",
+} as const;
 let postgres: DisposablePostgres;
 let raw: SQL;
 let ledger: PostgresSupervisorMessageV2DeliveryLedger;
@@ -67,7 +73,7 @@ beforeAll(async () => {
   await raw.connect();
   ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: DEPLOYMENT, resultGraphKey: KEY }
+    { ...LEDGER_OPTIONS, resultGraphKey: KEY }
   );
   tasks = await PostgresA2ATaskStore.connect({
     databaseUrl: postgres.databaseUrl(),
@@ -228,6 +234,7 @@ const serviceFor = (input: {
         workflowBundle: { code: "unused" },
         workflowClient: {},
       },
+      workflowIdFormat: "deployment",
       now: () => NOW,
       policy: POLICY,
       providerReadiness: { ready: () => ({}) as never },
@@ -582,9 +589,14 @@ test("migration backfills reservations once for existing unkeyed derived binding
   // bindings written exactly as its bindResult wrote them. No reservations.
   const isolated = await DisposablePostgres.create();
   const legacy = new SQL(isolated.databaseUrl());
+  // The upgrade itself: this build in its default legacy-write mode.
   const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     isolated.databaseUrl(),
-    { deployment: DEPLOYMENT, resultGraphKey: KEY }
+    {
+      buildId: LEDGER_OPTIONS.buildId,
+      deployment: DEPLOYMENT,
+      resultGraphKey: KEY,
+    }
   );
   try {
     await legacy.connect();
@@ -660,6 +672,7 @@ test("migration backfills reservations once for existing unkeyed derived binding
     await upgraded.migrate();
     expect(await markerRows(legacy)).toEqual([
       { name: "result-graph-task-backfill.v1" },
+      { name: "workflow-id-format.v1" },
     ]);
     // The scan runs once per schema version, not on every start: a row that
     // appears after the marker (only an older binary could write one) is
@@ -781,12 +794,12 @@ test("no new binding may name an unkeyed v2 graph, and a ledger without the key 
   ).rejects.toThrow("not derived from this message");
   const keyless = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: DEPLOYMENT }
+    LEDGER_OPTIONS
   );
   const otherKey = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
     {
-      deployment: DEPLOYMENT,
+      ...LEDGER_OPTIONS,
       resultGraphKey: SupervisorResultGraphKey.fromSecret(
         randomBytes(32).toString("hex")
       ),
@@ -829,11 +842,11 @@ test("two binders racing for an ended holder's graph task: exactly one takes it 
   // Separate clients, so the two transactions really run concurrently.
   const left = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: DEPLOYMENT, resultGraphKey: KEY }
+    { ...LEDGER_OPTIONS, resultGraphKey: KEY }
   );
   const right = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: DEPLOYMENT, resultGraphKey: KEY }
+    { ...LEDGER_OPTIONS, resultGraphKey: KEY }
   );
   try {
     // Both binders read the ended holder before either swaps it.
@@ -900,7 +913,7 @@ test("migration drops the retired per-graph-task unique index an unreleased revi
   const legacy = new SQL(isolated.databaseUrl());
   const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     isolated.databaseUrl(),
-    { deployment: DEPLOYMENT, resultGraphKey: KEY }
+    { ...LEDGER_OPTIONS, resultGraphKey: KEY }
   );
   try {
     await legacy.connect();

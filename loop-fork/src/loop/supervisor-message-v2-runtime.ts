@@ -607,8 +607,9 @@ export interface SupervisorMessageV2DeliveryLedger {
   ): Promise<SupervisorMessageV2TerminalOutcome | undefined>;
   /**
    * The workflow id a received message runs under. A dedupe key this scope
-   * recorded before workflow ids carried a deployment keeps its legacy id;
-   * any other resolves to this deployment's id.
+   * already recorded keeps the id it was recorded under, legacy or
+   * deployment-scoped; any other resolves to the id of the format the ledger
+   * writes (operator-controlled: legacy unless deployment was opted in).
    */
   workflowIdFor(
     trustedScope: TrustedSupervisorMessageV2Scope,
@@ -944,8 +945,9 @@ export class SupervisorMessageV2Coordinator {
     requestId: string
   ): Promise<SupervisorMessageV2ReceiveResult> {
     const parsed = parseSupervisorMessageV2Input(input, trustedScope);
-    // The ledger resolves the id: a dedupe key accepted before the format
-    // change keeps its legacy id, so the message is never started twice.
+    // The ledger resolves the id: a dedupe key accepted before a format
+    // change keeps the id it was accepted under, so the message is never
+    // started twice.
     const workflowId = await this.#ledger.workflowIdFor(
       trustedScope,
       parsed.dedupeKey

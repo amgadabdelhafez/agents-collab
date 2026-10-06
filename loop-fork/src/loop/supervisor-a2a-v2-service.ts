@@ -31,6 +31,8 @@ import {
 import {
   PostgresSupervisorMessageV2DeliveryLedger,
   type PostgresSupervisorMessageV2DeliveryLedgerOptions,
+  type SupervisorMessageV2WorkflowIdFormat,
+  SupervisorMessageV2WorkflowIdFormatError,
 } from "./supervisor-message-v2-delivery-ledger";
 import {
   GovernedSupervisorMessageV2Service,
@@ -219,6 +221,12 @@ export interface SupervisorA2AV2ServiceOptions {
     reference: string,
     target: SupervisorA2AResultArtifactTarget
   ): Promise<boolean>;
+  /**
+   * The workflow id format new messages are written in (operator config
+   * `a2aV2.workflowIdFormat`). Omitted, the format the ledger database
+   * records, or `legacy`; `deployment` is an explicit opt-in.
+   */
+  workflowIdFormat?: SupervisorMessageV2WorkflowIdFormat;
 }
 
 /** The governed session-store operations available to start-time enrollment. */
@@ -654,9 +662,14 @@ export const createSupervisorA2AV2Service = async (
     stage = "delivery-ledger";
     // Workflow ids are minted for this host's deployment: the task queue its
     // worker polls and its workflow port starts and adopts executions on.
+    // The ledger records this build with any id format it sets.
     ledger = await dependencies.connectLedger(options.databaseUrl, {
+      buildId: options.host.buildId,
       deployment: options.host.taskQueue,
       resultGraphKey: options.resultGraphKey,
+      ...(options.workflowIdFormat
+        ? { workflowIdFormat: options.workflowIdFormat }
+        : {}),
     });
     await ledger.migrate();
     await reportUnpublishableResultBindings(ledger, options.log);
@@ -846,6 +859,13 @@ export const createSupervisorA2AV2Service = async (
     await closeQuietly(sessions);
     await closeQuietly(ledger);
     await closeQuietly(taskStore);
+    // A refusal over the ledger's workflow id format is the operator's to
+    // act on, and its message names formats, builds and counts only.
+    if (error instanceof SupervisorMessageV2WorkflowIdFormatError) {
+      throw new Error(
+        `Supervisor A2A V2 service initialization failed at ${stage}: ${error.message}`
+      );
+    }
     const category = safeFailureCategory(error);
     throw new Error(
       `Supervisor A2A V2 service initialization failed at ${stage} (${category})`

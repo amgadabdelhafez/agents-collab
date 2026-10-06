@@ -323,6 +323,27 @@ test("orchestration config takes an optional readiness outage bound within one s
   }
 });
 
+test("orchestration config takes an optional V2 workflow id format, legacy or deployment, and omits it when absent", () => {
+  const withFormat = (workflowIdFormat: unknown) => {
+    const value = a2aV2([]);
+    return { ...value, a2aV2: { ...value.a2aV2, workflowIdFormat } };
+  };
+  for (const format of ["legacy", "deployment"] as const) {
+    expect(
+      parseLoopOrchestrationConfig(withFormat(format)).a2aV2?.workflowIdFormat
+    ).toBe(format);
+  }
+  // Absent, the ledger keeps the format its database records (else legacy).
+  expect(
+    Object.keys(parseLoopOrchestrationConfig(a2aV2([])).a2aV2 ?? {})
+  ).not.toContain("workflowIdFormat");
+  for (const invalid of ["Deployment", "tenant", "", null, 1]) {
+    expect(() => parseLoopOrchestrationConfig(withFormat(invalid))).toThrow(
+      'orchestration a2aV2 workflowIdFormat must be "legacy" or "deployment"'
+    );
+  }
+});
+
 test("/healthz reports the V2 readiness-outage counters as counts only, without changing its state", async () => {
   const snapshot = {
     boundMs: 60_000,

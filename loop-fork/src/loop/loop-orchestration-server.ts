@@ -47,6 +47,10 @@ import {
   SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE,
   SupervisorResultGraphKey,
 } from "./supervisor-message-v2-contract";
+import {
+  SUPERVISOR_MESSAGE_V2_WORKFLOW_ID_FORMATS,
+  type SupervisorMessageV2WorkflowIdFormat,
+} from "./supervisor-message-v2-delivery-ledger";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
   SupervisorControlSurfaceAuthenticator,
@@ -149,6 +153,15 @@ export interface A2AV2Config {
   routePath: string;
   sessionTtlMs: number;
   tenant: string;
+  /**
+   * The V2 workflow id format new messages are written in: "legacy" (the id
+   * a pre-discriminator build reads, so that build can still be rolled back
+   * to) or "deployment" (scoped to this host's task queue). Omitted, the
+   * format the ledger database records, or "legacy" when it records none.
+   * "deployment" is an explicit opt-in; returning to "legacy" is refused
+   * while any deployment-format message is unsettled.
+   */
+  workflowIdFormat?: SupervisorMessageV2WorkflowIdFormat;
 }
 
 interface DeadlineConfig {
@@ -392,6 +405,7 @@ const parseA2AV2 = (
       ...(value.readinessOutageBoundMs === undefined
         ? []
         : ["readinessOutageBoundMs"]),
+      ...(value.workflowIdFormat === undefined ? [] : ["workflowIdFormat"]),
     ],
     "orchestration a2aV2"
   );
@@ -530,7 +544,25 @@ const parseA2AV2 = (
       "orchestration a2aV2 sessionTtlMs"
     ),
     tenant: required(value.tenant, V2_TENANT_RE, "orchestration a2aV2 tenant"),
+    ...(value.workflowIdFormat === undefined
+      ? {}
+      : { workflowIdFormat: parseWorkflowIdFormat(value.workflowIdFormat) }),
   };
+};
+
+const parseWorkflowIdFormat = (
+  value: unknown
+): SupervisorMessageV2WorkflowIdFormat => {
+  if (
+    !(SUPERVISOR_MESSAGE_V2_WORKFLOW_ID_FORMATS as readonly unknown[]).includes(
+      value
+    )
+  ) {
+    throw new Error(
+      'orchestration a2aV2 workflowIdFormat must be "legacy" or "deployment"'
+    );
+  }
+  return value as SupervisorMessageV2WorkflowIdFormat;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -1290,6 +1322,7 @@ const createDefaultRuntimeHost = async (input: {
     delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
     dispatchOwner: `v2-dispatcher:${input.config.identity}`,
     readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
+    workflowIdFormat: a2aConfig.workflowIdFormat,
     // Enroll before the host's first recovery sweep checks readiness for
     // pending deliveries: a descriptor that expired, or a seat that restarted,
     // while the server was down is renewed or rebound first instead of

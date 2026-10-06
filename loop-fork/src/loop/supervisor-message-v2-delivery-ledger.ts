@@ -26,6 +26,74 @@ const POSTGRES_URL = /^postgres(?:ql)?:\/\//i;
 const RESULT_REFERENCE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
 /** Recorded once the pre-reservation binding scan has run on a database. */
 const RESULT_GRAPH_TASK_BACKFILL_MARKER = "result-graph-task-backfill.v1";
+/** The marker row naming the workflow id format a database's start intents
+ * are written in, and the build that recorded it. */
+const WORKFLOW_ID_FORMAT_MARKER = "workflow-id-format.v1";
+/** The build id grammar of the orchestration config's `buildId`. */
+const BUILD_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
+/** Recorded marker text this build will repeat in an error message. */
+const PRINTABLE_MARKER_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,127}$/;
+
+/**
+ * The workflow id formats a ledger writes. `legacy` is the format before the
+ * deployment discriminator (`supervisor-message-workflow:v2:<sha256>`), the
+ * one a pre-discriminator build reads; `deployment` is the deployment-scoped
+ * format (`supervisor-message-workflow:v2:deployment:<sha256>`). Either way a
+ * ledger reads, recovers and deduplicates both.
+ */
+export const SUPERVISOR_MESSAGE_V2_WORKFLOW_ID_FORMATS = [
+  "legacy",
+  "deployment",
+] as const;
+export type SupervisorMessageV2WorkflowIdFormat =
+  (typeof SUPERVISOR_MESSAGE_V2_WORKFLOW_ID_FORMATS)[number];
+
+/**
+ * A start refused over the database's workflow id format. Its message is
+ * exact and operator-facing: it names formats, build ids and counts only.
+ */
+export class SupervisorMessageV2WorkflowIdFormatError extends Error {
+  override readonly name = "SupervisorMessageV2WorkflowIdFormatError";
+}
+
+const isWorkflowIdFormat = (
+  value: unknown
+): value is SupervisorMessageV2WorkflowIdFormat =>
+  (SUPERVISOR_MESSAGE_V2_WORKFLOW_ID_FORMATS as readonly unknown[]).includes(
+    value
+  );
+
+const printable = (value: unknown): string =>
+  typeof value === "string" && PRINTABLE_MARKER_RE.test(value)
+    ? value
+    : "<unreadable>";
+
+/**
+ * Refuses, for every writer including a build that predates the marker, a
+ * start intent whose format is not the recorded one, and a legacy-format
+ * intent for a message already held under a deployment id (its
+ * `legacy_workflow_id`). Versioned by name so a later build can replace it.
+ */
+const START_INTENT_FORMAT_GUARD = `CREATE OR REPLACE FUNCTION loop_supervisor_message_v2_start_intent_format_guard_v1() RETURNS trigger LANGUAGE plpgsql AS $guard$
+DECLARE
+  recorded_format TEXT;
+  recorded_build TEXT;
+  written_format TEXT := CASE WHEN NEW.deployment IS NULL THEN 'legacy' ELSE 'deployment' END;
+BEGIN
+  SELECT value, build_id INTO recorded_format, recorded_build
+    FROM loop_supervisor_message_v2_schema_marker WHERE name = '${WORKFLOW_ID_FORMAT_MARKER}';
+  IF recorded_format IS DISTINCT FROM written_format THEN
+    RAISE EXCEPTION 'V2 delivery ledger writes "%" workflow ids (recorded by build %); a "%" start intent is refused. Every host sharing this ledger database must run a build that supports the recorded format, with the same a2aV2.workflowIdFormat',
+      coalesce(recorded_format, 'none'), coalesce(recorded_build, 'unknown'), written_format;
+  END IF;
+  IF NEW.deployment IS NULL AND EXISTS (
+    SELECT 1 FROM loop_supervisor_message_v2_start_intent WHERE legacy_workflow_id = NEW.workflow_id
+  ) THEN
+    RAISE EXCEPTION 'V2 start intent % is held under a deployment workflow id; it is never recorded again under its legacy id', NEW.workflow_id;
+  END IF;
+  RETURN NEW;
+END
+$guard$`;
 
 /** A recorded binding that will never publish, by ids only. */
 export interface SupervisorMessageV2UnpublishableResultBinding {
@@ -145,11 +213,19 @@ const parseDispatchOwner = (owner: string): string => {
 
 /** Options for opening a V2 delivery ledger. */
 export interface PostgresSupervisorMessageV2DeliveryLedgerOptions {
+  /** This host's build id, recorded with a workflow id format it sets. */
+  buildId: string;
   /** The workflow-id discriminator: the host's Temporal task queue. */
   deployment: string;
   /** The host secret keying result graph ids. Without it nothing can be
    * bound, and only bindings recorded under the unkeyed v2 id publish. */
   resultGraphKey?: SupervisorResultGraphKey;
+  /**
+   * The workflow id format new messages are written in (operator config
+   * `a2aV2.workflowIdFormat`). Omitted, the format the database records, or
+   * `legacy` when it records none. `deployment` is an explicit opt-in.
+   */
+  workflowIdFormat?: SupervisorMessageV2WorkflowIdFormat;
 }
 
 /** A start-intent row's workflow binding: its id and owning deployment. */
@@ -162,33 +238,50 @@ interface StartIntentBinding {
  * Private, reopenable ledger for canonical V2 delivery identities.
  *
  * Workflow id formats. A ledger belongs to one deployment (the host's Temporal
- * task queue). It mints only deployment-scoped workflow ids and records the
- * deployment on each start intent. A row recorded before the discriminator
- * existed has `deployment` NULL and carries the legacy id; such a row is still
- * recovered, acknowledged and deduplicated under that legacy id, and a sender
- * retry of its dedupe key resolves to it rather than starting the message a
- * second time under the new format. No existing row is rewritten. Rows of
+ * task queue) and writes new messages in one format, the one its database
+ * records (see `migrate`). In `legacy` format it mints the pre-discriminator
+ * id, byte for byte, with `deployment` NULL: exactly the row a
+ * pre-discriminator build writes and reads, so that build can be rolled back
+ * to. In `deployment` format it mints deployment-scoped ids and records the
+ * deployment on each start intent.
+ *
+ * Whatever it writes, it reads both. A legacy row (`deployment` NULL) is
+ * recovered, acknowledged and deduplicated under its legacy id; a row of this
+ * deployment under its deployment id. A sender retry of a dedupe key resolves
+ * to the row already recorded in either format, so a message is never started
+ * a second time across a format change. No existing row is rewritten. Rows of
  * another deployment sharing the database are not this ledger's: it neither
  * recovers nor authorizes them.
  *
- * Transition limit: only legacy code writes legacy rows, so hosts sharing a
- * ledger database must not run the pre-discriminator build alongside this one.
+ * Mixed versions. The database refuses (by trigger, for every writer,
+ * including a pre-discriminator build) a start intent in any format but the
+ * recorded one, and a legacy intent for a message held under a deployment id.
+ * A pre-discriminator build therefore shares a database safely only while it
+ * records `legacy`; after the flip to `deployment` it can record nothing, and
+ * its recovery refuses the first deployment-format row it reads. Returning to
+ * `legacy` is allowed once every deployment-format intent has settled, but
+ * those rows stay, so a database that ever held one is not readable by a
+ * pre-discriminator build again: return to this build's `legacy` mode instead.
  */
 export class PostgresSupervisorMessageV2DeliveryLedger
   implements SupervisorMessageV2DeliveryLedger
 {
+  readonly #buildId: string;
   readonly #deployment: string;
+  readonly #requestedFormat: SupervisorMessageV2WorkflowIdFormat | undefined;
   readonly #sql: SQL;
   readonly #resultGraphKey: SupervisorResultGraphKey | undefined;
+  #format: SupervisorMessageV2WorkflowIdFormat | undefined;
 
   private constructor(
     sql: SQL,
-    deployment: string,
-    resultGraphKey?: SupervisorResultGraphKey
+    options: PostgresSupervisorMessageV2DeliveryLedgerOptions
   ) {
-    this.#deployment = deployment;
+    this.#buildId = options.buildId;
+    this.#deployment = options.deployment;
+    this.#requestedFormat = options.workflowIdFormat;
     this.#sql = sql;
-    this.#resultGraphKey = resultGraphKey;
+    this.#resultGraphKey = options.resultGraphKey;
   }
 
   static async connect(
@@ -204,13 +297,40 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     } catch {
       throw new Error("V2 delivery ledger deployment is invalid");
     }
+    if (
+      typeof options.buildId !== "string" ||
+      !BUILD_ID_RE.test(options.buildId)
+    ) {
+      throw new Error("V2 delivery ledger build id is invalid");
+    }
+    if (
+      options.workflowIdFormat !== undefined &&
+      !isWorkflowIdFormat(options.workflowIdFormat)
+    ) {
+      throw new Error("V2 delivery ledger workflow id format is invalid");
+    }
     const sql = new SQL(databaseUrl);
     await sql.connect();
-    return new PostgresSupervisorMessageV2DeliveryLedger(
-      sql,
+    return new PostgresSupervisorMessageV2DeliveryLedger(sql, {
+      buildId: options.buildId,
       deployment,
-      options.resultGraphKey
-    );
+      resultGraphKey: options.resultGraphKey,
+      workflowIdFormat: options.workflowIdFormat,
+    });
+  }
+
+  /** The format new messages are written in, once `migrate` resolved it. */
+  get workflowIdFormat(): SupervisorMessageV2WorkflowIdFormat | undefined {
+    return this.#format;
+  }
+
+  #writeFormat(): SupervisorMessageV2WorkflowIdFormat {
+    if (!this.#format) {
+      throw new Error(
+        "V2 delivery ledger has no workflow id format: migrate() must succeed first"
+      );
+    }
+    return this.#format;
   }
 
   /** The keyed graph of a message, or undefined without the key. */
@@ -267,28 +387,35 @@ export class PostgresSupervisorMessageV2DeliveryLedger
   }
 
   /**
-   * The workflow id a received message runs under: the legacy id when this
-   * scope already recorded the dedupe key under it, else the deployment id.
-   * A message accepted before the format change is never started again.
+   * The workflow id a received message runs under: the id this scope already
+   * recorded the dedupe key under, in either format, else the id of the
+   * format this ledger writes. A message accepted before a format change is
+   * never started again under the other format.
    */
   async workflowIdFor(
     trustedScope: TrustedSupervisorMessageV2Scope,
     dedupeKey: string
   ): Promise<string> {
+    const format = this.#writeFormat();
     const legacy = deriveSupervisorMessageV2LegacyWorkflowId(
       trustedScope,
       dedupeKey
     );
+    const current = deriveSupervisorMessageV2WorkflowId(
+      trustedScope,
+      dedupeKey,
+      this.#deployment
+    );
     const rows = await this.#sql<
       { workflow_id: string }[]
-    >`SELECT workflow_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${legacy} AND deployment IS NULL`;
-    return rows[0]
-      ? legacy
-      : deriveSupervisorMessageV2WorkflowId(
-          trustedScope,
-          dedupeKey,
-          this.#deployment
-        );
+    >`SELECT workflow_id FROM loop_supervisor_message_v2_start_intent
+      WHERE (workflow_id = ${legacy} AND deployment IS NULL)
+         OR (workflow_id = ${current} AND deployment = ${this.#deployment})`;
+    const recorded = rows[0]?.workflow_id;
+    if (recorded) {
+      return recorded;
+    }
+    return format === "legacy" ? legacy : current;
   }
 
   async migrate(): Promise<void> {
@@ -342,6 +469,110 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     // and is neither backfilled nor rewritten.
     await this
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS deployment TEXT`;
+    // Additive: the format marker's value and writer, and the legacy id a
+    // deployment-format row would have had (named only once the format
+    // returns to legacy; see #recordLegacyIdsOfDeploymentRows).
+    await this
+      .#sql`ALTER TABLE loop_supervisor_message_v2_schema_marker ADD COLUMN IF NOT EXISTS value TEXT`;
+    await this
+      .#sql`ALTER TABLE loop_supervisor_message_v2_schema_marker ADD COLUMN IF NOT EXISTS build_id TEXT`;
+    await this
+      .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS legacy_workflow_id TEXT`;
+    await this
+      .#sql`CREATE INDEX IF NOT EXISTS loop_supervisor_message_v2_start_intent_legacy_workflow_id ON loop_supervisor_message_v2_start_intent (legacy_workflow_id)`;
+    this.#format = await this.#resolveWorkflowIdFormat();
+  }
+
+  /**
+   * Resolves, records and enforces the format new start intents are written
+   * in, once per start. Starts are serialized, and every start intent write
+   * (by any build) waits until the format is settled and guarded.
+   *
+   * The marker row records the format and the build that set it; a format
+   * this build does not support refuses start. The format written is the
+   * configured one, or the recorded one when none is configured, `legacy`
+   * when none is recorded: opting in to `deployment` is always explicit.
+   * Writing `legacy` is refused while any deployment-format intent has no
+   * terminal outcome, whether the marker recorded the flip or a
+   * deployment-id build that predates the marker wrote it. While `legacy`,
+   * every deployment-format row names its legacy id, so the guard refuses
+   * that id to any writer.
+   */
+  async #resolveWorkflowIdFormat(): Promise<SupervisorMessageV2WorkflowIdFormat> {
+    return await this.#sql.begin(async (sql) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtext('loop_supervisor_message_v2_workflow_id_format'))`;
+      // Self-conflicting, and taken by every INSERT: a write in flight is
+      // counted below, and a later one meets the guard of the new format.
+      await sql`LOCK TABLE loop_supervisor_message_v2_start_intent IN SHARE ROW EXCLUSIVE MODE`;
+      const marker = (
+        await sql<
+          { build_id: string | null; value: string | null }[]
+        >`SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = ${WORKFLOW_ID_FORMAT_MARKER}`
+      )[0];
+      if (marker && !isWorkflowIdFormat(marker.value)) {
+        throw new SupervisorMessageV2WorkflowIdFormatError(
+          `V2 delivery ledger records workflow id format "${printable(marker.value)}" (written by build ${printable(marker.build_id)}), which this build does not support; it supports "legacy" and "deployment". Run a build that supports the recorded format`
+        );
+      }
+      const recorded: SupervisorMessageV2WorkflowIdFormat | undefined =
+        marker?.value as SupervisorMessageV2WorkflowIdFormat | undefined;
+      const format = this.#requestedFormat ?? recorded ?? "legacy";
+      if (format === "legacy") {
+        const unsettled = await sql<
+          { count: number }[]
+        >`SELECT count(*)::integer AS count FROM loop_supervisor_message_v2_start_intent
+          WHERE deployment IS NOT NULL AND terminal_outcome IS NULL`;
+        const count = unsettled[0]?.count ?? 0;
+        if (count > 0) {
+          throw new SupervisorMessageV2WorkflowIdFormatError(
+            `V2 delivery ledger cannot return to legacy workflow ids: ${count} deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle`
+          );
+        }
+        await this.#recordLegacyIdsOfDeploymentRows(sql);
+      }
+      if (recorded !== format) {
+        await sql`INSERT INTO loop_supervisor_message_v2_schema_marker (name, value, build_id) VALUES (${WORKFLOW_ID_FORMAT_MARKER}, ${format}, ${this.#buildId})
+          ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, build_id = EXCLUDED.build_id, applied_at = now()`;
+      }
+      await sql.unsafe(START_INTENT_FORMAT_GUARD);
+      const guarded = await sql<
+        { present: boolean }[]
+      >`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'loop_supervisor_message_v2_start_intent_format_guard_v1' AND tgrelid = 'loop_supervisor_message_v2_start_intent'::regclass) AS present`;
+      if (!guarded[0]?.present) {
+        await sql`CREATE TRIGGER loop_supervisor_message_v2_start_intent_format_guard_v1
+          BEFORE INSERT ON loop_supervisor_message_v2_start_intent
+          FOR EACH ROW EXECUTE FUNCTION loop_supervisor_message_v2_start_intent_format_guard_v1()`;
+      }
+      return format;
+    });
+  }
+
+  /** Names the legacy id of every deployment-format row that lacks it (one
+   * recorded while the format was `deployment`), so the guard refuses that
+   * id. A row that cannot be read is left alone: nothing binds it. */
+  async #recordLegacyIdsOfDeploymentRows(sql: SQL): Promise<void> {
+    const rows = await sql<
+      {
+        input_json: unknown;
+        principal: string;
+        tenant_id: string;
+        workflow_id: string;
+      }[]
+    >`SELECT workflow_id, tenant_id, principal, input_json FROM loop_supervisor_message_v2_start_intent
+      WHERE deployment IS NOT NULL AND legacy_workflow_id IS NULL`;
+    for (const row of rows) {
+      const scope = { principal: row.principal, tenantId: row.tenant_id };
+      const legacy = attempt(() =>
+        deriveSupervisorMessageV2LegacyWorkflowId(
+          scope,
+          parseSupervisorMessageV2Input(storedJson(row.input_json), scope)
+            .dedupeKey
+        )
+      );
+      if (legacy) {
+        await sql`UPDATE loop_supervisor_message_v2_start_intent SET legacy_workflow_id = ${legacy} WHERE workflow_id = ${row.workflow_id}`;
+      }
+    }
   }
 
   /**
@@ -640,6 +871,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     input: SupervisorMessageV2Input
   ): Promise<SupervisorMessageV2Input> {
     const parsed = parseSupervisorMessageV2Input(input, trustedScope);
+    const format = this.#writeFormat();
     const current = deriveSupervisorMessageV2WorkflowId(
       trustedScope,
       parsed.dedupeKey,
@@ -655,13 +887,21 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       );
     }
     const encoded = canonical(parsed);
-    if (workflowId === current) {
+    if (workflowId === current && format === "deployment") {
       // Never record a dedupe key a second time under the new format while
       // its legacy intent exists: that would start the message twice.
       await this
         .#sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, deployment)
         SELECT ${workflowId}, ${trustedScope.tenantId}, ${trustedScope.principal}, ${encoded}::jsonb, ${this.#deployment}
         WHERE NOT EXISTS (SELECT 1 FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${legacy})
+        ON CONFLICT (workflow_id) DO NOTHING`;
+    }
+    if (workflowId === legacy && format === "legacy") {
+      // The row a pre-discriminator build writes, byte for byte. The format
+      // guard refuses it while the message is held under a deployment id.
+      await this
+        .#sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json)
+        VALUES (${workflowId}, ${trustedScope.tenantId}, ${trustedScope.principal}, ${encoded}::jsonb)
         ON CONFLICT (workflow_id) DO NOTHING`;
     }
     const rows = await this.#sql<
@@ -673,8 +913,13 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     >`SELECT workflow_id, deployment, input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
     const row = rows[0];
     if (!row) {
-      // A legacy id is never minted; a deployment id is refused while the
-      // same dedupe key is held under its legacy id.
+      // Only the written format is minted; a deployment id is also refused
+      // while the same dedupe key is held under its legacy id.
+      if (format === "legacy") {
+        throw new Error(
+          'V2 deployment workflow id has no recorded start intent; this ledger writes legacy workflow ids (a2aV2.workflowIdFormat "legacy")'
+        );
+      }
       throw new Error(
         workflowId === legacy
           ? "V2 legacy workflow id has no recorded start intent; a new message uses its deployment workflow id"

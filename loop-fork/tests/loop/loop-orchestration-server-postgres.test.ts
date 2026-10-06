@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { TaskState } from "@a2a-js/sdk";
 import { ServerCallContext } from "@a2a-js/sdk/server";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
-import { serve } from "bun";
+import { SQL, serve } from "bun";
 import { PostgresA2ATaskStore } from "../../src/loop/a2a-postgres-task-store";
 import { WORKFLOW_IDS_METADATA_KEY } from "../../src/loop/a2a-supervisor-executor";
 import {
@@ -455,6 +455,9 @@ const compositionFixture = (input: {
         routePath: "/a2a/v2",
         sessionTtlMs: 60_000,
         tenant: input.tenant,
+        // These servers share one ledger database and derive
+        // deployment-scoped ids: every one has opted in.
+        workflowIdFormat: "deployment",
         ...input.a2aExtra,
       },
       address: input.address,
@@ -762,7 +765,11 @@ test("a V2 delivery pending for a stopped peer at start neither refuses start no
   );
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: fixture.taskQueue }
+    {
+      buildId: "orchestration-composition.v1",
+      deployment: fixture.taskQueue,
+      workflowIdFormat: "deployment",
+    }
   );
   const errors = spyOn(console, "error");
   const stop = new AbortController();
@@ -851,7 +858,11 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
   );
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: fixture.taskQueue }
+    {
+      buildId: "orchestration-composition.v1",
+      deployment: fixture.taskQueue,
+      workflowIdFormat: "deployment",
+    }
   );
   const errors = spyOn(console, "error");
   const stop = new AbortController();
@@ -957,7 +968,11 @@ test("the orchestration server starts a message's result graph under its keyed i
   });
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: taskQueue }
+    {
+      buildId: "orchestration-composition.v1",
+      deployment: taskQueue,
+      workflowIdFormat: "deployment",
+    }
   );
   const tasks = await PostgresA2ATaskStore.connect({
     databaseUrl: postgres.databaseUrl(),
@@ -1098,7 +1113,9 @@ test("the orchestration server starts a message's result graph under its keyed i
     const keyed = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       postgres.databaseUrl(),
       {
+        buildId: "orchestration-composition.v1",
         deployment: taskQueue,
+        workflowIdFormat: "deployment",
         resultGraphKey: SupervisorResultGraphKey.fromSecret(secret),
       }
     );
@@ -1168,6 +1185,116 @@ test("the orchestration server reports its configured readiness-outage bound and
   } finally {
     stop.abort();
     await running?.catch(() => undefined);
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server writes its configured V2 workflow id format and refuses a return to legacy over unsettled intents, verbatim", async () => {
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  const environment = await temporalEnvironment();
+  const admin = new SQL(postgres.databaseUrl());
+  await admin.connect();
+  const name = `server_format_${randomUUID().replaceAll("-", "")}`;
+  await admin.unsafe(`CREATE DATABASE ${name}`);
+  await admin.close({ timeout: 0 });
+  const url = new URL(postgres.databaseUrl());
+  url.pathname = `/${name}`;
+  const databaseUrl = url.toString();
+  const config = a2aConfig(tenant());
+  // The fixture opts in to "deployment"; this database records nothing yet.
+  const fixture = compositionFixture({
+    address: environment.address,
+    envExtra: { LOOP_TEST_A2A_DATABASE_URL: databaseUrl },
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const ledgerSql = new SQL(databaseUrl);
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    await ledgerSql.connect();
+    expect(
+      await ledgerSql<
+        { build_id: string | null; value: string | null }[]
+      >`SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`
+    ).toEqual([
+      { build_id: "orchestration-composition.v1", value: "deployment" },
+    ]);
+    stop.abort();
+    await running.catch(() => undefined);
+    running = undefined;
+
+    // An unsettled deployment-format intent, then a restart set to legacy.
+    const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      {
+        buildId: "orchestration-composition.v1",
+        deployment: fixture.taskQueue,
+        workflowIdFormat: "deployment",
+      }
+    );
+    try {
+      await ledger.migrate();
+      const scope = scopeOf(config);
+      const dedupeKey = `unsettled-${randomUUID().slice(0, 8)}`;
+      await ledger.recordStartIntent(
+        deriveSupervisorMessageV2WorkflowId(
+          scope,
+          dedupeKey,
+          fixture.taskQueue
+        ),
+        scope,
+        {
+          ...structuredClone(fixtureV2.input),
+          dedupeKey,
+          from: "supervisor:sender",
+          messageId: `message-${dedupeKey}`,
+          principal: scope.principal,
+          tenantId: scope.tenantId,
+          threadId: `thread-${dedupeKey}`,
+          to: config.recipient,
+        }
+      );
+    } finally {
+      await ledger.close();
+    }
+    const returning = compositionFixture({
+      a2aExtra: { workflowIdFormat: "legacy" },
+      address: environment.address,
+      envExtra: { LOOP_TEST_A2A_DATABASE_URL: databaseUrl },
+      taskQueue: fixture.taskQueue,
+      tenant: config.tenant,
+      thread: "thread-a",
+    });
+    const refusal = new AbortController();
+    const timer = setTimeout(() => refusal.abort(), 30_000);
+    try {
+      const outcome = await runLoopOrchestrationServer(
+        returning.configPath,
+        returning.env,
+        { signal: refusal.signal }
+      ).then(
+        () => "started",
+        (error: unknown) => (error instanceof Error ? error.message : "")
+      );
+      expect(outcome).toBe(
+        'Supervisor A2A V2 service initialization failed at delivery-ledger: V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle'
+      );
+    } finally {
+      clearTimeout(timer);
+      refusal.abort();
+      returning.remove();
+    }
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    await ledgerSql.close({ timeout: 0 });
     fixture.remove();
   }
 }, 120_000);

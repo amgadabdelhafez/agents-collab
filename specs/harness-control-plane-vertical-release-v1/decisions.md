@@ -127,3 +127,51 @@ assigned item is decided but not implemented.
 Also observed: claude/fix3-doorbell-starvation, with no commits. This record
 does not map it to a decision. The open-defect state for these items is in
 status.md, under "Open review defects at r2".
+
+## 2026-10-05: decision 6 follow-up, a rollback-safe workflow ID format
+
+This is not an owner decision. Owner question Q1 (is a one-way upgrade
+acceptable for the deployment ID?) is unanswered, so
+claude/fix4-deployment-rollback-safety takes the option that needs no answer:
+rolling back stays safe, and nothing becomes one-way without an explicit
+operator step. It builds on claude/fix-integration-r3-2026-10-05 (ef570282)
+and is not merged or installed.
+
+- Operator switch: `a2aV2.workflowIdFormat`, "legacy" or "deployment". When it
+  is omitted, the host uses the format the ledger database records, or
+  "legacy" when none is recorded. "deployment" is always an explicit opt-in.
+  In both formats the host reads, recovers and deduplicates both ID formats.
+- Durable marker: the loop_supervisor_message_v2_schema_marker row
+  'workflow-id-format.v1' records the format (column value) and the build that
+  set it (column build_id). A host refuses to start on a recorded format it
+  does not support, with the exact message: V2 delivery ledger records
+  workflow id format "<format>" (written by build <build>), which this build
+  does not support; it supports "legacy" and "deployment". Run a build that
+  supports the recorded format.
+- Database guard: a BEFORE INSERT trigger on the start-intent table refuses,
+  for every writer (including a pre-discriminator build), a start intent in
+  any format but the recorded one. It also refuses a legacy-format intent for
+  a message already held under a deployment ID.
+- Procedure. (1) Install this build with the switch unset. It writes the
+  legacy ID, byte for byte, with deployment NULL: the row a
+  pre-discriminator build writes. Rolling back to that build is safe. A test
+  replays that build's SQL against the rows. (2) After every host that shares
+  the ledger database runs this build, set "deployment" and restart. From then
+  on, a pre-discriminator build cannot record a start intent. Its recovery
+  also refuses the first deployment-format row it reads. (3) To go back, set
+  "legacy". Start is refused while any deployment-format start intent has no
+  terminal outcome, with the exact message: V2 delivery ledger cannot return
+  to legacy workflow ids: <n> deployment-format start intents have no
+  terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they
+  settle. Once they settle, the switch back is allowed.
+- Limits. Deployment-format rows are never deleted. A database that ever held
+  one cannot be used by a pre-discriminator build again: that build's
+  recovery rejects every such row, settled or not. After a flip, the
+  reversible path is this build's legacy mode, not the old binary. The
+  format applies to the whole database, so hosts that share it must be
+  configured alike. A host whose format another host changed refuses to
+  record (trigger message) until it restarts. A database written by the r3
+  build (deployment rows, no marker) defaults to "legacy". It therefore
+  refuses to start until "deployment" is set or its rows settle.
+- Q2 is untouched: no unauthenticated endpoint exposes the format, the
+  marker or any seat ID.
