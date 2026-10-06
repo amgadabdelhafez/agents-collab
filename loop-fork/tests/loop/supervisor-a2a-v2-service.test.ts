@@ -20,6 +20,7 @@ import {
 } from "../../src/loop/supervisor-a2a-v2-service";
 import type { SupervisorMessageV2DeliveryEnvelope } from "../../src/loop/supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
+import { SupervisorMessageV2ReadinessUnavailableError } from "../../src/loop/supervisor-message-v2-runtime";
 import {
   deriveSupervisorSessionDescriptorV2Id,
   PostgresSupervisorSessionV2Store,
@@ -906,3 +907,76 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     rmSync(root, { force: true, recursive: true });
   }
 }, 90_000);
+
+test("a stopped PostgreSQL session store reports readiness unavailable, not an unready seat, without its database URL", async () => {
+  let postgres: DisposablePostgres | undefined;
+  let sessions: PostgresSupervisorSessionV2Store | undefined;
+  let alive = true;
+  try {
+    postgres = await DisposablePostgres.create();
+    const databaseUrl = postgres.databaseUrl();
+    const password = decodeURIComponent(new URL(databaseUrl).password);
+    sessions = await PostgresSupervisorSessionV2Store.connect({
+      authority: {
+        decide: () => ({
+          allowed: false,
+          authorityRef: "authority:none",
+          reasonCode: "denied",
+        }),
+      },
+      databaseUrl,
+      now: () => NOW,
+      provider: {
+        ready: (current: SupervisorSessionDescriptorV2) => {
+          if (!alive) {
+            throw new Error("controlled seat is gone");
+          }
+          return {
+            descriptorId: current.descriptorId,
+            endpointDigest: current.endpointDigest,
+            provider: current.provider,
+            revision: current.revision,
+            sessionRef: current.sessionRef,
+            status: "ready" as const,
+          };
+        },
+      },
+    });
+    await sessions.migrate();
+    await sessions.register(SCOPE, descriptor());
+    await expect(sessions.assertReady(SCOPE, RECIPIENT)).resolves.toMatchObject(
+      { status: "ready" }
+    );
+
+    // A dead seat over a live store is an ordinary readiness refusal.
+    alive = false;
+    const unready = await sessions
+      .assertReady(SCOPE, RECIPIENT)
+      .then(() => undefined)
+      .catch((error: unknown) => error);
+    expect(unready).toBeInstanceOf(Error);
+    expect(unready).not.toBeInstanceOf(
+      SupervisorMessageV2ReadinessUnavailableError
+    );
+    alive = true;
+
+    // The store itself goes away.
+    await postgres.close();
+    postgres = undefined;
+    const unavailable = await sessions
+      .assertReady(SCOPE, RECIPIENT)
+      .then(() => undefined)
+      .catch((error: unknown) => error);
+    expect(unavailable).toBeInstanceOf(
+      SupervisorMessageV2ReadinessUnavailableError
+    );
+    const rendered = `${String(unavailable)} ${JSON.stringify(unavailable)} ${
+      (unavailable as Error).stack
+    }`;
+    expect(rendered).not.toContain(password);
+    expect(rendered).not.toContain(databaseUrl);
+  } finally {
+    await sessions?.close().catch(() => undefined);
+    await postgres?.close();
+  }
+}, 60_000);

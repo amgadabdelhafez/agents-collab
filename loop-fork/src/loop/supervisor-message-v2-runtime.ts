@@ -48,6 +48,18 @@ export interface SupervisorMessageV2DeliveryReadinessPort {
 }
 
 /**
+ * A readiness port throws this when it cannot answer at all (its own store is
+ * unreachable), as opposed to answering "this seat is not ready". The message
+ * is fixed and opaque: no database URL, driver detail, or session detail.
+ */
+export class SupervisorMessageV2ReadinessUnavailableError extends Error {
+  constructor() {
+    super("session readiness store is unavailable");
+    this.name = "SupervisorMessageV2ReadinessUnavailableError";
+  }
+}
+
+/**
  * Explicit lifecycle hook for a V2-capable service. It intentionally keeps
  * recovery out of the sender request path: service startup performs one
  * durable sweep, and the configured period handles abandoned pre-dispatch and
@@ -572,8 +584,17 @@ export class SupervisorMessageV2Coordinator {
       if (!(await this.#deliveryPending(trustedScope, workflowId))) {
         continue;
       }
-      await this.#deliver(trustedScope, workflowId, `recovery:${workflowId}`);
-      recovered += 1;
+      // A delivery deferred by a readiness-store outage stays pending for the
+      // next sweep and is not counted as recovered.
+      if (
+        (await this.#deliver(
+          trustedScope,
+          workflowId,
+          `recovery:${workflowId}`
+        )) === "attempted"
+      ) {
+        recovered += 1;
+      }
     }
     return recovered;
   }
@@ -659,7 +680,7 @@ export class SupervisorMessageV2Coordinator {
     trustedScope: TrustedSupervisorMessageV2Scope,
     workflowId: string,
     requestId: string
-  ): Promise<void> {
+  ): Promise<"attempted" | "deferred"> {
     const request = await this.#workflows.query({
       args: { trustedScope, workflowId },
       name: "delivery_request",
@@ -679,7 +700,14 @@ export class SupervisorMessageV2Coordinator {
     let ready = true;
     try {
       await this.#readiness?.assertReady(trustedScope, envelope.target);
-    } catch {
+    } catch (error) {
+      if (error instanceof SupervisorMessageV2ReadinessUnavailableError) {
+        // The readiness store could not answer: that says nothing about the
+        // seat. Leave the delivery pending without claiming a lease or
+        // spending one of the message's attempts; the existing recovery
+        // sweep retries it once the store answers again.
+        return "deferred";
+      }
       ready = false;
     }
     const claim = await this.#ledger.claim(
@@ -690,7 +718,7 @@ export class SupervisorMessageV2Coordinator {
       this.#leaseMs
     );
     if (claim.state === "busy") {
-      return;
+      return "attempted";
     }
     if (claim.state === "succeeded") {
       await this.#workflows.signal({
@@ -699,7 +727,7 @@ export class SupervisorMessageV2Coordinator {
         requestId: outcomeRequestId,
         workflowId,
       });
-      return;
+      return "attempted";
     }
     let outcome: SupervisorMessageV2DeliveryOutcome;
     try {
@@ -738,6 +766,7 @@ export class SupervisorMessageV2Coordinator {
       requestId: outcomeRequestId,
       workflowId,
     });
+    return "attempted";
   }
 
   async #deliveryPending(
