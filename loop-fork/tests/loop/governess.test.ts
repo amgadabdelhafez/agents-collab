@@ -2953,6 +2953,197 @@ test("summary labels any cost coverage below 100% as partial with the figure", a
   expect(await run([0, 0])).toContain("Σ est partial 0% (known $10.00)");
 });
 
+test("summary coverage floors, clamps each seat, and counts unreadable seats as unknown", async () => {
+  const run = async (seats: [Partial<AgentUsage>, Partial<AgentUsage>]) => {
+    const deps: GovernessDeps = {
+      ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+      readUsage: (agent) =>
+        usage({
+          costUsd: 5,
+          dataConfidence: "exact",
+          ...(agent === "claude" ? seats[0] : seats[1]),
+        }),
+    };
+    const result = await governessTick(
+      new Map(),
+      baseConfig({
+        agents: [
+          { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+          { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+        ],
+      }),
+      deps
+    );
+    return stripAnsi(result.board).split("\n")[0] ?? "";
+  };
+  // 99.5% is not complete: floored, never rounded up to 100.
+  expect(
+    await run([
+      { costEstimateCoveragePct: 100 },
+      { costEstimateCoveragePct: 99 },
+    ])
+  ).toContain("Σ est partial 99% (known $10.00)");
+  // An out-of-range seat cannot mask another seat's gap, in either direction.
+  expect(
+    await run([
+      { costEstimateCoveragePct: 150 },
+      { costEstimateCoveragePct: 50 },
+    ])
+  ).toContain("Σ est partial 75% (known $10.00)");
+  expect(
+    await run([
+      { costEstimateCoveragePct: -50 },
+      { costEstimateCoveragePct: 100 },
+    ])
+  ).toContain("Σ est partial 50% (known $10.00)");
+  // A seat whose usage is missing or unreadable has unknown spend, even with
+  // no coverage figure; a readable seat with no figure had nothing to price.
+  for (const dataConfidence of ["missing", "error"] as const) {
+    expect(
+      await run([{ dataConfidence }, { costEstimateCoveragePct: 100 }])
+    ).toContain("Σ est partial 50% (known $10.00)");
+  }
+  expect(await run([{}, { costEstimateCoveragePct: 100 }])).toContain(
+    "Σ est $10.00"
+  );
+});
+
+test("summary of a board with no seats is complete, not partial", async () => {
+  const result = await governessTick(
+    new Map(),
+    baseConfig({ agents: [] }),
+    makeDeps(stuck, { ms: START_MS }, freshSpies())
+  );
+  const summary = stripAnsi(result.board).split("\n")[0] ?? "";
+  expect(summary).toContain("Σ est $0.00");
+  expect(summary).not.toContain("partial");
+});
+
+test("observed seat effort wins over configured effort and carries no marker", async () => {
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+    readUsage: () =>
+      usage({
+        dataConfidence: "exact",
+        model: "claude-sonnet-5",
+        reasoningEffort: "medium",
+      }),
+  };
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        {
+          agent: "claude",
+          configuredEffort: "high",
+          configuredModel: "claude-opus-5",
+          hookFile: "hooks.jsonl",
+          pane: "s:0.0",
+        },
+      ],
+    }),
+    deps
+  );
+  const claudeRow = stripAnsi(result.board)
+    .split("\n")
+    .find((line) => line.startsWith(" claude"));
+  expect(claudeRow).toMatch(/\smed\s/);
+  expect(claudeRow).toMatch(/\ssonnet-5\s/);
+  expect(claudeRow).not.toContain("~");
+  expect(claudeRow).not.toMatch(/\shi\s/);
+});
+
+test("tmux-degraded rows keep configured identity marked and never rewrite the reader's usage", async () => {
+  const shared = usage({ dataConfidence: "exact", inputTokens: 1_000_000 });
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+    capturePane: () => {
+      throw new TmuxControlUnavailableError([
+        "capture-pane",
+        "-p",
+        "-t",
+        "s:0.0",
+      ]);
+    },
+    readUsage: () => shared,
+    readUsageLimits: () => Promise.resolve({ pricing: trackerPricing }),
+  };
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        {
+          agent: "claude",
+          configuredEffort: "high",
+          configuredModel: "claude-opus-5",
+          hookFile: "hooks.jsonl",
+          pane: "s:0.0",
+        },
+      ],
+    }),
+    deps
+  );
+  expect(result.tmuxControlAvailable).toBe(false);
+  const claudeRow = stripAnsi(result.board)
+    .split("\n")
+    .find((line) => line.startsWith(" claude"));
+  // readUsage's object is the reader's, not the board's to rewrite.
+  expect(shared.model).toBeUndefined();
+  expect(shared.reasoningEffort).toBeUndefined();
+  expect(shared.costUsd).toBe(0);
+  expect(claudeRow).toMatch(/\s~opus-5\s/);
+  expect(claudeRow).toMatch(/\s~hi\s/);
+  // Without an observed model the configured one is the only pricing basis.
+  expect(claudeRow).toContain("$15.00");
+});
+
+test("tmux-degraded rows price and label an observed model over the configured one", async () => {
+  const shared = usage({
+    dataConfidence: "exact",
+    inputTokens: 1_000_000,
+    model: "claude-sonnet-5",
+  });
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+    capturePane: () => {
+      throw new TmuxControlUnavailableError([
+        "capture-pane",
+        "-p",
+        "-t",
+        "s:0.0",
+      ]);
+    },
+    readUsage: () => shared,
+    readUsageLimits: () => Promise.resolve({ pricing: trackerPricing }),
+  };
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        {
+          agent: "claude",
+          configuredModel: "claude-opus-5",
+          hookFile: "hooks.jsonl",
+          pane: "s:0.0",
+        },
+      ],
+    }),
+    deps
+  );
+  expect(result.tmuxControlAvailable).toBe(false);
+  const claudeRow = stripAnsi(result.board)
+    .split("\n")
+    .find((line) => line.startsWith(" claude"));
+  // The observed model is both the label and the pricing basis: sonnet's
+  // $3/Mtok, not the configured opus's $15/Mtok, and no configured marker.
+  expect(claudeRow).toMatch(/\ssonnet-5\s/);
+  expect(claudeRow).toContain("$3.00");
+  expect(claudeRow).not.toContain("$15.00");
+  expect(claudeRow).not.toContain("~");
+  expect(shared.model).toBe("claude-sonnet-5");
+  expect(shared.costUsd).toBe(0);
+});
+
 test("default board names the single judge model and credential-free endpoint", async () => {
   await withEnv({ LOOP_GOVERNESS_BOARD_DETAILS: undefined }, async () => {
     const result = await governessTick(
