@@ -25,6 +25,13 @@ export interface SupervisorControlSurfaceAuthenticator {
 export interface SupervisorOrchestrationHttpOptions {
   authenticator: SupervisorControlSurfaceAuthenticator;
   messages: SupervisorOrchestrationRuntime;
+  /**
+   * The A2A V2 route that starts a message's result graph
+   * (`<routePath>/result-graph`), when this server has one. It is only named
+   * in the refusal of a reserved result graph id, so an operator script that
+   * still calls `task-graphs/start` learns which route replaces that call.
+   */
+  resultGraphRoutePath?: string;
   tasks: TaskGraphRuntime;
 }
 
@@ -51,6 +58,32 @@ const json = (status: number, value: unknown): Response =>
 
 const errorResponse = (status: number, code: string): Response =>
   json(status, { error: { code } });
+
+const RESULT_GRAPH_ID_COMMAND =
+  "loop orchestration result-graph-id <config-path> <message-workflow-id>";
+
+/**
+ * The refusal of a reserved result graph id on `task-graphs/start`. The
+ * refusal is the security property and stays; the body only tells the caller
+ * which route replaces the call and how to compute the id it derives.
+ */
+const resultGraphIdReserved = (routePath: string | undefined): Response => {
+  const route = routePath
+    ? `Start the message's result graph with POST ${routePath}`
+    : "This server has no A2A V2 route configured; on a host that has one, start the message's result graph with POST <routePath>/result-graph";
+  return json(403, {
+    error: {
+      code: "result-graph-id-reserved",
+      message: `${RESULT_GRAPH_ID_PREFIX}* workflow ids are reserved for message result graphs and are never started by task-graphs/start. ${route} and the JSON body {input, messageWorkflowId, requestId}; the host derives the graph id. Compute that id for a resultArtifacts entry with: ${RESULT_GRAPH_ID_COMMAND}`,
+      replacement: {
+        body: ["input", "messageWorkflowId", "requestId"],
+        method: "POST",
+        resultGraphIdCommand: RESULT_GRAPH_ID_COMMAND,
+        route: routePath ?? null,
+      },
+    },
+  });
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -224,7 +257,7 @@ const postGraph = async (
       typeof body.workflowId === "string" &&
       body.workflowId.startsWith(RESULT_GRAPH_ID_PREFIX)
     ) {
-      return errorResponse(403, "result-graph-id-reserved");
+      return resultGraphIdReserved(options.resultGraphRoutePath);
     }
     return json(200, {
       data: await options.tasks.start({

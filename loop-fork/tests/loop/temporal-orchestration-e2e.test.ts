@@ -317,3 +317,77 @@ test("real Temporal control surface completes cross-supervisor delivery and a de
     rmSync(root, { force: true, recursive: true });
   }
 }, 60_000);
+
+test("real Temporal host refuses a reserved result graph id and names the result-graph route it was given", async () => {
+  const root = mkdtempSync(join(tmpdir(), "temporal-orchestration-reserved-"));
+  const environment = await TestWorkflowEnvironment.createLocal();
+  let host: TemporalSupervisorRuntimeHost | undefined;
+  try {
+    host = await TemporalSupervisorRuntimeHost.create({
+      authority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:reserved-result-graph-proof",
+          reasonCode: "staged-proof-policy",
+        }),
+      },
+      buildId: "orchestration-reserved.v1",
+      delivery: {
+        deliver: () => Promise.resolve({ status: "accepted" as const }),
+      },
+      identity: "orchestration-reserved@test",
+      namespace: environment.client.workflow.options.namespace,
+      nativeConnection: environment.nativeConnection,
+      receipts: { record: () => undefined },
+      store: new JsonlSupervisorThreadStore(join(root, "threads.jsonl")),
+      taskQueue: `orchestration-reserved-${process.pid}`,
+      workflowClient: environment.client.workflow,
+      workflowBundle: {
+        code: Buffer.from(temporalWorkflowBundleBase64, "base64").toString(
+          "utf8"
+        ),
+      },
+    });
+    const authenticator = {
+      authenticate: () => ({
+        principal: "principal:harness",
+        supervisorId: "supervisor:harness",
+      }),
+    };
+    const start = (handler: (request: Request) => Promise<Response>) =>
+      handler(
+        new Request("http://127.0.0.1/api/v1/task-graphs/start", {
+          body: JSON.stringify({
+            input: { schema: "task-graph.v1" },
+            requestId: "operator-script",
+            workflowId: `supervisor-result-graph:v3:${"f".repeat(64)}`,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        })
+      );
+    const routed = await start(
+      host.httpHandler(authenticator, {
+        resultGraphRoutePath: "/a2a/v2/result-graph",
+      })
+    );
+    expect(routed.status).toBe(403);
+    expect(await routed.json()).toMatchObject({
+      error: {
+        code: "result-graph-id-reserved",
+        replacement: { method: "POST", route: "/a2a/v2/result-graph" },
+      },
+    });
+    const unrouted = await start(host.httpHandler(authenticator));
+    expect(unrouted.status).toBe(403);
+    expect(await unrouted.json()).toMatchObject({
+      error: { code: "result-graph-id-reserved", replacement: { route: null } },
+    });
+  } finally {
+    if (host) {
+      await host.close();
+    }
+    await environment.teardown();
+    rmSync(root, { force: true, recursive: true });
+  }
+}, 60_000);

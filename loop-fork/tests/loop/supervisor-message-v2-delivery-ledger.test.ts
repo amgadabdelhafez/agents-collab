@@ -25,6 +25,7 @@ import {
   type SupervisorMessageV2DeliveryOutcome,
   SupervisorMessageV2RecoveryRunner,
   SupervisorMessageV2RecoveryStartupError,
+  type SupervisorMessageV2TerminalOutcome,
   supervisorMessageV2WorkflowDefinition,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import {
@@ -411,6 +412,220 @@ describe("V2 delivery ledger on PostgreSQL", () => {
     } finally {
       await legacy.close();
     }
+  });
+
+  test("migrates a ledger left by the 3f7a70f2 build: its 'completed' CHECK is replaced and stored 'completed' becomes 'acknowledged'", async () => {
+    const databaseUrl = await freshDatabase();
+    const legacySql = new SQL(databaseUrl);
+    opened.push({ close: () => legacySql.close({ timeout: 0 }) });
+    await legacySql.connect();
+    // The schema exactly as 3f7a70f2's migrate() left it: the terminal marker
+    // with a CHECK that allows 'completed' and refuses 'acknowledged'.
+    await legacySql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_delivery_ledger (delivery_id TEXT PRIMARY KEY, envelope_json JSONB NOT NULL, completed_at TIMESTAMPTZ, lease_owner TEXT, lease_fence BIGINT NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ)`;
+    await legacySql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
+    await legacySql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_result_binding (
+      workflow_id TEXT NOT NULL REFERENCES loop_supervisor_message_v2_start_intent(workflow_id),
+      a2a_task_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal TEXT NOT NULL,
+      binding_json JSONB NOT NULL, PRIMARY KEY (workflow_id, a2a_task_id)
+    )`;
+    await legacySql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('completed', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+    await legacySql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ`;
+    const acked = inputFor(`acked-${randomUUID()}`);
+    const canceled = inputFor(`canceled-${randomUUID()}`);
+    const open = inputFor(`open-${randomUUID()}`);
+    const ackedId = legacyWorkflowIdOf(acked);
+    const canceledId = legacyWorkflowIdOf(canceled);
+    const openId = legacyWorkflowIdOf(open);
+    await legacySql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, terminal_outcome, terminal_at) VALUES
+      (${ackedId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(acked)}::jsonb, 'completed', now()),
+      (${canceledId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(canceled)}::jsonb, 'canceled', now()),
+      (${openId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(open)}::jsonb, NULL, NULL)`;
+    const checks = () =>
+      legacySql<{ definition: string; oid: number }[]>`
+        SELECT c.oid::integer AS oid, pg_get_constraintdef(c.oid) AS definition
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.conrelid = 'loop_supervisor_message_v2_start_intent'::regclass
+          AND c.contype = 'c' AND a.attname = 'terminal_outcome'`;
+
+    const migrated = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      { deployment: DEPLOYMENT }
+    );
+    opened.push(migrated);
+    await migrated.migrate();
+    const replaced = await checks();
+    await migrated.migrate();
+
+    // Idempotent: one CHECK, rewritten once and left alone after that.
+    expect(replaced).toHaveLength(1);
+    expect(replaced[0]?.definition).toContain("'acknowledged'");
+    expect(replaced[0]?.definition).not.toContain("'completed'");
+    expect(await checks()).toEqual(replaced);
+    // The intermediate build's recipient ACK is read as what it was.
+    await expect(migrated.terminalOutcome(ackedId, SCOPE)).resolves.toBe(
+      "acknowledged"
+    );
+    await expect(migrated.terminalOutcome(canceledId, SCOPE)).resolves.toBe(
+      "canceled"
+    );
+    await expect(migrated.terminalOutcome(openId, SCOPE)).resolves.toBe(
+      undefined
+    );
+    // No row is lost: the sweep still reads all three intents.
+    expect(
+      (await migrated.recoverableStarts())
+        .map((start) => start.workflowId)
+        .sort()
+    ).toEqual([ackedId, canceledId, openId].sort());
+    // An acknowledgement can now be recorded, and 'completed' never again.
+    await migrated.recordTerminalOutcome(openId, SCOPE, "acknowledged");
+    await expect(migrated.terminalOutcome(openId, SCOPE)).resolves.toBe(
+      "acknowledged"
+    );
+    const completed =
+      await legacySql`UPDATE loop_supervisor_message_v2_start_intent SET terminal_outcome = 'completed' WHERE workflow_id = ${canceledId}`.then(
+        () => "accepted",
+        () => "rejected by the CHECK constraint"
+      );
+    expect(completed).toBe("rejected by the CHECK constraint");
+  });
+
+  test("replaces any terminal_outcome CHECK that is not the current list, including hand-edited ones", async () => {
+    const variants: Record<string, string | undefined> = {
+      // An operator widened the CHECK to let the intermediate build write on.
+      "hand-widened": `CHECK (terminal_outcome IN ('acknowledged', 'completed', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`,
+      // Narrowed by hand: no 'completed', but it refuses 'exhausted'.
+      "hand-narrowed": `CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'terminated'))`,
+      // Dropped by hand.
+      dropped: undefined,
+    };
+    for (const [label, check] of Object.entries(variants)) {
+      const databaseUrl = await freshDatabase();
+      const handSql = new SQL(databaseUrl);
+      opened.push({ close: () => handSql.close({ timeout: 0 }) });
+      await handSql.connect();
+      await handSql`CREATE TABLE loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
+      await handSql.unsafe(
+        `ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN terminal_outcome TEXT ${check ?? ""}`
+      );
+      const ids: {
+        outcome: SupervisorMessageV2TerminalOutcome;
+        workflowId: string;
+      }[] = [];
+      for (const outcome of [
+        "acknowledged",
+        "canceled",
+        "dead-lettered",
+        "exhausted",
+        "terminated",
+      ] as const) {
+        const input = inputFor(`${label}-${outcome}-${randomUUID()}`);
+        ids.push({ outcome, workflowId: legacyWorkflowIdOf(input) });
+        await handSql`INSERT INTO loop_supervisor_message_v2_start_intent VALUES (${legacyWorkflowIdOf(input)}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb, NULL)`;
+      }
+      const ledgerFor = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+        databaseUrl,
+        { deployment: DEPLOYMENT }
+      );
+      opened.push(ledgerFor);
+      await ledgerFor.migrate();
+      const definitions = await handSql<{ definition: string }[]>`
+        SELECT pg_get_constraintdef(c.oid) AS definition
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.conrelid = 'loop_supervisor_message_v2_start_intent'::regclass
+          AND c.contype = 'c' AND a.attname = 'terminal_outcome'`;
+      expect(`${label}: ${definitions.length}`).toBe(`${label}: 1`);
+      expect(definitions[0]?.definition).not.toContain("'completed'");
+      // Every current outcome is accepted after the migration.
+      for (const { outcome, workflowId } of ids) {
+        await ledgerFor.recordTerminalOutcome(workflowId, SCOPE, outcome);
+        await expect(
+          ledgerFor.terminalOutcome(workflowId, SCOPE)
+        ).resolves.toBe(outcome);
+      }
+      const completed =
+        await handSql`UPDATE loop_supervisor_message_v2_start_intent SET terminal_outcome = 'completed'`.then(
+          () => "accepted",
+          () => "rejected by the CHECK constraint"
+        );
+      expect(`${label}: ${completed}`).toBe(
+        `${label}: rejected by the CHECK constraint`
+      );
+    }
+  });
+
+  test("hosts replacing one database's retired CHECK at the same time all start", async () => {
+    const databaseUrl = await freshDatabase();
+    // Every table exists, as on a host that ran 3f7a70f2 and later builds;
+    // only the terminal_outcome CHECK and a stored 'completed' are that
+    // build's. The CHECK carries a hand-chosen name, so a host that read the
+    // catalog before another replaced it cannot drop it twice. (Racing
+    // CREATE TABLE IF NOT EXISTS on an empty database is a separate, older
+    // limit of migrate.)
+    const first = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      { deployment: DEPLOYMENT }
+    );
+    opened.push(first);
+    await first.migrate();
+    const legacySql = new SQL(databaseUrl);
+    opened.push({ close: () => legacySql.close({ timeout: 0 }) });
+    await legacySql.connect();
+    await legacySql`ALTER TABLE loop_supervisor_message_v2_start_intent DROP CONSTRAINT loop_supervisor_message_v2_start_intent_terminal_outcome_check`;
+    await legacySql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD CONSTRAINT terminal_outcome_retired_check CHECK (terminal_outcome IN ('completed', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+    const input = inputFor(`concurrent-${randomUUID()}`);
+    const workflowId = legacyWorkflowIdOf(input);
+    await legacySql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, terminal_outcome) VALUES (${workflowId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb, 'completed')`;
+    const hosts = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, {
+          deployment: DEPLOYMENT,
+        })
+      )
+    );
+    opened.push(...hosts);
+    const results = await Promise.allSettled(
+      hosts.map((host) => host.migrate())
+    );
+    expect(
+      results.map((result) =>
+        result.status === "rejected" ? String(result.reason) : result.status
+      )
+    ).toEqual(["fulfilled", "fulfilled", "fulfilled", "fulfilled"]);
+    await expect(first.terminalOutcome(workflowId, SCOPE)).resolves.toBe(
+      "acknowledged"
+    );
+  });
+
+  test("leaves a current terminal_outcome CHECK in place on every migrate", async () => {
+    const url = await freshDatabase();
+    const twice = await PostgresSupervisorMessageV2DeliveryLedger.connect(url, {
+      deployment: DEPLOYMENT,
+    });
+    opened.push(twice);
+    const catalog = new SQL(url);
+    opened.push({ close: () => catalog.close({ timeout: 0 }) });
+    await catalog.connect();
+    const checks = () =>
+      catalog<{ name: string; oid: number }[]>`
+        SELECT c.conname AS name, c.oid::integer AS oid
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.conrelid = 'loop_supervisor_message_v2_start_intent'::regclass
+          AND c.contype = 'c' AND a.attname = 'terminal_outcome'`;
+    await twice.migrate();
+    const first = await checks();
+    await twice.migrate();
+    expect(first).toEqual([
+      {
+        name: "loop_supervisor_message_v2_start_intent_terminal_outcome_check",
+        oid: expect.any(Number),
+      },
+    ]);
+    // Not dropped and re-added: the same constraint survives every start.
+    expect(await checks()).toEqual(first);
   });
 });
 

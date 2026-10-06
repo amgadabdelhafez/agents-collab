@@ -42,7 +42,7 @@ const graphInput = (dependencies: string[] = []) => ({
   schema: TASK_GRAPH_WORKFLOW_TYPE,
 });
 
-const setup = () => {
+const setup = (resultGraphRoutePath?: string) => {
   const root = mkdtempSync(join(tmpdir(), "orch-http-"));
   roots.push(root);
   const workflows = new InMemoryWorkflowPort({
@@ -82,6 +82,7 @@ const setup = () => {
           : undefined,
     },
     messages,
+    ...(resultGraphRoutePath === undefined ? {} : { resultGraphRoutePath }),
     tasks,
   });
   return { handler, workflows };
@@ -186,7 +187,7 @@ describe("authenticated orchestration HTTP surface", () => {
   });
 
   test("never starts a graph under a result graph id: only the message-driven route derives one", async () => {
-    const { handler, workflows } = setup();
+    const { handler, workflows } = setup("/a2a/v2/result-graph");
     for (const workflowId of [
       `supervisor-result-graph:v3:${"c".repeat(64)}`,
       `supervisor-result-graph:v2:${"c".repeat(64)}`,
@@ -200,10 +201,96 @@ describe("authenticated orchestration HTTP surface", () => {
         })
       );
       expect(refused.status).toBe(403);
-      expect(await refused.json()).toEqual({
-        error: { code: "result-graph-id-reserved" },
-      });
+      expect(
+        ((await refused.json()) as { error: { code: string } }).error.code
+      ).toBe("result-graph-id-reserved");
       expect(() => workflows.inspect(workflowId)).toThrow("not found");
+    }
+  });
+
+  test("a reserved result graph id refusal names the replacement route and the result-graph-id CLI", async () => {
+    const { handler, workflows } = setup("/a2a/v2/result-graph");
+    const workflowId = `supervisor-result-graph:v3:${"d".repeat(64)}`;
+    const refused = await handler(
+      request("/api/v1/task-graphs/start", {
+        input: graphInput(),
+        requestId: "operator-script",
+        workflowId,
+      })
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("cache-control")).toBe("no-store");
+    const body = (await refused.json()) as {
+      error: { code: string; message: string; replacement: unknown };
+    };
+    expect(body.error.code).toBe("result-graph-id-reserved");
+    expect(body.error.replacement).toEqual({
+      body: ["input", "messageWorkflowId", "requestId"],
+      method: "POST",
+      resultGraphIdCommand:
+        "loop orchestration result-graph-id <config-path> <message-workflow-id>",
+      route: "/a2a/v2/result-graph",
+    });
+    expect(body.error.message).toContain("POST /a2a/v2/result-graph");
+    expect(body.error.message).toContain(
+      "loop orchestration result-graph-id <config-path> <message-workflow-id>"
+    );
+    expect(() => workflows.inspect(workflowId)).toThrow("not found");
+  });
+
+  test("a reserved result graph id refusal on a server without an A2A V2 route still names the CLI and says no route is configured", async () => {
+    const { handler } = setup();
+    const refused = await handler(
+      request("/api/v1/task-graphs/start", {
+        input: graphInput(),
+        requestId: "operator-script",
+        workflowId: `supervisor-result-graph:v3:${"e".repeat(64)}`,
+      })
+    );
+    expect(refused.status).toBe(403);
+    const body = (await refused.json()) as {
+      error: {
+        code: string;
+        message: string;
+        replacement: { route: unknown; resultGraphIdCommand: string };
+      };
+    };
+    expect(body.error.code).toBe("result-graph-id-reserved");
+    expect(body.error.replacement.route).toBeNull();
+    expect(body.error.replacement.resultGraphIdCommand).toBe(
+      "loop orchestration result-graph-id <config-path> <message-workflow-id>"
+    );
+    expect(body.error.message).toContain("<routePath>/result-graph");
+    expect(body.error.message).toContain("no A2A V2 route");
+  });
+
+  test("graph ids outside the reserved prefix start exactly as before", async () => {
+    const reserved = setup("/a2a/v2/result-graph");
+    const plain = setup();
+    for (const workflowId of [
+      "task-graph:operator",
+      "supervisor-result-graph",
+      "supervisor-result-graphs:v3:x",
+      "Supervisor-Result-Graph:v3:x",
+      "x-supervisor-result-graph:v3:x",
+      "task-graph:supervisor-result-graph:v3:x",
+    ]) {
+      const command = {
+        input: graphInput(),
+        requestId: `start-${workflowId.length}`,
+        workflowId,
+      };
+      const routed = await reserved.handler(
+        request("/api/v1/task-graphs/start", command)
+      );
+      const unrouted = await plain.handler(
+        request("/api/v1/task-graphs/start", command)
+      );
+      expect(routed.status).toBe(200);
+      expect(unrouted.status).toBe(200);
+      // The configured route changes nothing for these ids.
+      expect(await routed.json()).toEqual(await unrouted.json());
+      expect(reserved.workflows.inspect(workflowId)).toBeDefined();
     }
   });
 

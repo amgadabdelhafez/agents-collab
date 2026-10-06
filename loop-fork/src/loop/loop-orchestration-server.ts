@@ -258,7 +258,11 @@ const orchestrationHealth = (
 export const createLoopOrchestrationFetchHandler = (
   options: LoopOrchestrationFetchHandlerOptions
 ): ((request: Request) => Promise<Response>) => {
-  const v1Handler = options.host.httpHandler(options.authenticator);
+  // The V1 surface refuses result graph ids; its refusal names the V2 route
+  // that starts one instead, when this server mounts it.
+  const v1Handler = options.host.httpHandler(options.authenticator, {
+    resultGraphRoutePath: options.a2aV2Service?.resultGraphRoute?.pathname,
+  });
   return (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
