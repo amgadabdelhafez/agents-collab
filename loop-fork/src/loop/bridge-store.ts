@@ -727,6 +727,102 @@ const createBridgeMessage = (
   };
 };
 
+const replyDigest = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
+
+// Reply types that report a result for the inbound they answer. Requests that
+// open new work (work_request, review_request, handover, escalation) are not
+// result slots: repeating one is a new request, not a duplicate result.
+const RESULT_REPLY_TYPES = new Set<BridgeMessageType>(["message", "decision"]);
+
+// Resolutions after which a message never reached its recipient, so it does
+// not hold its reply slot.
+const NO_EFFECT_RESOLUTIONS = new Set<BridgeEvent["kind"]>([
+  "dead-letter",
+  "expired",
+  "superseded",
+]);
+
+interface ReplySlotOptions {
+  options: BridgeEnqueueOptions;
+  replySlot: boolean;
+}
+
+const replySlotOptions = (
+  source: BridgeSource,
+  inputOptions: BridgeEnqueueOptions
+): ReplySlotOptions => {
+  const { replyTo } = inputOptions;
+  if (!replyTo) {
+    return { options: inputOptions, replySlot: false };
+  }
+  // An ACK acknowledges one inbound message, not each delivery notification.
+  // Keep the first ACK across resolved retries and caller-supplied key drift.
+  // This applies to every sender, as it did before result slots existed.
+  if (inputOptions.type === "ack") {
+    return {
+      options: {
+        ...inputOptions,
+        dedupeKey: `reply-ack:${replyDigest(replyTo)}`,
+        dedupeResolved: true,
+        supersede: false,
+      },
+      replySlot: true,
+    };
+  }
+  // Claude hears one inbound through both the MCP channel and the tmux
+  // doorbell (e4efbae2), so it can act on it twice. Its result reply is one
+  // durable effect per inbound and reply kind: the type plus the caller's
+  // dedupe_key, so a progress update and the later result, or a decision after
+  // a message, each keep their own slot. Codex and oss replies keep the
+  // existing pending-only dedupe.
+  const type = inputOptions.type ?? "message";
+  if (source !== "claude" || !RESULT_REPLY_TYPES.has(type)) {
+    return { options: inputOptions, replySlot: false };
+  }
+  return {
+    options: {
+      ...inputOptions,
+      dedupeKey: `reply-result:${replyDigest(
+        `${replyTo}\n${type}\n${inputOptions.dedupeKey ?? ""}`
+      )}`,
+      dedupeResolved: true,
+    },
+    replySlot: true,
+  };
+};
+
+// The latest durable message holding this dedupe key. A reply that was
+// dead-lettered, expired or superseded had no effect, so it does not hold its
+// slot and the reply may be sent again. Other durable dedupe callers keep the
+// plain lookup.
+const findDurableDuplicate = (
+  runDir: string,
+  source: BridgeSource,
+  target: BridgeTarget,
+  dedupeKey: string,
+  replySlot: boolean
+): BridgeMessage | undefined => {
+  const events = readBridgeEvents(runDir);
+  const noEffect = new Set(
+    replySlot
+      ? events
+          .filter((event) => NO_EFFECT_RESOLUTIONS.has(event.kind))
+          .map((event) => event.id)
+      : []
+  );
+  return events
+    .filter(
+      (candidate): candidate is BridgeMessage =>
+        candidate.kind === "message" &&
+        candidate.source === source &&
+        candidate.target === target &&
+        candidate.dedupeKey === dedupeKey &&
+        !noEffect.has(candidate.id)
+    )
+    .at(-1);
+};
+
 export const enqueueBridgeMessage = (
   runDir: string,
   source: BridgeSource,
@@ -734,18 +830,7 @@ export const enqueueBridgeMessage = (
   message: string,
   inputOptions: BridgeEnqueueOptions = {}
 ): BridgeEnqueueResult => {
-  // An ACK acknowledges one inbound message, not each delivery notification.
-  // Keep the first ACK across resolved retries and caller-supplied key drift.
-  // Other message types may legitimately publish additional results/progress.
-  const options =
-    inputOptions.type === "ack" && inputOptions.replyTo
-      ? {
-          ...inputOptions,
-          dedupeKey: `reply-ack:${createHash("sha256").update(inputOptions.replyTo).digest("hex")}`,
-          dedupeResolved: true,
-          supersede: false,
-        }
-      : inputOptions;
+  const { options, replySlot } = replySlotOptions(source, inputOptions);
   const entry = createBridgeMessage(source, target, message, options);
   // This single synchronous critical section preserves the existing
   // queue/expiry/limit outcomes while binding durable logical dedupe to append.
@@ -763,18 +848,21 @@ export const enqueueBridgeMessage = (
       : undefined;
     const durableDuplicate =
       options.dedupeKey && options.dedupeResolved
-        ? readBridgeEvents(runDir)
-            .filter(
-              (candidate): candidate is BridgeMessage =>
-                candidate.kind === "message" &&
-                candidate.source === source &&
-                candidate.target === target &&
-                candidate.dedupeKey === options.dedupeKey
-            )
-            .at(-1)
+        ? findDurableDuplicate(
+            runDir,
+            source,
+            target,
+            options.dedupeKey,
+            replySlot
+          )
         : undefined;
     const retained = duplicate ?? durableDuplicate;
-    if (retained && !options.supersede) {
+    // A reply slot may supersede only a still-pending reply. One that already
+    // reached its recipient has had its one effect and is retained.
+    const supersedes = Boolean(
+      options.supersede && (duplicate !== undefined || !replySlot)
+    );
+    if (retained && !supersedes) {
       return {
         entry: retained,
         reason: `${durableDuplicate ? "durable" : "pending"} dedupe key ${options.dedupeKey}`,

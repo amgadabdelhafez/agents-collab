@@ -79,7 +79,7 @@ export const mandatoryUtilityDelegationGuidance = (
 export const claudeChannelInstructions = (): string =>
   [
     `Messages from the Codex agent arrive as <channel source="${BRIDGE_SERVER}" chat_id="..." user="${CLAUDE_CHANNEL_USER}" ...>. The chat_id is informational only.`,
-    'Channel notifications are repeatable doorbells. Call "receive_messages" before acting and use only returned pending records. If the pull is empty, do not respond again. Reply with reply_to and a stable dedupe_key derived from the inbound message ID.',
+    'Channel notifications are repeatable doorbells. Call "receive_messages" before acting and use only returned pending records. If the pull is empty, do not respond again. Reply with reply_to and a stable dedupe_key derived from the inbound message ID. A message or decision reply is delivered once per reply_to, type and dedupe_key, so reuse that key if the same inbound rings again, and give an interim progress reply its own distinct dedupe_key so the later result is not deduplicated.',
     sendProactiveCodexGuidance(),
     INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
     mandatoryUtilityDelegationGuidance('"route_task"'),

@@ -1858,27 +1858,39 @@ export const drainCodexAppServerMessages = (
   return deliverCodexBridgeMessage(runDir, message);
 };
 
-export const drainTmuxBridgeMessages = (runDir: string): Promise<boolean> => {
+export const drainTmuxBridgeMessages = async (
+  runDir: string
+): Promise<boolean> => {
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
-    return Promise.resolve(false);
+    return false;
   }
   if (status.tmuxLiveness === "dead") {
     clearStaleTmuxBridgeState(runDir);
-    return Promise.resolve(false);
+    return false;
   }
   if (status.tmuxLiveness === "unknown") {
-    return Promise.resolve(false);
+    return false;
   }
-  const message = readPendingBridgeMessages(runDir).find(
-    (entry) =>
-      !(entry.target === "codex" && status.hasCodexRemote) &&
-      paneIdForTarget(runDir, entry.target) !== undefined
+  // Ring every pane-backed target with pending messages, in queue order. A
+  // target whose doorbell is not due (or whose pane is busy) must not hide
+  // another target's inbox, such as Claude's behind an undrained Codex inbound.
+  const targets = new Set(
+    readPendingBridgeMessages(runDir)
+      .filter(
+        (entry) =>
+          !(entry.target === "codex" && status.hasCodexRemote) &&
+          paneIdForTarget(runDir, entry.target) !== undefined
+      )
+      .map((entry) => entry.target)
   );
-  if (!message) {
-    return Promise.resolve(false);
+  let notified = false;
+  for (const target of targets) {
+    if (await notifyTmuxBridgeInbox(runDir, target)) {
+      notified = true;
+    }
   }
-  return notifyTmuxBridgeInbox(runDir, message.target);
+  return notified;
 };
 
 const drainBridgeWorkerCycle = async (
