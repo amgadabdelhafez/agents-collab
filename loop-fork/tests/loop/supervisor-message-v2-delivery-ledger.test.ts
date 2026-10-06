@@ -23,6 +23,8 @@ import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-mes
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryOutcome,
+  SupervisorMessageV2RecoveryRunner,
+  SupervisorMessageV2RecoveryStartupError,
   supervisorMessageV2WorkflowDefinition,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import {
@@ -196,18 +198,17 @@ beforeAll(async () => {
   await raw.connect();
 }, 60_000);
 
-/** Each per-test ledger holds a connection pool; release it before the
- * server's client limit. */
-afterEach(async () => {
+/** Each ledger holds a connection pool; release them before the server's limit. */
+const closeOpened = async () => {
   for (const resource of opened.splice(0).reverse()) {
     await resource.close().catch(() => undefined);
   }
-});
+};
+
+afterEach(closeOpened);
 
 afterAll(async () => {
-  for (const resource of opened.reverse()) {
-    await resource.close().catch(() => undefined);
-  }
+  await closeOpened();
   await raw?.close({ timeout: 0 });
   await ledger?.close();
   await postgres?.close();
@@ -859,5 +860,167 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     expect(
       (await there.recoverableStarts()).map((start) => start.workflowId)
     ).toEqual([theirs]);
+  });
+});
+
+describe("V2 recovery runner on PostgreSQL", () => {
+  const INJECTED = "injected terminal outcome failure";
+
+  /**
+   * A deployment whose PostgreSQL ledger refuses to record one workflow's
+   * terminal outcome: a real per-record database error, not a stub.
+   */
+  const failingHarness = async () => {
+    const url = await freshDatabase();
+    const isolated = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      url,
+      { deployment: DEPLOYMENT }
+    );
+    opened.push(isolated);
+    await isolated.migrate();
+    const sql = new SQL(url);
+    await sql.connect();
+    opened.push({ close: () => sql.close({ timeout: 0 }) });
+    await sql.unsafe(
+      `CREATE FUNCTION refuse_terminal_outcome() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN RAISE EXCEPTION '${INJECTED}'; END $body$`
+    );
+    const workflows = new RetentionWorkflowPort();
+    const delivered: string[] = [];
+    const coordinator = new SupervisorMessageV2Coordinator(
+      workflows,
+      {
+        deliver(envelope) {
+          delivered.push(envelope.deliveryId);
+          return Promise.resolve({ status: "accepted" });
+        },
+      },
+      isolated,
+      OWNER,
+      () => NOW
+    );
+    let clock = NOW.getTime();
+    const lines: string[] = [];
+    const runner = new SupervisorMessageV2RecoveryRunner({
+      coordinator,
+      intervalMs: 1000,
+      log: (line) => lines.push(line),
+      now: () => clock,
+      timer: { clearInterval: () => undefined, setInterval: () => 1 },
+    });
+    opened.push(runner);
+    /** A started message canceled before any delivery: a sweep records "canceled". */
+    const canceledIntent = async () => {
+      const input = inputFor(`refused-${randomUUID()}`);
+      const workflowId = workflowIdOf(input);
+      await isolated.recordStartIntent(workflowId, SCOPE, input);
+      workflows.start({
+        input: { input, trustedScope: SCOPE },
+        requestId: "refused-start",
+        workflowId,
+        workflowType: "supervisor-message.v2",
+      });
+      workflows.cancel({
+        reason: "operator",
+        requestId: "operator-cancel",
+        workflowId,
+      });
+      return { input, workflowId };
+    };
+    return {
+      /** Let PostgreSQL record every outcome again. */
+      acceptOutcomes: async () => {
+        await sql.unsafe(
+          "DROP TRIGGER refuse_terminal_outcome ON loop_supervisor_message_v2_start_intent"
+        );
+      },
+      advance: (ms: number) => {
+        clock += ms;
+      },
+      canceledIntent,
+      delivered,
+      ledger: isolated,
+      lines,
+      /** Make PostgreSQL refuse this one workflow's terminal outcome. */
+      refuseOutcomeOf: async (workflowId: string) => {
+        if (
+          !/^supervisor-message-workflow:v2:(?:deployment:)?[a-f0-9]{64}$/.test(
+            workflowId
+          )
+        ) {
+          throw new Error("unexpected workflow ID shape");
+        }
+        await sql.unsafe(
+          `CREATE TRIGGER refuse_terminal_outcome BEFORE UPDATE OF terminal_outcome ON loop_supervisor_message_v2_start_intent FOR EACH ROW WHEN (OLD.workflow_id = '${workflowId}') EXECUTE FUNCTION refuse_terminal_outcome()`
+        );
+      },
+      runner,
+    };
+  };
+
+  test("service start refuses a PostgreSQL failure for one record after recovering the others", async () => {
+    const h = await failingHarness();
+    const refused = await h.canceledIntent();
+    await h.refuseOutcomeOf(refused.workflowId);
+    const healthy = inputFor(`healthy-${randomUUID()}`);
+    const healthyId = workflowIdOf(healthy);
+    await h.ledger.recordStartIntent(healthyId, SCOPE, healthy);
+
+    const error = await h.runner.start().then(
+      () => undefined,
+      (failure: unknown) => failure
+    );
+
+    expect(error).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+    const failures = (error as SupervisorMessageV2RecoveryStartupError)
+      .failures;
+    expect(
+      failures.map((failure) => [
+        failure.workflowId,
+        failure.recipient,
+        failure.kind,
+        (failure.error as Error).message,
+      ])
+    ).toEqual([[refused.workflowId, refused.input.to, "failed", INJECTED]]);
+    expect((error as Error).message).toStartWith(
+      `V2 initial recovery failed for 1 recorded start: workflow ${refused.workflowId} for ${refused.input.to}: `
+    );
+    expect(await h.ledger.terminalOutcome(refused.workflowId, SCOPE)).toBe(
+      undefined
+    );
+    // The healthy intent was started and delivered before the refusal.
+    expect(h.delivered).toEqual([
+      deriveSupervisorMessageV2DeliveryId(SCOPE, healthyId, 1),
+    ]);
+  });
+
+  test("a periodic sweep retries a PostgreSQL failure with backoff, logs it, and records the outcome once it clears", async () => {
+    const h = await failingHarness();
+    await h.runner.start();
+    const refused = await h.canceledIntent();
+    await h.refuseOutcomeOf(refused.workflowId);
+
+    await h.runner.sweep();
+    expect(h.lines).toHaveLength(1);
+    expect(h.lines[0]).toStartWith(
+      `V2 recovery of workflow ${refused.workflowId} for ${refused.input.to} failed (attempt 1); retrying in 1000 ms: `
+    );
+    expect(h.lines[0]).toEndWith(INJECTED);
+
+    // Not due yet: no attempt and no line, even once PostgreSQL accepts again.
+    await h.acceptOutcomes();
+    await h.runner.sweep();
+    expect(h.lines).toHaveLength(1);
+    expect(await h.ledger.terminalOutcome(refused.workflowId, SCOPE)).toBe(
+      undefined
+    );
+
+    h.advance(1000);
+    await h.runner.sweep();
+    expect(h.lines.slice(1)).toEqual([
+      `V2 recovery of workflow ${refused.workflowId} for ${refused.input.to} resumed after 1 failed attempt`,
+    ]);
+    expect(await h.ledger.terminalOutcome(refused.workflowId, SCOPE)).toBe(
+      "canceled"
+    );
   });
 });
