@@ -473,6 +473,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     // retries and delivery claims, even after the engine purges it.
     await this
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+    await this.#replaceRetiredTerminalOutcomeCheck();
     await this
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ`;
     // Additive owner of a start intent. NULL marks a row recorded before
@@ -584,6 +585,50 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         await sql`UPDATE loop_supervisor_message_v2_start_intent SET legacy_workflow_id = ${legacy} WHERE workflow_id = ${row.workflow_id}`;
       }
     }
+  }
+
+  /**
+   * A database migrated by an intermediate build (3f7a70f2) already has the
+   * terminal_outcome column, so ADD COLUMN IF NOT EXISTS skips it and keeps
+   * that build's CHECK, which allows 'completed' and refuses 'acknowledged'.
+   * That build stored a recipient acknowledgement as 'completed'. Under a
+   * table lock (ALTER TABLE above already takes the same lock on every start),
+   * any terminal_outcome CHECK that is not the current list (missing, allowing
+   * 'completed', or missing a current outcome) is replaced, and stored
+   * 'completed' is rewritten to 'acknowledged', in one transaction. A current
+   * CHECK is left as it is, so a normal start changes nothing, and a CHECK
+   * that also allows a newer build's outcomes is not narrowed.
+   */
+  async #replaceRetiredTerminalOutcomeCheck(): Promise<void> {
+    await this.#sql.begin(async (sql) => {
+      // Serializes hosts migrating one database at the same time.
+      await sql`LOCK TABLE loop_supervisor_message_v2_start_intent IN ACCESS EXCLUSIVE MODE`;
+      const checks = await sql<{ definition: string; name: string }[]>`
+        SELECT c.conname AS name, pg_get_constraintdef(c.oid) AS definition
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.conrelid = 'loop_supervisor_message_v2_start_intent'::regclass
+          AND c.contype = 'c' AND a.attname = 'terminal_outcome'`;
+      const current =
+        checks.length > 0 &&
+        checks.every(
+          (check) =>
+            !check.definition.includes("'completed'") &&
+            SUPERVISOR_MESSAGE_V2_TERMINAL_OUTCOMES.every((value) =>
+              check.definition.includes(`'${value}'`)
+            )
+        );
+      if (current) {
+        return;
+      }
+      for (const check of checks) {
+        await sql.unsafe(
+          `ALTER TABLE loop_supervisor_message_v2_start_intent DROP CONSTRAINT "${check.name.replaceAll('"', '""')}"`
+        );
+      }
+      await sql`UPDATE loop_supervisor_message_v2_start_intent SET terminal_outcome = 'acknowledged' WHERE terminal_outcome = 'completed'`;
+      await sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD CONSTRAINT loop_supervisor_message_v2_start_intent_terminal_outcome_check CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+    });
   }
 
   /**

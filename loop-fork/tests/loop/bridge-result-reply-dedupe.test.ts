@@ -310,6 +310,79 @@ test("a dead-lettered ACK from Claude or Codex does not block a retry", () => {
   }
 });
 
+// Decision 4 (b42a326c), re-verified: every sender's ACK may be retried after
+// an ACK that had no effect, whichever way it had none, and an ACK that
+// reached its recipient still holds the slot.
+test("every sender's ACK retries after a dead-lettered, expired or superseded ACK, and holds once delivered", () => {
+  const senders = ["claude", "codex", "oss", "supervisor", "utility"] as const;
+  const outcomes = ["dead-letter", "expired", "superseded"] as const;
+  for (const source of senders) {
+    for (const outcome of outcomes) {
+      withRun(`ack-${outcome}-${source}`, (root) => {
+        const target = source === "claude" ? "codex" : "claude";
+        const ack = { replyTo: "inbound-1", type: "ack" as const };
+        const first = reply(root, "ack", ack, source, target);
+        expect(first.status).toBe("queued");
+        // The first ACK never reaches its recipient.
+        markBridgeMessage(root, first.entry, outcome, `test ${outcome}`);
+        expect(readPendingBridgeMessages(root)).toHaveLength(0);
+        const retry = reply(root, "ack", ack, source, target);
+        expect(`${source}/${outcome}: ${retry.status}`).toBe(
+          `${source}/${outcome}: queued`
+        );
+        expect(retry.entry.id).not.toBe(first.entry.id);
+        expect(
+          readPendingBridgeMessages(root).map((entry) => entry.id)
+        ).toEqual([retry.entry.id]);
+        // Once an ACK has had its effect, the slot holds for that sender.
+        consume(root, retry.entry);
+        const again = reply(root, "ack again", ack, source, target);
+        expect(`${source}/${outcome}: ${again.status}`).toBe(
+          `${source}/${outcome}: duplicate`
+        );
+        expect(again.entry.id).toBe(retry.entry.id);
+      });
+    }
+  }
+});
+
+test("a delivered ACK holds its slot for every sender, even with supersede", () => {
+  for (const source of [
+    "claude",
+    "codex",
+    "oss",
+    "supervisor",
+    "utility",
+  ] as const) {
+    withRun(`ack-delivered-${source}`, (root) => {
+      const target = source === "claude" ? "codex" : "claude";
+      const first = reply(
+        root,
+        "ack",
+        { replyTo: "inbound-1", type: "ack" },
+        source,
+        target
+      );
+      consume(root, first.entry);
+      const again = reply(
+        root,
+        "ack reworded",
+        {
+          dedupeKey: "drift",
+          replyTo: "inbound-1",
+          supersede: true,
+          type: "ack",
+        },
+        source,
+        target
+      );
+      expect(`${source}: ${again.status}`).toBe(`${source}: duplicate`);
+      expect(again.entry.id).toBe(first.entry.id);
+      expect(messages(root)).toHaveLength(1);
+    });
+  }
+});
+
 test("a keyless Claude message reply is flagged because it shares the keyless result slot", () => {
   // Decision 3 lint: the keyless slot is shared, so the store-level slot rule
   // that makes this a duplicate is exactly what the warning describes.

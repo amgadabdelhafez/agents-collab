@@ -1151,6 +1151,46 @@ test("orchestration sweep exposes which seats are not enrolled, from start until
   expect(states.at(-1)).toEqual([]);
 });
 
+test("the V1 surface is given the mounted A2A V2 result-graph route so a reserved-id refusal can name it", () => {
+  const passed: unknown[] = [];
+  const host = {
+    httpHandler: (_authenticator: unknown, options: unknown) => {
+      passed.push(options);
+      return () => Promise.resolve(new Response(null));
+    },
+    workerState: () => "RUNNING" as const,
+  };
+  createLoopOrchestrationFetchHandler({
+    a2aV2Service: {
+      httpHandler: () => Promise.resolve(new Response(null)),
+      pathname: "/a2a/v2",
+      readinessOutage: () => ({
+        boundMs: 60_000,
+        deferredDeliveries: 0,
+        outageFailures: 0,
+        recipientsDeferred: 0,
+      }),
+      resultGraphRoute: {
+        httpHandler: () => Promise.resolve(new Response(null)),
+        pathname: "/a2a/v2/result-graph",
+      },
+    } as never,
+    authenticator: {} as never,
+    host: host as never,
+    reconciliationHealthy: () => true,
+  });
+  // Without A2A V2 there is no route to name.
+  createLoopOrchestrationFetchHandler({
+    authenticator: {} as never,
+    host: host as never,
+    reconciliationHealthy: () => true,
+  });
+  expect(passed).toEqual([
+    { resultGraphRoutePath: "/a2a/v2/result-graph" },
+    { resultGraphRoutePath: undefined },
+  ]);
+});
+
 test("/healthz counts the seats that are not enrolled beside an unchanged ready state", async () => {
   let notEnrolled: readonly string[] = ["supervisor:harness-peer"];
   const host = {
