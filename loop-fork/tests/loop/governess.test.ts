@@ -3097,6 +3097,53 @@ test("tmux-degraded rows keep configured identity marked and never rewrite the r
   expect(claudeRow).toContain("$15.00");
 });
 
+test("tmux-degraded rows price and label an observed model over the configured one", async () => {
+  const shared = usage({
+    dataConfidence: "exact",
+    inputTokens: 1_000_000,
+    model: "claude-sonnet-5",
+  });
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+    capturePane: () => {
+      throw new TmuxControlUnavailableError([
+        "capture-pane",
+        "-p",
+        "-t",
+        "s:0.0",
+      ]);
+    },
+    readUsage: () => shared,
+    readUsageLimits: () => Promise.resolve({ pricing: trackerPricing }),
+  };
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        {
+          agent: "claude",
+          configuredModel: "claude-opus-5",
+          hookFile: "hooks.jsonl",
+          pane: "s:0.0",
+        },
+      ],
+    }),
+    deps
+  );
+  expect(result.tmuxControlAvailable).toBe(false);
+  const claudeRow = stripAnsi(result.board)
+    .split("\n")
+    .find((line) => line.startsWith(" claude"));
+  // The observed model is both the label and the pricing basis: sonnet's
+  // $3/Mtok, not the configured opus's $15/Mtok, and no configured marker.
+  expect(claudeRow).toMatch(/\ssonnet-5\s/);
+  expect(claudeRow).toContain("$3.00");
+  expect(claudeRow).not.toContain("$15.00");
+  expect(claudeRow).not.toContain("~");
+  expect(shared.model).toBe("claude-sonnet-5");
+  expect(shared.costUsd).toBe(0);
+});
+
 test("default board names the single judge model and credential-free endpoint", async () => {
   await withEnv({ LOOP_GOVERNESS_BOARD_DETAILS: undefined }, async () => {
     const result = await governessTick(
