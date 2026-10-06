@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -186,3 +187,105 @@ test("byte-identical evidence may be allowlisted for two graph tasks and verifie
     ])
   ).toThrow();
 });
+
+test("result artifact verification bounds concurrent git subprocesses", async () => {
+  const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const realGit = which("git");
+  expect(realGit).toBeTruthy();
+  const commit = execFileSync("git", [
+    "-C",
+    repositoryRoot,
+    "rev-parse",
+    "HEAD",
+  ])
+    .toString()
+    .trim();
+  const path = "loop-fork/src/loop/workflow-port.ts";
+  const bytes = execFileSync("git", [
+    "-C",
+    repositoryRoot,
+    "show",
+    `${commit}:${path}`,
+  ]);
+  const artifactRef = `artifact://sha256/${createHash("sha256").update(bytes).digest("hex")}`;
+  const target = { graphWorkflowId: "graph:cap", graphTaskId: "node:cap" };
+  // Each git call marks itself active, records how many are active at once,
+  // and holds its slot long enough for an uncapped burst to overlap.
+  const fakeBin = mkdtempSync(join(tmpdir(), "git-result-artifact-cap-"));
+  const active = join(fakeBin, "active");
+  const peaks = join(fakeBin, "peaks");
+  mkdirSync(active);
+  writeFileSync(
+    join(fakeBin, "git"),
+    [
+      "#!/bin/sh",
+      `touch '${active}'/$$`,
+      `ls '${active}' | wc -l >> '${peaks}'`,
+      "sleep 0.2",
+      `rm -f '${active}'/$$`,
+      `exec '${realGit}' "$@"`,
+      "",
+    ].join("\n")
+  );
+  chmodSync(join(fakeBin, "git"), 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fakeBin}:${originalPath ?? ""}`;
+  try {
+    const verify = createGitResultArtifactVerifier([
+      { repositoryRoot, commit, path, artifactRef, ...target },
+    ]);
+    const burst = 12;
+    const results = await Promise.all(
+      Array.from({ length: burst }, () => verify(artifactRef, target))
+    );
+    // Same verdicts as an unbounded run: every request still verifies.
+    expect(results).toEqual(Array.from({ length: burst }, () => true));
+    const observed = readFileSync(peaks, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => Number.parseInt(line.trim(), 10));
+    expect(observed).toHaveLength(burst * 3);
+    // At most four git subprocesses at once, but still more than one.
+    expect(Math.max(...observed)).toBeLessThanOrEqual(4);
+    expect(Math.max(...observed)).toBeGreaterThan(1);
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(fakeBin, { force: true, recursive: true });
+  }
+}, 30_000);
+
+test("failed git calls release their concurrency slot", async () => {
+  const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const git = (args: string[]) =>
+    execFileSync("git", ["-C", repositoryRoot, ...args]);
+  const commit = git(["rev-parse", "HEAD"]).toString().trim();
+  const path = "loop-fork/src/loop/workflow-port.ts";
+  const bytes = git(["show", `${commit}:${path}`]);
+  const artifactRef = `artifact://sha256/${createHash("sha256").update(bytes).digest("hex")}`;
+  const missingRef = `artifact://sha256/${"2".repeat(64)}`;
+  const target = { graphWorkflowId: "graph:slot", graphTaskId: "node:slot" };
+  const verify = createGitResultArtifactVerifier([
+    { repositoryRoot, commit, path, artifactRef, ...target },
+    {
+      repositoryRoot,
+      commit: "0".repeat(40),
+      path,
+      artifactRef: missingRef,
+      ...target,
+    },
+  ]);
+  // More failing git calls than there are slots; a leaked slot would leave
+  // the final verification queued forever.
+  expect(
+    await Promise.all(
+      Array.from({ length: 10 }, () => verify(missingRef, target))
+    )
+  ).toEqual(Array.from({ length: 10 }, () => false));
+  const settled = await Promise.race([
+    verify(artifactRef, target),
+    new Promise<string>((resolve) =>
+      setTimeout(() => resolve("still-queued"), 5000)
+    ),
+  ]);
+  expect(settled).toBe(true);
+}, 15_000);

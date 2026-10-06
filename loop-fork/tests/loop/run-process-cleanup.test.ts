@@ -1103,3 +1103,88 @@ test("cross-repo sweep contains enumeration and per-process inspection failures"
   });
   rmSync(join(storageRoot, ".."), { force: true, recursive: true });
 });
+
+test("cross-repo sweep proves spaced run directories against the exact storage root", () => {
+  const root = makeRunDir();
+  // ps joins argv with single spaces, so a home such as "Application Support"
+  // must not hide a stale bridge, and a doubled space must survive verbatim.
+  const storageRoot = join(root, "Application Support", "loop  runs");
+  const executable = "/Applications/My Loop/loop";
+  const terminalDir = join(storageRoot, "repo-one", "14");
+  const absentDir = join(storageRoot, "repo-two", "1");
+  const activeDir = join(storageRoot, "repo-three", "100");
+  mkdirSync(terminalDir, { recursive: true });
+  mkdirSync(activeDir, { recursive: true });
+  writeRunManifest(
+    join(terminalDir, "manifest.json"),
+    createRunManifest({
+      cwd: "/repo-one",
+      mode: "paired",
+      pid: 1400,
+      repoId: "repo-one",
+      runId: "14",
+      state: "stopped",
+    })
+  );
+  writeRunManifest(
+    join(activeDir, "manifest.json"),
+    createRunManifest({
+      cwd: "/repo-three",
+      mode: "paired",
+      pid: 1000,
+      repoId: "repo-three",
+      runId: "100",
+      state: "submitted",
+    })
+  );
+  const commands = new Map([
+    [6501, `${executable} __bridge-mcp ${terminalDir} claude`],
+    [6502, `${executable} __bridge-mcp ${absentDir} codex`],
+    [6503, `${executable} __bridge-mcp ${activeDir} claude`],
+    // Unprovable splits: an extra argument that would make an absent
+    // "1 extra" run, a spaced repo segment, a sibling root that only shares a
+    // prefix, and a root whose doubled space was collapsed.
+    [6504, `${executable} __bridge-mcp ${absentDir} extra codex`],
+    [
+      6505,
+      `${executable} __bridge-mcp ${join(storageRoot, "repo two", "1")} codex`,
+    ],
+    [6506, `${executable} __bridge-mcp ${storageRoot}-other/repo-two/1 codex`],
+    [
+      6507,
+      `${executable} __bridge-mcp ${absentDir.replace("loop  runs", "loop runs")} codex`,
+    ],
+    // A dot segment would resolve outside the storage root.
+    [6508, `${executable} __bridge-mcp ${storageRoot}/../escaped claude`],
+    // A valid source followed by more arguments is not the bridge argv,
+    // even though its first two words alone would name a stale run.
+    [6509, `${executable} __bridge-mcp ${absentDir} claude codex`],
+    [6510, `${executable} __bridge-mcp ${terminalDir} supervisor claude`],
+    // A deeper path is not a run directory, even under a terminal run.
+    [6511, `${executable} __bridge-mcp ${join(terminalDir, "nested")} claude`],
+  ]);
+  const signals: number[] = [];
+  try {
+    const result = gcStaleBridgeProcesses({
+      deps: {
+        commandForPid: (pid) => commands.get(pid),
+        executableForPid: () => executable,
+        listLoopProcesses: () =>
+          [...commands.keys()].map((pid) => ({ executable, pid })),
+        signal: (pid) => signals.push(pid),
+      },
+      log: () => undefined,
+      storageRoot,
+    });
+
+    expect(result).toEqual({
+      candidates: 3,
+      killed: [6501, 6502],
+      scanned: 11,
+      skipped: [{ pid: 6503, reason: "run-state-unknown-or-active" }],
+    });
+    expect(signals).toEqual([6501, 6502]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

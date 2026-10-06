@@ -25,6 +25,34 @@ const bindingKey = (
 ): string =>
   JSON.stringify([artifactRef, target.graphWorkflowId, target.graphTaskId]);
 
+/**
+ * Process-wide cap on verification git subprocesses. A burst of verification
+ * requests queues here instead of forking one git per request; each call keeps
+ * its own 5s timeout once it holds a slot, so verdicts are unchanged.
+ */
+export const MAX_CONCURRENT_ARTIFACT_GIT = 4;
+let activeGit = 0;
+const gitWaiters: Array<() => void> = [];
+
+const withGitSlot = async <T>(run: () => Promise<T>): Promise<T> => {
+  if (activeGit < MAX_CONCURRENT_ARTIFACT_GIT) {
+    activeGit += 1;
+  } else {
+    // The releasing call hands its slot straight to us; the count is unchanged.
+    await new Promise<void>((resolve) => gitWaiters.push(resolve));
+  }
+  try {
+    return await run();
+  } finally {
+    const next = gitWaiters.shift();
+    if (next) {
+      next();
+    } else {
+      activeGit -= 1;
+    }
+  }
+};
+
 /** Exact committed bytes only. No worktree fallback, remote access, arbitrary
  * caller path, replace refs, symlink blob, or transcript retrieval. */
 export const createGitResultArtifactVerifier = (
@@ -70,15 +98,18 @@ export const createGitResultArtifactVerifier = (
     // Asynchronous so a slow repository never stalls the request path. Same
     // bounds as before: non-zero exit, 5s timeout or 1 MiB output rejects.
     const git = (args: string[]) =>
-      new Promise<Buffer>((resolve, reject) => {
-        const child = execFile(
-          "git",
-          ["--no-replace-objects", "-C", binding.repositoryRoot, ...args],
-          { encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5000 },
-          (error, stdout) => (error ? reject(error) : resolve(stdout))
-        );
-        child.stdin?.end();
-      });
+      withGitSlot(
+        () =>
+          new Promise<Buffer>((resolve, reject) => {
+            const child = execFile(
+              "git",
+              ["--no-replace-objects", "-C", binding.repositoryRoot, ...args],
+              { encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5000 },
+              (error, stdout) => (error ? reject(error) : resolve(stdout))
+            );
+            child.stdin?.end();
+          })
+      );
     try {
       if (
         (await git(["cat-file", "-t", binding.commit])).toString().trim() !==

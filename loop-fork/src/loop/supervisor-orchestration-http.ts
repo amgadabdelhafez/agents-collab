@@ -1,3 +1,4 @@
+import { readBoundedRequestText } from "./bounded-request-body";
 import { SupervisorMessageGovernanceError } from "./supervisor-message-governance";
 import type {
   SupervisorMessageReceiveCommand,
@@ -101,12 +102,10 @@ const readJson = async (request: Request): Promise<Record<string, unknown>> => {
   ) {
     throw new Error("content type is invalid");
   }
-  const declaredLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
-    throw new RangeError("request body exceeds limit");
-  }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
+  // Only reached after authentication. A declared oversized body is refused
+  // unread; an undeclared one is cancelled as soon as it crosses the cap.
+  const text = await readBoundedRequestText(request, MAX_BODY_BYTES);
+  if (text === undefined) {
     throw new RangeError("request body exceeds limit");
   }
   let value: unknown;

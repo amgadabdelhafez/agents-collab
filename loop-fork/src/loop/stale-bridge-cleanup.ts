@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { basename, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { spawnSync } from "bun";
 import { isAgent } from "./agents";
 import type { BridgeMcpSource } from "./bridge";
@@ -9,7 +9,9 @@ import { buildManifestPath, resolveStorageRoot } from "./run-state";
 const LOOP_EXECUTABLE_NAME = "loop";
 const PROCESS_INSPECTION_TIMEOUT_MS = 750;
 const PROCESS_LIST_LINE_RE = /^\s*(\d+)\s+(.+?)\s*$/u;
-const WHITESPACE_RE = /\s+/;
+// Repo ids are sanitized names plus a hash and run ids match RUN_ID_RE, so a
+// segment is never empty, "." or "..", and never contains whitespace.
+const RUN_PATH_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
 const TERMINAL_RUN_STATUSES = new Set(["done", "failed", "stopped"]);
 const ACTIVE_MANIFEST_VALUES = new Set([
@@ -195,37 +197,40 @@ const bridgeProcessFromIdentity = (
   if (basename(identity.executable) !== LOOP_EXECUTABLE_NAME) {
     return undefined;
   }
-  const prefix = `${identity.executable} `;
+  // `ps -o command=` joins argv with single spaces, so splitting on
+  // whitespace cannot recover a run directory under a spaced storage root
+  // (for example a HOME containing "Application Support"). Bridges are
+  // spawned as `<loop> __bridge-mcp <storageRoot>/<repoId>/<runId> <source>`
+  // and the storage root is known here, so match it verbatim; repo and run
+  // ids never contain whitespace, which leaves exactly one way to read the
+  // remainder. Anything else is unproven and left unsignaled.
+  const prefix = `${identity.executable} ${BRIDGE_SUBCOMMAND} ${resolve(storageRoot)}${sep}`;
   if (!identity.command.startsWith(prefix)) {
     return undefined;
   }
-  const args = identity.command.slice(prefix.length).split(WHITESPACE_RE);
-  if (!(args.length === 3 && args[0] === BRIDGE_SUBCOMMAND)) {
+  const tail = identity.command.slice(prefix.length).split(" ");
+  if (tail.length !== 2) {
     return undefined;
   }
-  const [_, runDir, rawSource] = args;
+  const [runRelative = "", rawSource] = tail;
   const source: BridgeMcpSource | undefined =
     rawSource && (isAgent(rawSource) || rawSource === "supervisor")
       ? rawSource
       : undefined;
-  if (!(runDir && source && isAbsolute(runDir) && runDir === resolve(runDir))) {
-    return undefined;
-  }
-  const runRelative = relative(resolve(storageRoot), runDir);
   const parts = runRelative.split(sep);
   if (
-    isAbsolute(runRelative) ||
-    runRelative.startsWith(`..${sep}`) ||
+    !source ||
     parts.length !== 2 ||
-    parts.some((part) => !part || part === "." || part === "..")
+    parts.some((part) => !RUN_PATH_SEGMENT_RE.test(part))
   ) {
     return undefined;
   }
+  const [repoId = "", runId = ""] = parts;
   return {
     identity,
-    repoId: parts[0] ?? "",
-    runDir,
-    runId: parts[1] ?? "",
+    repoId,
+    runDir: join(resolve(storageRoot), repoId, runId),
+    runId,
   };
 };
 

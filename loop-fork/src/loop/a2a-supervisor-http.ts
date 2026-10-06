@@ -3,6 +3,7 @@ import {
   JsonRpcTransportHandler,
   ServerCallContext,
 } from "@a2a-js/sdk/server";
+import { readBoundedRequestText } from "./bounded-request-body";
 
 const DEFAULT_PATHNAME = "/a2a";
 const MAX_BODY_BYTES = 64 * 1024;
@@ -162,10 +163,6 @@ export const createSupervisorA2AHttpHandler = (
     if (!contentTypeIsJson(request)) {
       return json(415, { error: { code: "content-type-invalid" } });
     }
-    const declaredLength = Number(request.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
-      return json(413, { error: { code: "body-too-large" } });
-    }
 
     // Authenticate before parsing/dispatching protocol parameters and before
     // the SDK can allocate a task context or call its TaskStore.
@@ -181,8 +178,10 @@ export const createSupervisorA2AHttpHandler = (
       return json(401, { error: { code: "unauthenticated" } });
     }
 
-    const rawBody = await request.text();
-    if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) {
+    // Authenticated callers only: a declared oversized body is refused unread
+    // and an undeclared one is cancelled as soon as it crosses the cap.
+    const rawBody = await readBoundedRequestText(request, MAX_BODY_BYTES);
+    if (rawBody === undefined) {
       return json(413, { error: { code: "body-too-large" } });
     }
     const normalized = normalizeRouteBoundTenant(rawBody, options.tenant);

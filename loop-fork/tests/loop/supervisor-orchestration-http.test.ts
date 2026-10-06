@@ -199,3 +199,99 @@ describe("authenticated orchestration HTTP surface", () => {
     }
   });
 });
+
+/** A body that counts what the handler actually pulled from the client. */
+const meteredBody = (totalBytes: number) => {
+  const meter = { cancelled: false, pulled: 0 };
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (meter.pulled >= totalBytes) {
+          controller.close();
+          return;
+        }
+        meter.pulled += 1024;
+        controller.enqueue(new Uint8Array(1024).fill(0x20));
+      },
+      cancel() {
+        meter.cancelled = true;
+      },
+    },
+    // No read-ahead: every pulled chunk was requested by the handler.
+    { highWaterMark: 0 }
+  );
+  return { meter, stream };
+};
+
+const streamedPost = (
+  body: BodyInit,
+  headers: Record<string, string> = {},
+  authorization = "Bearer valid"
+): Request =>
+  new Request("http://localhost/api/v1/task-graphs/start", {
+    body,
+    duplex: "half",
+    headers: {
+      authorization,
+      "content-type": "application/json",
+      ...headers,
+    },
+    method: "POST",
+  } as RequestInit);
+
+describe("orchestration HTTP body bounds", () => {
+  const MiB = 1024 * 1024;
+  const MAX_BODY_BYTES = 64 * 1024;
+
+  test("authenticates before refusing a declared oversized body unread", async () => {
+    const { handler } = setup();
+    const unauthenticated = meteredBody(MiB);
+    expect(
+      (
+        await handler(
+          streamedPost(
+            unauthenticated.stream,
+            { "content-length": String(MiB) },
+            "Bearer wrong"
+          )
+        )
+      ).status
+    ).toBe(401);
+    expect(unauthenticated.meter.pulled).toBe(0);
+    const declared = meteredBody(MiB);
+    const response = await handler(
+      streamedPost(declared.stream, { "content-length": String(MiB) })
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      error: { code: "body-too-large" },
+    });
+    expect(declared.meter.pulled).toBe(0);
+  });
+
+  test("stops reading an undeclared oversized body at the cap", async () => {
+    const { handler, workflows } = setup();
+    const streamed = meteredBody(MiB);
+    const response = await handler(streamedPost(streamed.stream));
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      error: { code: "body-too-large" },
+    });
+    // Bounded by the 64 KiB cap plus the one chunk that crossed it.
+    expect(streamed.meter.pulled).toBeLessThanOrEqual(MAX_BODY_BYTES + 1024);
+    expect(streamed.meter.cancelled).toBe(true);
+    expect(() => workflows.inspect("task-graph:http")).toThrow("not found");
+  });
+
+  test("still accepts an in-limit body and refuses one byte over", async () => {
+    const { handler } = setup();
+    const body = JSON.stringify({
+      input: graphInput(),
+      requestId: "start-bounded",
+      workflowId: "task-graph:bounded",
+    });
+    const padded = `${body}${" ".repeat(MAX_BODY_BYTES - body.length)}`;
+    expect((await handler(streamedPost(padded))).status).toBe(200);
+    expect((await handler(streamedPost(`${padded} `))).status).toBe(413);
+  });
+});
