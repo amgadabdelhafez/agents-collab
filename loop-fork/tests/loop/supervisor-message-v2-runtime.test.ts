@@ -11,6 +11,7 @@ import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
   SupervisorMessageV2RecoveryRunner,
+  type SupervisorMessageV2TerminalOutcome,
   supervisorMessageV2WorkflowDefinition,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import { WorkflowError, type WorkflowPort } from "../../src/loop/workflow-port";
@@ -59,6 +60,13 @@ class MemoryLedger implements SupervisorMessageV2DeliveryLedger {
       return Promise.reject(new Error("start intent is absent"));
     }
     return Promise.resolve();
+  }
+
+  startIntent(workflowId: string): Promise<SupervisorMessageV2Input> {
+    const start = this.starts.get(workflowId);
+    return start
+      ? Promise.resolve(start.input)
+      : Promise.reject(new Error("start intent is absent"));
   }
 
   claim(
@@ -117,6 +125,29 @@ class MemoryLedger implements SupervisorMessageV2DeliveryLedger {
     }
     this.starts.set(workflowId, { input, trustedScope });
     return Promise.resolve(input);
+  }
+
+  hasCompletedDelivery(): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+
+  readonly terminal = new Map<string, SupervisorMessageV2TerminalOutcome>();
+
+  recordTerminalOutcome(
+    workflowId: string,
+    _trustedScope: TrustedSupervisorMessageV2Scope,
+    outcome: SupervisorMessageV2TerminalOutcome
+  ): Promise<void> {
+    if (!this.terminal.has(workflowId)) {
+      this.terminal.set(workflowId, outcome);
+    }
+    return Promise.resolve();
+  }
+
+  terminalOutcome(
+    workflowId: string
+  ): Promise<SupervisorMessageV2TerminalOutcome | undefined> {
+    return Promise.resolve(this.terminal.get(workflowId));
   }
 
   recoverableStarts() {

@@ -84,7 +84,7 @@ test("real Temporal control surface completes cross-supervisor delivery and a de
         now: () => "2026-08-30T09:00:00.000Z",
       }),
       identity: "orchestration-e2e@test",
-      namespace: environment.namespace,
+      namespace: environment.client.workflow.options.namespace,
       nativeConnection: environment.nativeConnection,
       receipts: {
         record: (receipt) => {

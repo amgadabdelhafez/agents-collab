@@ -19,11 +19,32 @@ import {
   type WorkflowDefinition,
   WorkflowError,
   type WorkflowPort,
+  type WorkflowPresence,
   type WorkflowTransitionResult,
 } from "./workflow-port";
 
 export const SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE = "supervisor-message.v2";
 const DISPATCH_OWNER = /^v2-dispatcher:[A-Za-z0-9._:-]{1,255}$/;
+
+/**
+ * A recorded terminal outcome closes a V2 workflow for good: recovery and
+ * sender retries never start it again, and the ledger refuses to claim any
+ * of its deliveries. `acknowledged` is the recipient's delivery/read
+ * acknowledgement, deliberately not named completion: it says nothing about
+ * the underlying work. `exhausted` is a message that ended undelivered on its
+ * last allowed attempt, whatever that attempt's failure kind. `terminated` is
+ * an execution the engine closed while its message phase was still open (an
+ * operator terminate, an engine-level cancel, or a timeout).
+ */
+export const SUPERVISOR_MESSAGE_V2_TERMINAL_OUTCOMES = [
+  "acknowledged",
+  "canceled",
+  "dead-lettered",
+  "exhausted",
+  "terminated",
+] as const;
+export type SupervisorMessageV2TerminalOutcome =
+  (typeof SUPERVISOR_MESSAGE_V2_TERMINAL_OUTCOMES)[number];
 
 export type SupervisorMessageV2DeliveryOutcome =
   | { status: "accepted" }
@@ -197,13 +218,21 @@ export class SupervisorMessageV2RecoveryRunner
       // A restarted worker must remain alive to recover a previously failing
       // workflow task. Killing it on the first Temporal query failure creates
       // a startup/recovery deadlock. Other failures still refuse startup.
-      if (
+      if (error instanceof WorkflowError && error.code === "conflict") {
+        // The sweep already recovered every other intent. An ID held by
+        // another deployment stays held until that execution is purged, so
+        // refusing startup would let a foreign deployment keep this host down.
+        this.#log(
+          "V2 initial recovery deferred an intent held by another deployment"
+        );
+      } else if (
         !(error instanceof Error) ||
         (error.name !== "QueryFailedError" && error.name !== "ServiceError")
       ) {
         throw error;
+      } else {
+        this.#log("V2 initial recovery awaiting Temporal query retry");
       }
-      this.#log("V2 initial recovery awaiting Temporal query retry");
     }
     if (this.#closed) {
       return;
@@ -237,7 +266,10 @@ export interface SupervisorMessageV2DeliveryLedger {
     owner: string,
     now: Date,
     leaseMs: number
-  ): Promise<{ fence: number; state: "busy" | "claimed" | "succeeded" }>;
+  ): Promise<{
+    fence: number;
+    state: "busy" | "claimed" | "closed" | "succeeded";
+  }>;
   complete(
     envelope: SupervisorMessageV2DeliveryEnvelope,
     trustedScope: TrustedSupervisorMessageV2Scope
@@ -248,6 +280,11 @@ export interface SupervisorMessageV2DeliveryLedger {
     owner: string,
     fence: number
   ): Promise<void>;
+  /** Whether any delivery of this scoped workflow was externally completed. */
+  hasCompletedDelivery(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<boolean>;
   prepare(
     envelope: SupervisorMessageV2DeliveryEnvelope,
     trustedScope: TrustedSupervisorMessageV2Scope
@@ -257,6 +294,15 @@ export interface SupervisorMessageV2DeliveryLedger {
     trustedScope: TrustedSupervisorMessageV2Scope,
     input: SupervisorMessageV2Input
   ): Promise<SupervisorMessageV2Input>;
+  /**
+   * Durably marks the scoped workflow closed with its first observed terminal
+   * outcome. A later, different outcome does not replace it.
+   */
+  recordTerminalOutcome(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    outcome: SupervisorMessageV2TerminalOutcome
+  ): Promise<void>;
   recoverableStarts(): Promise<
     readonly {
       input: SupervisorMessageV2Input;
@@ -264,6 +310,15 @@ export interface SupervisorMessageV2DeliveryLedger {
       workflowId: string;
     }[]
   >;
+  /** The durable start intent of this scoped workflow; refuses any other. */
+  startIntent(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<SupervisorMessageV2Input>;
+  terminalOutcome(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<SupervisorMessageV2TerminalOutcome | undefined>;
 }
 
 export interface SupervisorMessageV2ReceiveResult {
@@ -358,6 +413,32 @@ const projectionOf = (
     },
     { principal: state.principal, tenantId: state.tenantId }
   );
+
+/**
+ * The one mapping from a message's state to its terminal outcome, used by the
+ * delivery path and both sweep paths so the recorded label never depends on
+ * which path wrote first. An ended phase maps to its outcome; an open phase
+ * is an outcome only when the engine closed the execution (`terminated`).
+ */
+const terminalOutcomeOf = (
+  projection: SupervisorMessageV2Projection,
+  maxDeliveryAttempts: number,
+  executionClosed: boolean
+): SupervisorMessageV2TerminalOutcome | undefined => {
+  if (projection.phase === "acknowledged") {
+    return "acknowledged";
+  }
+  if (projection.phase === "canceled") {
+    return "canceled";
+  }
+  if (projection.phase === "dead-lettered") {
+    return projection.deliveredAt === null &&
+      projection.deliveryAttempts >= maxDeliveryAttempts
+      ? "exhausted"
+      : "dead-lettered";
+  }
+  return executionClosed ? "terminated" : undefined;
+};
 
 const scopeFromArgs = (
   args: JsonObject | undefined,
@@ -565,6 +646,18 @@ export class SupervisorMessageV2Coordinator {
       trustedScope,
       parsed
     );
+    if (
+      (await this.#presence(workflowId)) === "missing" &&
+      (await this.#closedInLedger(trustedScope, workflowId))
+    ) {
+      // A sender retry after retention purged the finished execution. The
+      // dedupe key already reached a terminal outcome or was delivered;
+      // starting it again would reopen it and deliver the message again.
+      throw new WorkflowError(
+        "conflict",
+        `workflow ${workflowId} is closed and its execution was purged`
+      );
+    }
     const started = await this.#workflows.start({
       input: { input: durableInput, trustedScope },
       requestId,
@@ -598,11 +691,18 @@ export class SupervisorMessageV2Coordinator {
     let recovered = 0;
     let unreported: { error: unknown } | undefined;
     for (const record of await this.#ledger.recoverableStarts()) {
+      // A failure confined to one intent (an ID held by another deployment's
+      // execution, a Temporal error for that workflow) is deferred or
+      // reported: the sweep still recovers the remaining intents.
+      const deferred: unknown[] = [];
       try {
-        if (await this.#recoverOne(record)) {
+        if (await this.#recoverStart(record, deferred)) {
           recovered += 1;
         }
       } catch (error) {
+        deferred.push(error);
+      }
+      for (const error of deferred) {
         if (!report) {
           unreported ??= { error };
           continue;
@@ -620,22 +720,47 @@ export class SupervisorMessageV2Coordinator {
     return recovered;
   }
 
-  async #recoverOne(record: {
-    input: SupervisorMessageV2Input;
-    trustedScope: TrustedSupervisorMessageV2Scope;
-    workflowId: string;
-  }): Promise<boolean> {
+  async #recoverStart(
+    record: {
+      input: SupervisorMessageV2Input;
+      trustedScope: TrustedSupervisorMessageV2Scope;
+      workflowId: string;
+    },
+    deferred: unknown[]
+  ): Promise<boolean> {
     const { input, trustedScope, workflowId } = record;
-    if (await this.#workflows.isClosed?.(workflowId)) {
+    if (await this.#closedForRecovery(record, deferred)) {
       return false;
     }
-    await this.#workflows.start({
-      input: { input, trustedScope },
-      requestId: `recovery-start:${workflowId}`,
-      workflowId,
-      workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
-    });
+    try {
+      await this.#workflows.start({
+        input: { input, trustedScope },
+        requestId: `recovery-start:${workflowId}`,
+        workflowId,
+        workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
+      });
+    } catch (error) {
+      // The ID is held by an execution this host does not own. Leave it
+      // alone, recover the remaining intents, and still fail the sweep.
+      if (!(error instanceof WorkflowError && error.code === "conflict")) {
+        throw error;
+      }
+      deferred.push(error);
+      return false;
+    }
     const projection = await this.status(trustedScope, workflowId);
+    // The execution is ours and running, yet its message may have ended
+    // (a cancel issued outside this coordinator, or a process that stopped
+    // before recording). Record it now, while the engine cannot purge it.
+    const ended = terminalOutcomeOf(
+      projection,
+      input.policy.maxDeliveryAttempts,
+      false
+    );
+    if (ended) {
+      await this.#ledger.recordTerminalOutcome(workflowId, trustedScope, ended);
+      return false;
+    }
     if (
       projection.phase === "retry-scheduled" &&
       projection.nextRetryAt !== null &&
@@ -653,6 +778,47 @@ export class SupervisorMessageV2Coordinator {
     }
     await this.#deliver(trustedScope, workflowId, `recovery:${workflowId}`);
     return true;
+  }
+
+  /** Whether recovery must leave this intent's workflow alone. */
+  async #closedForRecovery(
+    record: {
+      input: SupervisorMessageV2Input;
+      trustedScope: TrustedSupervisorMessageV2Scope;
+      workflowId: string;
+    },
+    deferred: unknown[]
+  ): Promise<boolean> {
+    const { input, trustedScope, workflowId } = record;
+    if (await this.#ledger.terminalOutcome(workflowId, trustedScope)) {
+      return true;
+    }
+    let presence: WorkflowPresence | undefined;
+    try {
+      presence = await this.#recoveryPresence(workflowId);
+    } catch (error) {
+      // Another deployment's execution holds this ID. It is neither ours to
+      // start nor ours to read an outcome from: leave the intent open.
+      if (!(error instanceof WorkflowError && error.code === "conflict")) {
+        throw error;
+      }
+      deferred.push(error);
+      return true;
+    }
+    if (presence === "closed") {
+      // Record the outcome while the engine still holds the execution, so a
+      // later retention purge cannot make it look never started.
+      try {
+        await this.#recordClosedOutcome(trustedScope, workflowId, input);
+      } catch (error) {
+        deferred.push(error);
+      }
+      return true;
+    }
+    return (
+      presence === "missing" &&
+      (await this.#ledger.hasCompletedDelivery(workflowId, trustedScope))
+    );
   }
 
   async status(
@@ -723,12 +889,21 @@ export class SupervisorMessageV2Coordinator {
     requestId: string
   ): Promise<SupervisorMessageV2Projection> {
     await this.status(trustedScope, workflowId);
-    await this.#workflows.signal({
+    const receipt = await this.#workflows.signal({
       name: "acknowledge",
       payload: { claimant },
       requestId,
       workflowId,
     });
+    if (receipt.status === "completed") {
+      // The workflow-level status is V1's "completed"; the durable marker
+      // names what happened, a recipient acknowledgement.
+      await this.#ledger.recordTerminalOutcome(
+        workflowId,
+        trustedScope,
+        "acknowledged"
+      );
+    }
     return this.status(trustedScope, workflowId);
   }
 
@@ -766,7 +941,7 @@ export class SupervisorMessageV2Coordinator {
       this.#now(),
       this.#leaseMs
     );
-    if (claim.state === "busy") {
+    if (claim.state === "busy" || claim.state === "closed") {
       return;
     }
     if (claim.state === "succeeded") {
@@ -800,7 +975,7 @@ export class SupervisorMessageV2Coordinator {
         claim.fence
       );
     }
-    await this.#workflows.signal({
+    const receipt = await this.#workflows.signal({
       name:
         outcome.status === "accepted"
           ? "delivery_succeeded"
@@ -815,6 +990,88 @@ export class SupervisorMessageV2Coordinator {
       requestId: outcomeRequestId,
       workflowId,
     });
+    if (outcome.status !== "accepted" && receipt.status !== "running") {
+      // The failure ended the message. Label it from its state, as a sweep
+      // would: a failed last attempt is exhausted whatever its kind.
+      const input = await this.#ledger.startIntent(workflowId, trustedScope);
+      const ended = terminalOutcomeOf(
+        await this.status(trustedScope, workflowId),
+        input.policy.maxDeliveryAttempts,
+        false
+      );
+      if (ended) {
+        await this.#ledger.recordTerminalOutcome(
+          workflowId,
+          trustedScope,
+          ended
+        );
+      }
+    }
+  }
+
+  /**
+   * A closed execution needs no recovery. A missing one is ambiguous: the
+   * process stopped between recording the start intent and starting the
+   * workflow, or the engine purged a closed execution after retention. Only
+   * the first may be started, so recovery and sender retries consult the
+   * ledger: a recorded terminal outcome or a completed delivery proves the
+   * workflow ran. A port that cannot tell missing from running keeps the
+   * earlier start-and-converge behavior.
+   */
+  async #recoveryPresence(
+    workflowId: string
+  ): Promise<WorkflowPresence | undefined> {
+    const presence = await this.#presence(workflowId);
+    if (
+      presence === undefined &&
+      (await this.#workflows.isClosed?.(workflowId))
+    ) {
+      return "closed";
+    }
+    return presence;
+  }
+
+  async #closedInLedger(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<boolean> {
+    return (
+      (await this.#ledger.terminalOutcome(workflowId, trustedScope)) !==
+        undefined ||
+      (await this.#ledger.hasCompletedDelivery(workflowId, trustedScope))
+    );
+  }
+
+  async #recordClosedOutcome(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string,
+    input: SupervisorMessageV2Input
+  ): Promise<void> {
+    const projection = await this.status(trustedScope, workflowId);
+    // The status query addresses the ID, not the execution the presence
+    // check saw. Record only if the ID still names our own closed execution:
+    // a foreign one raises a conflict here, and a purged one is not proof.
+    if ((await this.#recoveryPresence(workflowId)) !== "closed") {
+      return;
+    }
+    const outcome = terminalOutcomeOf(
+      projection,
+      input.policy.maxDeliveryAttempts,
+      true
+    );
+    if (outcome) {
+      await this.#ledger.recordTerminalOutcome(
+        workflowId,
+        trustedScope,
+        outcome
+      );
+    }
+  }
+
+  async #presence(workflowId: string): Promise<WorkflowPresence | undefined> {
+    return this.#workflows.presence
+      ? await this.#workflows.presence(workflowId)
+      : undefined;
   }
 
   async #deliveryPending(

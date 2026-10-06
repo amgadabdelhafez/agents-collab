@@ -1,10 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { TestWorkflowEnvironment } from "@temporalio/testing";
+import { Worker } from "@temporalio/worker";
 import {
   SUPERVISOR_MESSAGE_REPLAY_AGGREGATE_DIGEST,
   supervisorMessageReplayFixtures,
 } from "../../src/loop/supervisor-message-replay-fixtures";
+import { TASK_GRAPH_WORKFLOW_TYPE } from "../../src/loop/task-graph-workflow";
 import { TemporalSupervisorMessageReplayRuntime } from "../../src/loop/temporal-replay-runtime";
+import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
+import type { JsonObject } from "../../src/loop/workflow-port";
 import { runSupervisorMessageReplayCorpus } from "../../src/loop/workflow-replay-corpus";
 
 const runFreshTemporalCorpus = async (suffix: string) => {
@@ -66,4 +71,139 @@ describe("Temporal WorkflowPort conformance", () => {
       "@temporalio/workflow": "1.23.0",
     });
   });
+});
+
+const singleNodeGraph: JsonObject = {
+  graphId: "temporal-port-ownership",
+  nodes: [
+    {
+      acceptanceChecks: [{ checkId: "only:test", kind: "test" }],
+      authorityGates: [],
+      dependencies: [],
+      ownerRepository: "agents-collab",
+      readScopes: ["loop-fork/src"],
+      specArtifactRef: `artifact://sha256/${"e".repeat(64)}`,
+      taskId: "only",
+      writeScopes: ["loop-fork/src/only"],
+    },
+  ],
+  schema: TASK_GRAPH_WORKFLOW_TYPE,
+};
+
+describe("Temporal WorkflowPort execution ownership", () => {
+  let environment: TestWorkflowEnvironment;
+  let worker: Worker;
+  let workerRun: Promise<void>;
+  let owner: TemporalWorkflowPort;
+  let foreign: TemporalWorkflowPort;
+
+  beforeAll(async () => {
+    environment = await TestWorkflowEnvironment.createLocal();
+    const taskQueue = `port-owner-${process.pid}`;
+    worker = await Worker.create({
+      connection: environment.nativeConnection,
+      namespace: environment.namespace,
+      taskQueue,
+      workflowsPath: new URL(
+        "../../src/loop/temporal-workflow.ts",
+        import.meta.url
+      ).pathname,
+    });
+    workerRun = worker.run();
+    owner = new TemporalWorkflowPort(environment.client.workflow, {
+      now: () => "2026-10-05T00:00:00.000Z",
+      taskQueue,
+    });
+    // A second deployment sharing the namespace under its own task queue.
+    foreign = new TemporalWorkflowPort(environment.client.workflow, {
+      now: () => "2026-10-05T00:00:00.000Z",
+      taskQueue: `port-foreign-${process.pid}`,
+    });
+  });
+
+  afterAll(async () => {
+    if (worker.getState() === "RUNNING") {
+      worker.shutdown();
+    }
+    await workerRun;
+    await environment.teardown();
+  });
+
+  test("reports an execution Temporal does not know as missing, not closed", async () => {
+    const workflowId = `port-missing-${process.pid}`;
+    await expect(owner.presence(workflowId)).resolves.toBe("missing");
+    await expect(owner.isClosed(workflowId)).resolves.toBe(false);
+  });
+
+  test("refuses to adopt a same-ID execution owned by another task queue", async () => {
+    const workflowId = `port-ownership-${process.pid}`;
+    const command = {
+      input: singleNodeGraph,
+      requestId: "start-owner",
+      workflowId,
+      workflowType: TASK_GRAPH_WORKFLOW_TYPE,
+    };
+    await expect(owner.start(command)).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(owner.start(command)).resolves.toMatchObject({
+      created: false,
+      replayed: true,
+    });
+    await expect(
+      foreign.start({ ...command, requestId: "start-foreign" })
+    ).rejects.toMatchObject({ code: "conflict", name: "WorkflowError" });
+    await expect(owner.presence(workflowId)).resolves.toBe("running");
+  }, 60_000);
+
+  test("refuses a closed same-ID execution owned by another task queue", async () => {
+    const workflowId = `port-ownership-closed-${process.pid}`;
+    const command = {
+      input: singleNodeGraph,
+      requestId: "start-owner-closed",
+      workflowId,
+      workflowType: TASK_GRAPH_WORKFLOW_TYPE,
+    };
+    await expect(owner.start(command)).resolves.toMatchObject({
+      created: true,
+    });
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate("retention proof");
+    await expect(owner.presence(workflowId)).resolves.toBe("closed");
+    await expect(
+      foreign.start({ ...command, requestId: "start-foreign-closed" })
+    ).rejects.toMatchObject({ code: "conflict", name: "WorkflowError" });
+  }, 60_000);
+
+  test("reports a same-ID execution owned by another task queue as a conflict, never as its own", async () => {
+    const workflowId = `port-presence-foreign-${process.pid}`;
+    await expect(
+      owner.start({
+        input: singleNodeGraph,
+        requestId: "start-owner-presence",
+        workflowId,
+        workflowType: TASK_GRAPH_WORKFLOW_TYPE,
+      })
+    ).resolves.toMatchObject({ created: true });
+    // Running: another deployment must not read the execution as running.
+    await expect(foreign.presence(workflowId)).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate("retention proof");
+    // Closed: reading it as closed would let a recovery sweep record the
+    // owner's outcome as its own.
+    await expect(owner.presence(workflowId)).resolves.toBe("closed");
+    await expect(foreign.presence(workflowId)).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+    await expect(foreign.isClosed(workflowId)).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+  }, 60_000);
 });

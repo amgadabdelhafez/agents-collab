@@ -1,15 +1,21 @@
 import { SQL } from "bun";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import {
+  deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   parseSupervisorMessageV2DeliveryEnvelope,
   parseSupervisorMessageV2Input,
+  SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
   type TrustedSupervisorMessageV2Scope,
 } from "./supervisor-message-v2-contract";
-import type { SupervisorMessageV2DeliveryLedger } from "./supervisor-message-v2-runtime";
+import {
+  SUPERVISOR_MESSAGE_V2_TERMINAL_OUTCOMES,
+  type SupervisorMessageV2DeliveryLedger,
+  type SupervisorMessageV2TerminalOutcome,
+} from "./supervisor-message-v2-runtime";
 
 const DISPATCH_OWNER = /^v2-dispatcher:[A-Za-z0-9._:-]{1,255}$/;
 const POSTGRES_URL = /^postgres(?:ql)?:\/\//i;
@@ -89,6 +95,19 @@ const startIntentSemantics = (input: SupervisorMessageV2Input): string => {
   return canonical(immutable);
 };
 
+const parseTerminalOutcome = (
+  value: unknown
+): SupervisorMessageV2TerminalOutcome => {
+  if (
+    !(SUPERVISOR_MESSAGE_V2_TERMINAL_OUTCOMES as readonly unknown[]).includes(
+      value
+    )
+  ) {
+    throw new Error("V2 workflow terminal outcome is invalid");
+  }
+  return value as SupervisorMessageV2TerminalOutcome;
+};
+
 const parseDispatchOwner = (owner: string): string => {
   if (!DISPATCH_OWNER.test(owner)) {
     throw new Error("V2 delivery lease owner is invalid");
@@ -142,6 +161,13 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       PRIMARY KEY (graph_workflow_id, graph_task_id)
     )`;
     await this.#backfillResultGraphTasks();
+    // Additive terminal marker on the start intent. NULL means no terminal
+    // outcome was observed; a value closes the workflow for recovery, sender
+    // retries and delivery claims, even after the engine purges it.
+    await this
+      .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+    await this
+      .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ`;
   }
 
   /**
@@ -333,7 +359,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     owner: string,
     now: Date,
     leaseMs: number
-  ): Promise<{ fence: number; state: "busy" | "claimed" | "succeeded" }> {
+  ): Promise<{
+    fence: number;
+    state: "busy" | "claimed" | "closed" | "succeeded";
+  }> {
     const parsed = parseSupervisorMessageV2DeliveryEnvelope(
       envelope,
       trustedScope
@@ -346,9 +375,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     const until = new Date(now.getTime() + leaseMs);
     const rows = await this.#sql<
       { completed_at: Date | null; lease_fence: number }[]
-    >`UPDATE loop_supervisor_message_v2_delivery_ledger SET lease_owner = ${parsedOwner}, lease_fence = lease_fence + 1, lease_until = ${until} WHERE delivery_id = ${parsed.deliveryId} AND completed_at IS NULL AND (lease_until IS NULL OR lease_until <= ${now}) RETURNING completed_at, lease_fence::integer AS lease_fence`;
+    >`UPDATE loop_supervisor_message_v2_delivery_ledger SET lease_owner = ${parsedOwner}, lease_fence = lease_fence + 1, lease_until = ${until} WHERE delivery_id = ${parsed.deliveryId} AND completed_at IS NULL AND (lease_until IS NULL OR lease_until <= ${now}) AND NOT EXISTS (SELECT 1 FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${parsed.workflowId} AND terminal_outcome IS NOT NULL) RETURNING completed_at, lease_fence::integer AS lease_fence`;
     if (rows[0]) {
       return { fence: rows[0].lease_fence, state: "claimed" };
+    }
+    if (await this.terminalOutcome(parsed.workflowId, trustedScope)) {
+      return { fence: 0, state: "closed" };
     }
     const existing = await this.#sql<
       { completed_at: Date | null }[]
@@ -413,6 +445,13 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     workflowId: string,
     trustedScope: TrustedSupervisorMessageV2Scope
   ): Promise<void> {
+    await this.startIntent(workflowId, trustedScope);
+  }
+
+  async startIntent(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<SupervisorMessageV2Input> {
     const rows = await this.#sql<
       { input_json: unknown; principal: string; tenant_id: string }[]
     >`SELECT input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
@@ -443,6 +482,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         "V2 workflow start intent has an invalid workflow binding"
       );
     }
+    return parsed;
   }
 
   /** Body-free host lookup. Caller supplies route tenant and authenticated
@@ -556,6 +596,52 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         "V2 delivery completion lacks the prepared bound envelope"
       );
     }
+  }
+
+  /**
+   * Looks a workflow's deliveries up by primary key. Every delivery ID is a
+   * scoped digest of (scope, workflow, attempt) and attempts are bounded, so
+   * the candidates are enumerable and a foreign scope derives none of them.
+   * It never reads `envelope_json`: this client binds `${text}::jsonb` as a
+   * JSON string scalar, where a JSON path such as `->>'workflowId'` is NULL.
+   */
+  async hasCompletedDelivery(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<boolean> {
+    const deliveryIds = Array.from(
+      { length: SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS },
+      (_, index) =>
+        deriveSupervisorMessageV2DeliveryId(trustedScope, workflowId, index + 1)
+    ).join(",");
+    const rows = await this.#sql<
+      { completed: boolean }[]
+    >`SELECT EXISTS (SELECT 1 FROM loop_supervisor_message_v2_delivery_ledger WHERE delivery_id = ANY(string_to_array(${deliveryIds}::text, ',')) AND completed_at IS NOT NULL) AS completed`;
+    return rows[0]?.completed === true;
+  }
+
+  async recordTerminalOutcome(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    outcome: SupervisorMessageV2TerminalOutcome
+  ): Promise<void> {
+    const parsed = parseTerminalOutcome(outcome);
+    await this.assertStartIntent(workflowId, trustedScope);
+    await this
+      .#sql`UPDATE loop_supervisor_message_v2_start_intent SET terminal_outcome = ${parsed}, terminal_at = now() WHERE workflow_id = ${workflowId} AND tenant_id = ${trustedScope.tenantId} AND principal = ${trustedScope.principal} AND terminal_outcome IS NULL`;
+  }
+
+  async terminalOutcome(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<SupervisorMessageV2TerminalOutcome | undefined> {
+    const rows = await this.#sql<
+      { terminal_outcome: string | null }[]
+    >`SELECT terminal_outcome FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId} AND tenant_id = ${trustedScope.tenantId} AND principal = ${trustedScope.principal}`;
+    const value = rows[0]?.terminal_outcome;
+    return value === null || value === undefined
+      ? undefined
+      : parseTerminalOutcome(value);
   }
 
   async completeClaim(

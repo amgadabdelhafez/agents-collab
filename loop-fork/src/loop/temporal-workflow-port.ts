@@ -20,6 +20,7 @@ import {
   WorkflowError,
   type WorkflowInspection,
   type WorkflowPort,
+  type WorkflowPresence,
   type WorkflowQueryCommand,
   type WorkflowQueryResult,
   type WorkflowSignalCommand,
@@ -37,6 +38,8 @@ export interface TemporalWorkflowPortOptions {
 const sleep = (durationMs: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, durationMs));
 
+const TASK_QUEUE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
+
 export class TemporalWorkflowPort implements WorkflowPort {
   readonly #client: WorkflowClient;
   readonly #observationAttempts: number;
@@ -45,11 +48,22 @@ export class TemporalWorkflowPort implements WorkflowPort {
   readonly #taskQueue: string;
 
   constructor(client: unknown, options: TemporalWorkflowPortOptions) {
+    if (
+      typeof options.taskQueue !== "string" ||
+      !TASK_QUEUE_RE.test(options.taskQueue)
+    ) {
+      throw new Error("Temporal workflow port taskQueue is invalid");
+    }
     this.#client = client as WorkflowClient;
     this.#taskQueue = options.taskQueue;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#observationAttempts = options.commandObservationAttempts ?? 200;
     this.#observationDelayMs = options.commandObservationDelayMs ?? 5;
+  }
+
+  /** The deployment discriminator: the queue this port starts and adopts. */
+  get taskQueue(): string {
+    return this.#taskQueue;
   }
 
   cancel(command: WorkflowCancelCommand): Promise<WorkflowCommandReceipt> {
@@ -66,16 +80,26 @@ export class TemporalWorkflowPort implements WorkflowPort {
   }
 
   async isClosed(workflowId: string): Promise<boolean> {
+    return (await this.presence(workflowId)) === "closed";
+  }
+
+  /**
+   * Presence of this deployment's own execution. A same-ID execution on
+   * another task queue is neither running nor closed for this port: it is a
+   * conflict, so no caller can read, adopt or record a foreign outcome.
+   */
+  async presence(workflowId: string): Promise<WorkflowPresence> {
+    let description: Awaited<ReturnType<WorkflowHandle["describe"]>>;
     try {
-      return (
-        (await this.#handle(workflowId).describe()).status.name !== "RUNNING"
-      );
+      description = await this.#handle(workflowId).describe();
     } catch (error) {
       if (error instanceof WorkflowNotFoundError) {
-        return false;
+        return "missing";
       }
       throw error;
     }
+    this.#requireOwnTaskQueue(workflowId, description.taskQueue);
+    return description.status.name === "RUNNING" ? "running" : "closed";
   }
 
   query(command: WorkflowQueryCommand): Promise<WorkflowQueryResult> {
@@ -120,6 +144,10 @@ export class TemporalWorkflowPort implements WorkflowPort {
       }
       created = false;
       handle = this.#handle(command.workflowId);
+      this.#requireOwnTaskQueue(
+        command.workflowId,
+        (await handle.describe()).taskQueue
+      );
     }
     const snapshot = await handle.query(temporalStartSnapshotQuery);
     if (snapshot.inspection.workflowType !== command.workflowType) {
@@ -163,6 +191,21 @@ export class TemporalWorkflowPort implements WorkflowPort {
 
   #handle(workflowId: string): WorkflowHandle {
     return this.#client.getHandle(workflowId);
+  }
+
+  /**
+   * A workflow ID is unique per namespace, not per deployment. Another
+   * deployment sharing the namespace under its own task queue can hold the
+   * same ID; treating its execution as ours would read and signal foreign
+   * state, or record its outcome as ours.
+   */
+  #requireOwnTaskQueue(workflowId: string, taskQueue: string): void {
+    if (taskQueue !== this.#taskQueue) {
+      throw new WorkflowError(
+        "conflict",
+        `workflow ${workflowId} belongs to another task queue`
+      );
+    }
   }
 
   #unwrap(
