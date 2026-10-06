@@ -186,6 +186,89 @@ test("helper model provenance prefers the newest timestamp and never mixes rows"
   }
 });
 
+const helperModelFrom = (
+  label: string,
+  rows: Record<string, unknown>[]
+): { model?: string; servedModel?: string } => {
+  const runDir = mkdtempSync(join(tmpdir(), `utility-model-${label}-`));
+  try {
+    routeHelperJobs(runDir, [...new Set(rows.map((row) => String(row.jobId)))]);
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      rows.map((row) => JSON.stringify(row)).join("\n")
+    );
+    const { model, servedModel } = readUtilityObservability(
+      runDir,
+      "utility-nanny"
+    );
+    return { model, servedModel };
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+};
+
+test("a re-appended job wins an equal-timestamp tie by its latest append", () => {
+  // Rows stamped in the same millisecond (and legacy rows with no stamp) fall
+  // back to append order. Job A's second row is the last append, so it must
+  // win even though job A was first seen before job B.
+  for (const at of ["2026-10-05T10:00:00.000Z", undefined]) {
+    const stamp = at ? { at } : {};
+    expect(
+      helperModelFrom("tie", [
+        { ...stamp, jobId: "job-a", model: "a1-requested", modelCalls: 1 },
+        { ...stamp, jobId: "job-b", model: "b1-requested", modelCalls: 1 },
+        {
+          ...stamp,
+          jobId: "job-a",
+          model: "a2-requested",
+          servedModel: "a2-served",
+          modelCalls: 1,
+        },
+      ])
+    ).toEqual({ model: "a2-requested", servedModel: "a2-served" });
+  }
+});
+
+test("a newest row without a model never borrows an older row's model", () => {
+  expect(
+    helperModelFrom("no-model", [
+      {
+        at: "2026-10-05T10:00:00.000Z",
+        jobId: "job-old",
+        model: "old-requested",
+        servedModel: "old-served",
+        modelCalls: 1,
+      },
+      {
+        at: "2026-10-05T10:01:00.000Z",
+        jobId: "job-new",
+        servedModel: "new-served",
+        modelCalls: 1,
+      },
+    ])
+  ).toEqual({ model: undefined, servedModel: "new-served" });
+});
+
+test("an unstamped legacy row never outranks a timestamped row", () => {
+  // Every current writer stamps `at`; a row without one predates them.
+  expect(
+    helperModelFrom("legacy", [
+      {
+        at: "2026-10-05T10:00:00.000Z",
+        jobId: "job-stamped",
+        model: "stamped-requested",
+        modelCalls: 1,
+      },
+      {
+        jobId: "job-legacy",
+        model: "legacy-requested",
+        servedModel: "legacy-served",
+        modelCalls: 1,
+      },
+    ])
+  ).toEqual({ model: "stamped-requested", servedModel: undefined });
+});
+
 test("utility observability safely handles absent and malformed journals", () => {
   const runDir = mkdtempSync(join(tmpdir(), "utility-observability-bad-"));
   try {
