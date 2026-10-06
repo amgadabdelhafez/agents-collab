@@ -14,11 +14,12 @@ import {
   type SupervisorMessageInput,
   supervisorMessageWorkflowDefinition,
 } from "./supervisor-message-workflow";
-import type {
-  JsonObject,
-  WorkflowDefinition,
-  WorkflowPort,
-  WorkflowTransitionResult,
+import {
+  type JsonObject,
+  type WorkflowDefinition,
+  WorkflowError,
+  type WorkflowPort,
+  type WorkflowTransitionResult,
 } from "./workflow-port";
 
 export const SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE = "supervisor-message.v2";
@@ -54,8 +55,26 @@ export interface SupervisorMessageV2DeliveryReadinessPort {
  * post-effect records. A caller must opt in and own its shutdown lifecycle.
  */
 export interface SupervisorMessageV2RecoveryPort {
-  recoverPending(): Promise<number>;
+  recoverPending(
+    report?: (failure: SupervisorMessageV2RecoveryFailure) => void
+  ): Promise<number>;
 }
+
+/** One recorded start that a recovery sweep could not recover. */
+export interface SupervisorMessageV2RecoveryFailure {
+  error: unknown;
+  recipient: string;
+  workflowId: string;
+}
+
+const recoveryFailureText = (error: unknown): string => {
+  if (error instanceof WorkflowError) {
+    return `WorkflowError (${error.code}): ${error.message}`;
+  }
+  return error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : "unknown error";
+};
 
 export interface SupervisorMessageV2RecoveryRunnerOptions {
   coordinator: SupervisorMessageV2RecoveryPort;
@@ -89,6 +108,8 @@ export class SupervisorMessageV2RecoveryRunner
   readonly #coordinator: SupervisorMessageV2RecoveryPort;
   readonly #intervalMs: number;
   readonly #log: (message: string) => void;
+  /** workflowId -> the line last logged for it, so a sweep repeats nothing. */
+  readonly #reportedSkips = new Map<string, string>();
   readonly #timerPort: SupervisorMessageV2RecoveryTimer;
   #closed = false;
   #inFlight: Promise<number> | undefined;
@@ -136,10 +157,32 @@ export class SupervisorMessageV2RecoveryRunner
     if (this.#inFlight) {
       return 0;
     }
-    const run = this.#coordinator.recoverPending();
+    // A record that cannot be recovered (for example an ID another
+    // deployment's execution holds) is skipped and reported here, so it
+    // degrades only that message's recipient: it neither refuses service
+    // start nor stops recovery of every other record.
+    const skipped = new Map<string, string>();
+    const run = this.#coordinator.recoverPending((failure) => {
+      skipped.set(
+        failure.workflowId,
+        `V2 recovery skipped workflow ${failure.workflowId} for ${failure.recipient}: ${recoveryFailureText(failure.error)}`
+      );
+    });
     this.#inFlight = run;
     try {
-      return await run;
+      const recovered = await run;
+      for (const workflowId of this.#reportedSkips.keys()) {
+        if (!skipped.has(workflowId)) {
+          this.#reportedSkips.delete(workflowId);
+        }
+      }
+      for (const [workflowId, line] of skipped) {
+        if (this.#reportedSkips.get(workflowId) !== line) {
+          this.#reportedSkips.set(workflowId, line);
+          this.#log(line);
+        }
+      }
+      return recovered;
     } finally {
       if (this.#inFlight === run) {
         this.#inFlight = undefined;
@@ -542,40 +585,74 @@ export class SupervisorMessageV2Coordinator {
    * Service-start recovery. The durable ledger supplies only canonical V2
    * envelopes whose earlier lease has expired, so an interrupted external
    * effect can converge without a sender replaying the original request.
+   *
+   * Each record is recovered on its own: one that fails (an ID held by a
+   * foreign execution, a Temporal error for that workflow) does not stop the
+   * others. With `report`, each such failure is handed to it and the sweep
+   * resolves; without it, the first failure is thrown after every other
+   * record was attempted. Reading the ledger itself still fails the sweep.
    */
-  async recoverPending(): Promise<number> {
+  async recoverPending(
+    report?: (failure: SupervisorMessageV2RecoveryFailure) => void
+  ): Promise<number> {
     let recovered = 0;
+    let unreported: { error: unknown } | undefined;
     for (const record of await this.#ledger.recoverableStarts()) {
-      const { input, trustedScope, workflowId } = record;
-      if (await this.#workflows.isClosed?.(workflowId)) {
-        continue;
-      }
-      await this.#workflows.start({
-        input: { input, trustedScope },
-        requestId: `recovery-start:${workflowId}`,
-        workflowId,
-        workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
-      });
-      const projection = await this.status(trustedScope, workflowId);
-      if (
-        projection.phase === "retry-scheduled" &&
-        projection.nextRetryAt !== null &&
-        Date.parse(projection.nextRetryAt) <= this.#now().getTime()
-      ) {
-        await this.#workflows.signal({
-          name: "retry_due",
-          payload: {},
-          requestId: `recovery-retry:${workflowId}:${projection.nextRetryAt}`,
-          workflowId,
+      try {
+        if (await this.#recoverOne(record)) {
+          recovered += 1;
+        }
+      } catch (error) {
+        if (!report) {
+          unreported ??= { error };
+          continue;
+        }
+        report({
+          error,
+          recipient: record.input.to,
+          workflowId: record.workflowId,
         });
       }
-      if (!(await this.#deliveryPending(trustedScope, workflowId))) {
-        continue;
-      }
-      await this.#deliver(trustedScope, workflowId, `recovery:${workflowId}`);
-      recovered += 1;
+    }
+    if (unreported) {
+      throw unreported.error;
     }
     return recovered;
+  }
+
+  async #recoverOne(record: {
+    input: SupervisorMessageV2Input;
+    trustedScope: TrustedSupervisorMessageV2Scope;
+    workflowId: string;
+  }): Promise<boolean> {
+    const { input, trustedScope, workflowId } = record;
+    if (await this.#workflows.isClosed?.(workflowId)) {
+      return false;
+    }
+    await this.#workflows.start({
+      input: { input, trustedScope },
+      requestId: `recovery-start:${workflowId}`,
+      workflowId,
+      workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
+    });
+    const projection = await this.status(trustedScope, workflowId);
+    if (
+      projection.phase === "retry-scheduled" &&
+      projection.nextRetryAt !== null &&
+      Date.parse(projection.nextRetryAt) <= this.#now().getTime()
+    ) {
+      await this.#workflows.signal({
+        name: "retry_due",
+        payload: {},
+        requestId: `recovery-retry:${workflowId}:${projection.nextRetryAt}`,
+        workflowId,
+      });
+    }
+    if (!(await this.#deliveryPending(trustedScope, workflowId))) {
+      return false;
+    }
+    await this.#deliver(trustedScope, workflowId, `recovery:${workflowId}`);
+    return true;
   }
 
   async status(

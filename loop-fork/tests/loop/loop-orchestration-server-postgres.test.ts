@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,11 +12,16 @@ import {
   runLoopOrchestrationServer,
 } from "../../src/loop/loop-orchestration-server";
 import { createRunManifest, writeRunManifest } from "../../src/loop/run-state";
+import { deriveSupervisorMessageV2WorkflowId } from "../../src/loop/supervisor-message-v2-contract";
+import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
+import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
+import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "../../src/loop/supervisor-message-workflow";
 import {
   deriveSupervisorSessionDescriptorV2Id,
   PostgresSupervisorSessionV2Store,
   type SupervisorSessionDescriptorV2,
 } from "../../src/loop/supervisor-session-v2";
+import { temporalWorkflow } from "../../src/loop/temporal-workflow";
 import { DisposablePostgres } from "../support/disposable-postgres";
 
 // Real PostgreSQL (task-owned Docker container) for the session store, and a
@@ -406,6 +411,7 @@ const compositionFixture = (input: {
     );
   writeSeat(input.thread);
   const port = freePort();
+  const taskQueue = `orchestration-composition-${randomUUID().slice(0, 8)}`;
   const configPath = join(root, "orchestration.json");
   writeFileSync(
     configPath,
@@ -450,11 +456,12 @@ const compositionFixture = (input: {
           tokenEnv: "LOOP_TEST_HARNESS_TOKEN",
         },
       ],
-      taskQueue: `orchestration-composition-${randomUUID().slice(0, 8)}`,
+      taskQueue,
     })
   );
   return {
     configPath,
+    taskQueue,
     env: {
       LOOP_TEST_A2A_DATABASE_URL: postgres.databaseUrl(),
       LOOP_TEST_HARNESS_TOKEN: randomUUID(),
@@ -488,6 +495,34 @@ const sessionDescriptor = (
   tenantId: config.tenant,
 });
 
+/** Runs the real server; `ready` is "ready" or why it never got there. */
+const startServer = (
+  fixture: ReturnType<typeof compositionFixture>,
+  signal: AbortSignal
+) => {
+  const running = runLoopOrchestrationServer(fixture.configPath, fixture.env, {
+    signal,
+  });
+  const failed = running.then(
+    () => "server stopped before it became ready",
+    (error: unknown) =>
+      `server failed: ${error instanceof Error ? error.message : String(error)}`
+  );
+  const ready = Promise.race([
+    failed,
+    waitFor("the server to report ready", async () => {
+      const response = await fetch(
+        `http://127.0.0.1:${fixture.port}/healthz`
+      ).catch(() => undefined);
+      const body = (await response?.json().catch(() => undefined)) as
+        | { state?: string }
+        | undefined;
+      return body?.state === "ready" ? "ready" : undefined;
+    }),
+  ]);
+  return { ready, running };
+};
+
 let temporal: TestWorkflowEnvironment | undefined;
 const temporalEnvironment = async (): Promise<TestWorkflowEnvironment> => {
   temporal ??= await TestWorkflowEnvironment.createLocal();
@@ -520,27 +555,9 @@ test("the orchestration server enrolls at start and keeps the enrollment current
         thread: "thread-old",
       })
     );
-    running = runLoopOrchestrationServer(fixture.configPath, fixture.env, {
-      signal: stop.signal,
-    });
-    const failed = running.then(
-      () => "server stopped before it became ready",
-      (error: unknown) =>
-        `server failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-    const ready = await Promise.race([
-      failed,
-      waitFor("the server to report ready", async () => {
-        const response = await fetch(
-          `http://127.0.0.1:${fixture.port}/healthz`
-        ).catch(() => undefined);
-        const body = (await response?.json().catch(() => undefined)) as
-          | { state?: string }
-          | undefined;
-        return body?.state === "ready" ? "ready" : undefined;
-      }),
-    ]);
-    expect(ready).toBe("ready");
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
     // Start-time enrollment (before the host's recovery sweep) rebound the
     // stale descriptor to the live thread.
     expect(
@@ -594,6 +611,83 @@ test("the orchestration server refuses to start when a configured seat cannot be
     clearTimeout(timer);
     stop.abort();
     await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server starts when a recorded V2 workflow ID is held by a foreign execution", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const fixture = compositionFixture({
+    address: environment.address,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  const v2Scope = fixtureV2.expectedScope;
+  const dedupeKey = `foreign-${randomUUID().slice(0, 8)}`;
+  const workflowId = deriveSupervisorMessageV2WorkflowId(v2Scope, dedupeKey);
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl()
+  );
+  const errors = spyOn(console, "error");
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    await ledger.migrate();
+    // This deployment recorded a V2 start intent for the ID...
+    await ledger.recordStartIntent(workflowId, v2Scope, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey,
+    });
+    // ...but the ID is already held in the namespace by another execution,
+    // of a different workflow type.
+    await environment.client.workflow.start(temporalWorkflow, {
+      args: [
+        {
+          at: "2026-10-05T00:00:00.000Z",
+          input: {
+            artifactRefs: [],
+            body: "foreign execution",
+            dedupeKey,
+            from: "supervisor:source",
+            messageId: `message-${dedupeKey}`,
+            policy: {
+              claimTimeoutMs: 60_000,
+              escalationTimeoutMs: 120_000,
+              maxDeliveryAttempts: 2,
+              retryDelayMs: 500,
+            },
+            receivedAt: "2026-10-05T00:00:00.000Z",
+            threadId: `thread-${dedupeKey}`,
+            to: "supervisor:target",
+          },
+          requestId: "foreign:start",
+          workflowId,
+          workflowType: SUPERVISOR_MESSAGE_WORKFLOW_TYPE,
+        },
+      ],
+      taskQueue: fixture.taskQueue,
+      workflowId,
+    });
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(errors.mock.calls.map(([line]) => String(line))).toContain(
+      `V2 recovery skipped workflow ${workflowId} for supervisor:target: WorkflowError (conflict): workflow ${workflowId} already exists as ${SUPERVISOR_MESSAGE_WORKFLOW_TYPE}`
+    );
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate()
+      .catch(() => undefined);
+    await ledger.close();
     fixture.remove();
   }
 }, 120_000);
