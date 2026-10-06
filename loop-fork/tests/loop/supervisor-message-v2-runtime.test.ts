@@ -10,11 +10,18 @@ import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-mes
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  SupervisorMessageV2ReadinessUnavailableError,
   SupervisorMessageV2RecoveryRunner,
   type SupervisorMessageV2TerminalOutcome,
   supervisorMessageV2WorkflowDefinition,
 } from "../../src/loop/supervisor-message-v2-runtime";
-import { WorkflowError, type WorkflowPort } from "../../src/loop/workflow-port";
+import {
+  type JsonObject,
+  type WorkflowCommandReceipt,
+  WorkflowError,
+  type WorkflowPort,
+  type WorkflowSignalCommand,
+} from "../../src/loop/workflow-port";
 
 const fixture = structuredClone(supervisorMessageV2ReplayFixtures[0]);
 if (!fixture) {
@@ -160,9 +167,34 @@ class MemoryLedger implements SupervisorMessageV2DeliveryLedger {
   }
 }
 
+/**
+ * The in-memory port's inspect() exposes only event names, never payloads or
+ * state, so it cannot show what a signal wrote. Record each signal command as
+ * it enters the port: the payload is exactly what the workflow folds into its
+ * durable state (delivery_failed's reason becomes lastFailure).
+ */
+class RecordingWorkflowPort extends InMemoryWorkflowPort {
+  readonly signaled: {
+    name: string;
+    payload: JsonObject | undefined;
+    workflowId: string;
+  }[] = [];
+
+  override signal(command: WorkflowSignalCommand): WorkflowCommandReceipt {
+    this.signaled.push(
+      structuredClone({
+        name: command.name,
+        payload: command.payload,
+        workflowId: command.workflowId,
+      })
+    );
+    return super.signal(command);
+  }
+}
+
 const harness = () => {
   let clock = Date.parse("2026-09-20T05:00:00.000Z");
-  const workflows = new InMemoryWorkflowPort({
+  const workflows = new RecordingWorkflowPort({
     definitions: [supervisorMessageV2WorkflowDefinition],
     now: () => new Date(clock).toISOString(),
   });
@@ -170,6 +202,7 @@ const harness = () => {
   const delivered: string[] = [];
   const unready = new Set<string>();
   const providerDown = new Set<string>();
+  const readinessStore = { down: false };
   const readinessChecks: string[] = [];
   const coordinator = new SupervisorMessageV2Coordinator(
     workflows,
@@ -191,6 +224,11 @@ const harness = () => {
     {
       assertReady(_trustedScope, recipient) {
         readinessChecks.push(recipient);
+        if (readinessStore.down) {
+          return Promise.reject(
+            new SupervisorMessageV2ReadinessUnavailableError()
+          );
+        }
         if (unready.has(recipient)) {
           return Promise.reject(
             new Error(
@@ -208,6 +246,10 @@ const harness = () => {
       .inspect(workflowId)
       .history.filter((event) => event.kind === "signaled")
       .map((event) => event.name);
+  const signalPayloads = (workflowId: string) =>
+    workflows.signaled
+      .filter((command) => command.workflowId === workflowId)
+      .map(({ name, payload }) => ({ name, payload }));
   return {
     advance(ms: number) {
       clock += ms;
@@ -217,6 +259,8 @@ const harness = () => {
     ledger,
     providerDown,
     readinessChecks,
+    readinessStore,
+    signalPayloads,
     signals,
     status,
     unready,
@@ -256,9 +300,18 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
     expect(received.projection.nextRetryAt).not.toBeNull();
     expect(h.delivered).toHaveLength(0);
     expect(h.signals(workflowId)).toEqual(["delivery_failed"]);
-    // The readiness refusal is opaque in durable workflow state.
-    const state = h.workflows.inspect(workflowId);
-    expect(JSON.stringify(state)).not.toContain("secret-detail");
+    // The readiness refusal reaches durable workflow state only as a fixed
+    // opaque reason: delivery_failed's payload is what becomes lastFailure.
+    expect(h.signalPayloads(workflowId)).toEqual([
+      {
+        name: "delivery_failed",
+        payload: { permanent: false, reason: "recipient session is not ready" },
+      },
+    ]);
+    expect(JSON.stringify(h.signalPayloads(workflowId))).not.toContain(
+      "secret-detail"
+    );
+    expect(JSON.stringify(received.projection)).not.toContain("secret-detail");
 
     // Not yet due: recovery leaves the scheduled retry alone.
     expect(await h.coordinator.recoverPending()).toBe(0);
@@ -387,6 +440,99 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
     expect(claimed.phase).toBe("claimed");
     expect(claimed.claimedBy).toBe("supervisor:target");
     expect(h.delivered).toHaveLength(1);
+  });
+
+  test("an unready seat still consumes delivery attempts and dead-letters at the policy bound", async () => {
+    const h = harness();
+    h.unready.add("supervisor:target");
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("unready-bound"),
+      "request:unready-bound"
+    );
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    for (let attempt = 2; attempt <= 5; attempt += 1) {
+      h.advance(500);
+      await h.coordinator.recoverPending();
+      expect((await h.status(workflowId)).deliveryAttempts).toBe(attempt);
+    }
+    const final = await h.status(workflowId);
+    expect(final.phase).toBe("dead-lettered");
+    expect(final.deadLetteredAt).not.toBeNull();
+    expect(h.delivered).toHaveLength(0);
+  });
+
+  test("a readiness store outage defers delivery without consuming an attempt or a lease", async () => {
+    const h = harness();
+    h.readinessStore.down = true;
+    const received = await h.coordinator.receive(
+      scope,
+      inputFor("store-outage"),
+      "request:store-outage"
+    );
+    const { workflowId } = received;
+    // The sender sees the durable, still-pending message, not a raw error.
+    expect(received.projection.phase).toBe("routed");
+    expect(received.projection.deliveryAttempts).toBe(0);
+    expect(received.projection.deliveredAt).toBeNull();
+    expect(h.signals(workflowId)).toEqual([]);
+    expect(h.ledger.deliveries.size).toBe(0);
+    expect(h.delivered).toHaveLength(0);
+
+    // Outlast the delivery-attempt bound (5) on the existing recovery sweep.
+    for (let sweep = 0; sweep < 8; sweep += 1) {
+      h.advance(500);
+      expect(await h.coordinator.recoverPending()).toBe(0);
+    }
+    const during = await h.status(workflowId);
+    expect(during.phase).toBe("routed");
+    expect(during.deliveryAttempts).toBe(0);
+    expect(during.deadLetteredAt).toBeNull();
+    expect(h.signals(workflowId)).toEqual([]);
+    expect(h.ledger.deliveries.size).toBe(0);
+    expect(h.readinessChecks).toHaveLength(9);
+
+    h.readinessStore.down = false;
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    const recovered = await h.status(workflowId);
+    expect(recovered.deliveredAt).not.toBeNull();
+    expect(recovered.deliveryAttempts).toBe(1);
+    expect(h.delivered).toHaveLength(1);
+    expect(h.signals(workflowId)).toEqual(["delivery_succeeded"]);
+  });
+
+  test("a readiness store outage on a claimant's due retry leaves the attempt for recovery", async () => {
+    const h = harness();
+    h.providerDown.add("supervisor:target");
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("claim-outage"),
+      "request:claim-outage"
+    );
+    h.providerDown.clear();
+    h.readinessStore.down = true;
+    h.advance(500);
+
+    await expect(
+      h.coordinator.claim(scope, workflowId, "supervisor:target", "claim:1")
+    ).rejects.toBeInstanceOf(WorkflowError);
+    const deferred = await h.status(workflowId);
+    expect(deferred.phase).toBe("routed");
+    expect(deferred.deliveryAttempts).toBe(1);
+    expect(h.signals(workflowId)).toEqual(["delivery_failed", "retry_due"]);
+    expect(h.delivered).toHaveLength(0);
+
+    h.readinessStore.down = false;
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect(h.delivered).toHaveLength(1);
+    const claimed = await h.coordinator.claim(
+      scope,
+      workflowId,
+      "supervisor:target",
+      "claim:2"
+    );
+    expect(claimed.phase).toBe("claimed");
+    expect(claimed.deliveryAttempts).toBe(2);
   });
 });
 

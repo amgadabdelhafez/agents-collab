@@ -3,6 +3,7 @@ import {
   parseTrustedSupervisorMessageV2Scope,
   type TrustedSupervisorMessageV2Scope,
 } from "./supervisor-message-v2-contract";
+import { SupervisorMessageV2ReadinessUnavailableError } from "./supervisor-message-v2-runtime";
 import { supervisorMessageV2ScopedDigest } from "./supervisor-message-v2-workflow-identity";
 
 /**
@@ -23,6 +24,12 @@ export const SUPERVISOR_SESSION_REBIND_RECEIPT_V2_SCHEMA =
  * successful `assertReady`; past this age a dependent gate reads not-ready.
  */
 export const SUPERVISOR_SESSION_READINESS_MAX_AGE_MS = 60_000;
+/**
+ * How far in the future a readiness receipt's `checkedAt` may sit and still
+ * count as fresh. Hosts sharing the store can disagree slightly about the
+ * time; beyond this a future-dated receipt is not evidence of readiness.
+ */
+export const SUPERVISOR_SESSION_READINESS_CLOCK_SKEW_MS = 5000;
 
 export type SupervisorSessionProviderV2 =
   | "claude-code"
@@ -156,6 +163,20 @@ const requireCanonicalUtc = (value: unknown, field: string): string => {
     throw new SupervisorSessionV2Error(`${field} is invalid`);
   }
   return value;
+};
+
+/**
+ * Rejection handler for one readiness-path store operation. A refusal this
+ * store decides (SupervisorSessionV2Error) passes through unchanged; any other
+ * failure means the store could not answer, so the delivery boundary must not
+ * count it as an unready seat. The original error is dropped: driver errors
+ * can carry connection detail that must not reach workflow state or logs.
+ */
+const rethrowReadinessStoreFailure = (error: unknown): never => {
+  if (error instanceof SupervisorSessionV2Error) {
+    throw error;
+  }
+  throw new SupervisorMessageV2ReadinessUnavailableError();
 };
 
 const requireReadinessMaxAgeMs = (value: unknown): number => {
@@ -413,10 +434,16 @@ const descriptorFromRow = (
   ) {
     return undefined;
   }
-  const value =
-    typeof row.descriptor_json === "string"
-      ? JSON.parse(row.descriptor_json)
-      : row.descriptor_json;
+  let value: unknown = row.descriptor_json;
+  if (typeof value === "string") {
+    // A corrupt stored row is this store's own refusal, not an outage: it
+    // must stay a bounded readiness failure rather than defer forever.
+    try {
+      value = JSON.parse(value);
+    } catch {
+      throw new SupervisorSessionV2Error("stored descriptor is invalid");
+    }
+  }
   return parseSupervisorSessionDescriptorV2(value, scope);
 };
 
@@ -648,7 +675,9 @@ export class PostgresSupervisorSessionV2Store {
   ): Promise<SupervisorSessionReadinessReceiptV2> {
     const scope = parseTrustedSupervisorMessageV2Scope(trustedScopeValue);
     const recipient = requireString(recipientValue, "recipient", RECIPIENT_RE);
-    const descriptor = await this.current(scope, recipient);
+    const descriptor = await this.current(scope, recipient).catch(
+      rethrowReadinessStoreFailure
+    );
     if (!descriptor) {
       throw new SupervisorSessionV2Error(
         "current session descriptor is absent"
@@ -665,7 +694,7 @@ export class PostgresSupervisorSessionV2Store {
       descriptor
     );
     let receipt: SupervisorSessionReadinessReceiptV2 | undefined;
-    await this.#sql.begin(async (sql) => {
+    const transaction = this.#sql.begin(async (sql) => {
       const rows = await sql<DescriptorRow[]>`
         SELECT descriptor_json, principal, tenant_id
         FROM loop_supervisor_session_v2_descriptor
@@ -715,6 +744,7 @@ export class PostgresSupervisorSessionV2Store {
           SET receipt_json = EXCLUDED.receipt_json
       `;
     });
+    await transaction.catch(rethrowReadinessStoreFailure);
     if (!receipt) {
       throw new SupervisorSessionV2Error("session readiness receipt is absent");
     }
@@ -772,10 +802,17 @@ export class PostgresSupervisorSessionV2Store {
       descriptor.revision
     );
     const now = requireCanonicalUtc(this.#now(), "status now");
+    // A receipt dated in the future (another host's fast clock, or this
+    // clock stepping back) would otherwise read fresh until real time caught
+    // up with it, so only a small skew tolerance is allowed.
+    const ageMs =
+      receipt === undefined
+        ? undefined
+        : Date.parse(now) - Date.parse(receipt.checkedAt);
     const fresh =
-      receipt !== undefined &&
-      Date.parse(now) - Date.parse(receipt.checkedAt) <=
-        this.#readinessMaxAgeMs;
+      ageMs !== undefined &&
+      ageMs >= -SUPERVISOR_SESSION_READINESS_CLOCK_SKEW_MS &&
+      ageMs <= this.#readinessMaxAgeMs;
     return {
       descriptorId: descriptor.descriptorId,
       principal: scope.principal,
