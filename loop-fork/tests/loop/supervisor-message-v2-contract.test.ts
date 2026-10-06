@@ -3,6 +3,7 @@ import {
   deriveSupervisorMessageV2BoardItemId,
   deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2Identity,
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ReceiptId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
@@ -26,6 +27,9 @@ const fixture = structuredClone(supervisorMessageV2ReplayFixtures[0]);
 if (!fixture) {
   throw new Error("missing V2 tenant-scope fixture");
 }
+
+/** The deployment discriminator (a host's Temporal task queue). */
+const DEPLOYMENT = "contract-test-queue";
 
 const historicalV1Input = {
   artifactRefs: [`artifact://sha256/${"d".repeat(64)}`],
@@ -104,7 +108,8 @@ const state = (): SupervisorMessageV2State => ({
 const workflowId = (): string =>
   deriveSupervisorMessageV2WorkflowId(
     fixture.expectedScope,
-    fixture.input.dedupeKey
+    fixture.input.dedupeKey,
+    DEPLOYMENT
   );
 
 const delivery = () => {
@@ -346,7 +351,8 @@ describe("SupervisorMessage V2 tenant contract", () => {
       1,
       "claim",
       "authority:allow",
-      fixture.input.to
+      fixture.input.to,
+      DEPLOYMENT
     );
     const otherTenant = deriveSupervisorMessageV2Identity(
       { ...fixture.expectedScope, tenantId: "tenant:other" },
@@ -354,7 +360,8 @@ describe("SupervisorMessage V2 tenant contract", () => {
       1,
       "claim",
       "authority:allow",
-      fixture.input.to
+      fixture.input.to,
+      DEPLOYMENT
     );
     const otherPrincipal = deriveSupervisorMessageV2Identity(
       { ...fixture.expectedScope, principal: "principal:other" },
@@ -362,7 +369,8 @@ describe("SupervisorMessage V2 tenant contract", () => {
       1,
       "claim",
       "authority:allow",
-      fixture.input.to
+      fixture.input.to,
+      DEPLOYMENT
     );
     const otherClaimant = deriveSupervisorMessageV2Identity(
       fixture.expectedScope,
@@ -370,7 +378,8 @@ describe("SupervisorMessage V2 tenant contract", () => {
       1,
       "claim",
       "authority:allow",
-      "supervisor:other-claimant"
+      "supervisor:other-claimant",
+      DEPLOYMENT
     );
 
     expect(local.workflowId).not.toBe(otherTenant.workflowId);
@@ -381,11 +390,107 @@ describe("SupervisorMessage V2 tenant contract", () => {
     expect(local.boardItemId).toMatch(/^supervisor-message-board-item:v2:/);
   });
 
+  test("pins the legacy workflow id byte for byte, as rows and executions before the discriminator carry it", () => {
+    // The value every pre-discriminator host derived for this fixture. A
+    // change here would orphan in-flight executions and ledger rows.
+    expect(
+      deriveSupervisorMessageV2LegacyWorkflowId(
+        fixture.expectedScope,
+        fixture.input.dedupeKey
+      )
+    ).toBe(
+      "supervisor-message-workflow:v2:7f52fd713e6acb1e3cbb1c20b2b86ce2eb3ca96c2c9eb7ce857798afff31e0af"
+    );
+  });
+
+  test("derives a distinct workflow id per deployment, never the legacy id", () => {
+    const scope = fixture.expectedScope;
+    const key = fixture.input.dedupeKey;
+    const here = deriveSupervisorMessageV2WorkflowId(scope, key, DEPLOYMENT);
+    const there = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      key,
+      "another-deployment-queue"
+    );
+    expect(here).toMatch(
+      /^supervisor-message-workflow:v2:deployment:[a-f0-9]{64}$/
+    );
+    expect(here).not.toBe(there);
+    expect(here).not.toBe(
+      deriveSupervisorMessageV2LegacyWorkflowId(scope, key)
+    );
+    // Stable: every host of one deployment derives the same id.
+    expect(deriveSupervisorMessageV2WorkflowId(scope, key, DEPLOYMENT)).toBe(
+      here
+    );
+    for (const deployment of ["", " queue", "queue/../x", undefined]) {
+      expect(() =>
+        deriveSupervisorMessageV2WorkflowId(
+          scope,
+          key,
+          deployment as unknown as string
+        )
+      ).toThrow("SupervisorMessage V2 deployment is invalid");
+    }
+  });
+
+  test("derives delivery, receipt, board and graph ids from either workflow id format", () => {
+    const scope = fixture.expectedScope;
+    const legacy = deriveSupervisorMessageV2LegacyWorkflowId(
+      scope,
+      fixture.input.dedupeKey
+    );
+    const current = workflowId();
+    for (const id of [legacy, current]) {
+      expect(deriveSupervisorMessageV2DeliveryId(scope, id, 1)).toMatch(
+        /^supervisor-message-delivery:v2:[a-f0-9]{64}$/
+      );
+      expect(deriveSupervisorMessageV2BoardItemId(scope, id)).toMatch(
+        /^supervisor-message-board-item:v2:/
+      );
+      expect(deriveSupervisorMessageV2ResultGraphWorkflowId(scope, id)).toMatch(
+        SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE
+      );
+      expect(
+        deriveSupervisorMessageV2ReceiptId(
+          scope,
+          id,
+          "claim",
+          "authority:allow",
+          null
+        )
+      ).toMatch(/^supervisor-message-receipt:v2:/);
+    }
+    expect(deriveSupervisorMessageV2DeliveryId(scope, legacy, 1)).not.toBe(
+      deriveSupervisorMessageV2DeliveryId(scope, current, 1)
+    );
+    // A legacy in-flight delivery envelope still parses.
+    expect(
+      parseSupervisorMessageV2DeliveryEnvelope(
+        {
+          ...delivery(),
+          deliveryId: deriveSupervisorMessageV2DeliveryId(scope, legacy, 1),
+          idempotencyKey: deriveSupervisorMessageV2DeliveryId(scope, legacy, 1),
+          workflowId: legacy,
+        },
+        scope
+      ).workflowId
+    ).toBe(legacy);
+    expect(() =>
+      deriveSupervisorMessageV2DeliveryId(
+        scope,
+        `supervisor-message-workflow:v2:other:${"a".repeat(64)}`,
+        1
+      )
+    ).toThrow("workflowId is invalid");
+  });
+
   test("derives a message's result graph from its scoped identity alone", () => {
     const scope = fixture.expectedScope;
     const workflowId = deriveSupervisorMessageV2WorkflowId(
       scope,
-      fixture.input.dedupeKey
+      fixture.input.dedupeKey,
+      DEPLOYMENT
     );
     const graph = deriveSupervisorMessageV2ResultGraphWorkflowId(
       scope,
@@ -398,7 +503,8 @@ describe("SupervisorMessage V2 tenant contract", () => {
     ).toBe(graph);
     const otherMessage = deriveSupervisorMessageV2WorkflowId(
       scope,
-      "other-key"
+      "other-key",
+      DEPLOYMENT
     );
     for (const other of [
       deriveSupervisorMessageV2ResultGraphWorkflowId(

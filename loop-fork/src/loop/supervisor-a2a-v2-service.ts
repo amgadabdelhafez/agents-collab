@@ -102,7 +102,14 @@ type SessionResource = Pick<
  * Temporal constructors below.
  */
 export interface SupervisorA2AV2ServiceDependencies {
-  connectLedger(databaseUrl: string): Promise<LedgerResource>;
+  /**
+   * `deployment` is the workflow-id discriminator: the host's Temporal task
+   * queue, the same deployment discriminator its workflow port enforces.
+   */
+  connectLedger(
+    databaseUrl: string,
+    deployment: string
+  ): Promise<LedgerResource>;
   connectSessions(input: {
     authority: SupervisorSessionRebindAuthorityPort;
     databaseUrl: string;
@@ -119,8 +126,10 @@ export interface SupervisorA2AV2ServiceDependencies {
 }
 
 const defaultDependencies: SupervisorA2AV2ServiceDependencies = {
-  connectLedger: (databaseUrl) =>
-    PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl),
+  connectLedger: (databaseUrl, deployment) =>
+    PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, {
+      deployment,
+    }),
   connectSessions: (input) => PostgresSupervisorSessionV2Store.connect(input),
   connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
   createHost: (options) => TemporalSupervisorRuntimeHost.create(options),
@@ -479,7 +488,12 @@ export const createSupervisorA2AV2Service = async (
     });
     await taskStore.migrate();
     stage = "delivery-ledger";
-    ledger = await dependencies.connectLedger(options.databaseUrl);
+    // Workflow ids are minted for this host's deployment: the task queue its
+    // worker polls and its workflow port starts and adopts executions on.
+    ledger = await dependencies.connectLedger(
+      options.databaseUrl,
+      options.host.taskQueue
+    );
     await ledger.migrate();
     stage = "session-store";
     sessions = await dependencies.connectSessions({

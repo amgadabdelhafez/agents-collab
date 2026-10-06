@@ -5,7 +5,10 @@ import type {
   SupervisorMessageV2Input,
   TrustedSupervisorMessageV2Scope,
 } from "../../src/loop/supervisor-message-v2-contract";
-import { deriveSupervisorMessageV2WorkflowId } from "../../src/loop/supervisor-message-v2-contract";
+import {
+  deriveSupervisorMessageV2LegacyWorkflowId,
+  deriveSupervisorMessageV2WorkflowId,
+} from "../../src/loop/supervisor-message-v2-contract";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import {
   SupervisorMessageV2Coordinator,
@@ -30,6 +33,7 @@ if (!fixture) {
 const scope: TrustedSupervisorMessageV2Scope = fixture.expectedScope;
 const OWNER = "v2-dispatcher:runtime-test";
 const LEASE_MS = 30_000;
+const DEPLOYMENT = "runtime-test-queue";
 
 const inputFor = (
   dedupeKey: string,
@@ -50,6 +54,28 @@ const inputFor = (
 
 /** Minimal in-memory model of the Postgres ledger's lease semantics. */
 class MemoryLedger implements SupervisorMessageV2DeliveryLedger {
+  readonly deployment = DEPLOYMENT;
+
+  /** As the Postgres ledger: a dedupe key held under its legacy id keeps it. */
+  workflowIdFor(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    dedupeKey: string
+  ): Promise<string> {
+    const legacy = deriveSupervisorMessageV2LegacyWorkflowId(
+      trustedScope,
+      dedupeKey
+    );
+    return Promise.resolve(
+      this.starts.has(legacy)
+        ? legacy
+        : deriveSupervisorMessageV2WorkflowId(
+            trustedScope,
+            dedupeKey,
+            DEPLOYMENT
+          )
+    );
+  }
+
   readonly deliveries = new Map<
     string,
     { completed: boolean; fence: number; owner?: string; until: number }
@@ -365,7 +391,11 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("a readiness refusal does not fail a delivery another dispatcher holds", async () => {
     const h = harness();
     h.unready.add("supervisor:target");
-    const workflowId = deriveSupervisorMessageV2WorkflowId(scope, "held-lease");
+    const workflowId = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      "held-lease",
+      DEPLOYMENT
+    );
     // Pretend another dispatcher already holds this attempt's lease.
     h.ledger.starts.set(workflowId, {
       input: inputFor("held-lease"),
@@ -567,7 +597,11 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
       definitions: [supervisorMessageV2WorkflowDefinition],
       now: () => new Date(clock).toISOString(),
     });
-    const foreignId = deriveSupervisorMessageV2WorkflowId(scope, "foreign");
+    const foreignId = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      "foreign",
+      DEPLOYMENT
+    );
     const ledger = new MemoryLedger();
     const delivered: string[] = [];
     const providerDown = new Set<string>();
@@ -651,5 +685,82 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
       `workflow ${s.foreignId} already exists as ${FOREIGN_TYPE}`
     );
     expect(s.delivered).toEqual(["supervisor:z-ready"]);
+  });
+});
+
+describe("SupervisorMessageV2 workflow id deployment", () => {
+  const portOn = (taskQueue: string | undefined): WorkflowPort => {
+    const inner = new InMemoryWorkflowPort({
+      definitions: [supervisorMessageV2WorkflowDefinition],
+    });
+    return {
+      cancel: (command) => inner.cancel(command),
+      inspect: (workflowId) => inner.inspect(workflowId),
+      query: (command) => inner.query(command),
+      signal: (command) => inner.signal(command),
+      start: (command) => inner.start(command),
+      ...(taskQueue === undefined ? {} : { taskQueue }),
+    };
+  };
+  const coordinatorOn = (workflows: WorkflowPort) =>
+    new SupervisorMessageV2Coordinator(
+      workflows,
+      { deliver: () => Promise.resolve({ status: "accepted" }) },
+      new MemoryLedger(),
+      OWNER
+    );
+
+  test("refuses a ledger whose deployment is not the workflow port's task queue", () => {
+    expect(() => coordinatorOn(portOn("another-queue"))).toThrow(
+      "SupervisorMessage V2 ledger deployment does not match the workflow port task queue"
+    );
+    expect(() => coordinatorOn(portOn(DEPLOYMENT))).not.toThrow();
+    // A port that names no queue (in-memory, test) composes as before.
+    expect(() => coordinatorOn(portOn(undefined))).not.toThrow();
+  });
+
+  test("mints the deployment workflow id for a new message", async () => {
+    const h = harness();
+    const received = await h.coordinator.receive(
+      scope,
+      inputFor("new-format"),
+      "request:new"
+    );
+    expect(received.workflowId).toBe(
+      deriveSupervisorMessageV2WorkflowId(scope, "new-format", DEPLOYMENT)
+    );
+    expect(received.workflowId).toMatch(
+      /^supervisor-message-workflow:v2:deployment:[a-f0-9]{64}$/
+    );
+    expect(received.workflowId).not.toBe(
+      deriveSupervisorMessageV2LegacyWorkflowId(scope, "new-format")
+    );
+  });
+
+  test("a sender retry of a message accepted under the legacy id resolves to it and never starts it twice", async () => {
+    const h = harness();
+    const input = inputFor("legacy-accepted");
+    const legacy = deriveSupervisorMessageV2LegacyWorkflowId(
+      scope,
+      "legacy-accepted"
+    );
+    // As the pre-discriminator host left it: intent recorded and execution
+    // started under the legacy id, then delivered by recovery.
+    h.ledger.starts.set(legacy, { input, trustedScope: scope });
+    await h.workflows.start({
+      input: { input, trustedScope: scope },
+      requestId: "legacy:start",
+      workflowId: legacy,
+      workflowType: supervisorMessageV2WorkflowDefinition.type,
+    });
+    await h.coordinator.recoverPending();
+    expect(h.delivered).toHaveLength(1);
+
+    const retry = await h.coordinator.receive(scope, input, "request:retry");
+
+    expect(retry.workflowId).toBe(legacy);
+    expect(retry.created).toBe(false);
+    expect(h.delivered).toHaveLength(1);
+    expect([...h.ledger.starts.keys()]).toEqual([legacy]);
   });
 });

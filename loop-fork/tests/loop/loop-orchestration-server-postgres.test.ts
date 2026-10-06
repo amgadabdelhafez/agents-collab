@@ -629,9 +629,15 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
   }
   const v2Scope = fixtureV2.expectedScope;
   const dedupeKey = `foreign-${randomUUID().slice(0, 8)}`;
-  const workflowId = deriveSupervisorMessageV2WorkflowId(v2Scope, dedupeKey);
+  // The server's ledger mints ids for its deployment, its task queue.
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    v2Scope,
+    dedupeKey,
+    fixture.taskQueue
+  );
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { deployment: fixture.taskQueue }
   );
   const errors = spyOn(console, "error");
   const stop = new AbortController();

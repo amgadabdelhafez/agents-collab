@@ -11,6 +11,7 @@ import {
   type SupervisorA2AV2Service,
 } from "../../src/loop/supervisor-a2a-v2-service";
 import {
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2Input,
@@ -47,6 +48,8 @@ const canonical = (value: unknown): string =>
       : entry
   );
 
+/** The ledger's deployment discriminator: the host's task queue. */
+const DEPLOYMENT = "result-binding";
 let postgres: DisposablePostgres;
 let raw: SQL;
 let ledger: PostgresSupervisorMessageV2DeliveryLedger;
@@ -57,7 +60,8 @@ beforeAll(async () => {
   raw = new SQL(postgres.databaseUrl());
   await raw.connect();
   ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { deployment: DEPLOYMENT }
   );
   tasks = await PostgresA2ATaskStore.connect({
     databaseUrl: postgres.databaseUrl(),
@@ -106,7 +110,11 @@ const sendMessage = async (
   scope: TrustedSupervisorMessageV2Scope,
   dedupeKey: string
 ): Promise<string> => {
-  const workflowId = deriveSupervisorMessageV2WorkflowId(scope, dedupeKey);
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    scope,
+    dedupeKey,
+    DEPLOYMENT
+  );
   await ledger.recordStartIntent(workflowId, scope, inputFor(scope, dedupeKey));
   return workflowId;
 };
@@ -230,8 +238,10 @@ const serviceFor = (input: {
           )
       ),
     dependencies: {
-      connectLedger: (databaseUrl) =>
-        PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl),
+      connectLedger: (databaseUrl, deployment) =>
+        PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, {
+          deployment,
+        }),
       connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
       connectSessions: () =>
         Promise.resolve({
@@ -535,7 +545,8 @@ test("migration backfills reservations for existing derived bindings and never p
   const isolated = await DisposablePostgres.create();
   const legacy = new SQL(isolated.databaseUrl());
   const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    isolated.databaseUrl()
+    isolated.databaseUrl(),
+    { deployment: DEPLOYMENT }
   );
   try {
     await legacy.connect();
@@ -546,13 +557,15 @@ test("migration backfills reservations for existing derived bindings and never p
       binding_json JSONB NOT NULL, PRIMARY KEY (workflow_id, a2a_task_id)
     )`;
     const scope = tenant("backfill");
+    // Start intents as the base revision wrote them: the legacy workflow id
+    // and no deployment column. Their bindings must keep working.
     const seed = async (dedupeKey: string) => {
-      const workflowId = deriveSupervisorMessageV2WorkflowId(scope, dedupeKey);
-      await upgraded.recordStartIntent(
-        workflowId,
+      const workflowId = deriveSupervisorMessageV2LegacyWorkflowId(
         scope,
-        inputFor(scope, dedupeKey)
+        dedupeKey
       );
+      await legacy`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json)
+        VALUES (${workflowId}, ${scope.tenantId}, ${scope.principal}, ${canonical(inputFor(scope, dedupeKey))}::jsonb)`;
       return workflowId;
     };
     const derivedMessage = await seed("backfill-derived");

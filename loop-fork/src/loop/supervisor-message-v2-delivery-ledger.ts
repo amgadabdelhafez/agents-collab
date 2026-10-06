@@ -2,9 +2,11 @@ import { SQL } from "bun";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import {
   deriveSupervisorMessageV2DeliveryId,
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   parseSupervisorMessageV2DeliveryEnvelope,
+  parseSupervisorMessageV2Deployment,
   parseSupervisorMessageV2Input,
   SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS,
   type SupervisorMessageV2DeliveryEnvelope,
@@ -115,25 +117,107 @@ const parseDispatchOwner = (owner: string): string => {
   return owner;
 };
 
-/** Private, reopenable ledger for canonical V2 delivery identities. */
+/** A start-intent row's workflow binding: its id and owning deployment. */
+interface StartIntentBinding {
+  deployment: string | null;
+  workflow_id: string;
+}
+
+/**
+ * Private, reopenable ledger for canonical V2 delivery identities.
+ *
+ * Workflow id formats. A ledger belongs to one deployment (the host's Temporal
+ * task queue). It mints only deployment-scoped workflow ids and records the
+ * deployment on each start intent. A row recorded before the discriminator
+ * existed has `deployment` NULL and carries the legacy id; such a row is still
+ * recovered, acknowledged and deduplicated under that legacy id, and a sender
+ * retry of its dedupe key resolves to it rather than starting the message a
+ * second time under the new format. No existing row is rewritten. Rows of
+ * another deployment sharing the database are not this ledger's: it neither
+ * recovers nor authorizes them.
+ *
+ * Transition limit: only legacy code writes legacy rows, so hosts sharing a
+ * ledger database must not run the pre-discriminator build alongside this one.
+ */
 export class PostgresSupervisorMessageV2DeliveryLedger
   implements SupervisorMessageV2DeliveryLedger
 {
+  readonly #deployment: string;
   readonly #sql: SQL;
 
-  private constructor(sql: SQL) {
+  private constructor(sql: SQL, deployment: string) {
+    this.#deployment = deployment;
     this.#sql = sql;
   }
 
   static async connect(
-    databaseUrl: string
+    databaseUrl: string,
+    options: { deployment: string }
   ): Promise<PostgresSupervisorMessageV2DeliveryLedger> {
     if (!POSTGRES_URL.test(databaseUrl)) {
       throw new Error("V2 delivery ledger needs an explicit PostgreSQL URL");
     }
+    let deployment: string;
+    try {
+      deployment = parseSupervisorMessageV2Deployment(options?.deployment);
+    } catch {
+      throw new Error("V2 delivery ledger deployment is invalid");
+    }
     const sql = new SQL(databaseUrl);
     await sql.connect();
-    return new PostgresSupervisorMessageV2DeliveryLedger(sql);
+    return new PostgresSupervisorMessageV2DeliveryLedger(sql, deployment);
+  }
+
+  /** The deployment discriminator this ledger mints workflow ids for. */
+  get deployment(): string {
+    return this.#deployment;
+  }
+
+  /**
+   * Whether a row's id is the one its dedupe key derives for its owner: the
+   * deployment-scoped id on this deployment's rows, the legacy id on a row
+   * recorded before the discriminator (deployment NULL). Anything else,
+   * including another deployment's row, is not bound for this ledger.
+   */
+  #isBound(
+    row: StartIntentBinding,
+    scope: TrustedSupervisorMessageV2Scope,
+    dedupeKey: string
+  ): boolean {
+    const ours =
+      row.deployment === this.#deployment &&
+      row.workflow_id ===
+        deriveSupervisorMessageV2WorkflowId(scope, dedupeKey, this.#deployment);
+    const legacy =
+      row.deployment === null &&
+      row.workflow_id ===
+        deriveSupervisorMessageV2LegacyWorkflowId(scope, dedupeKey);
+    return ours || legacy;
+  }
+
+  /**
+   * The workflow id a received message runs under: the legacy id when this
+   * scope already recorded the dedupe key under it, else the deployment id.
+   * A message accepted before the format change is never started again.
+   */
+  async workflowIdFor(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    dedupeKey: string
+  ): Promise<string> {
+    const legacy = deriveSupervisorMessageV2LegacyWorkflowId(
+      trustedScope,
+      dedupeKey
+    );
+    const rows = await this.#sql<
+      { workflow_id: string }[]
+    >`SELECT workflow_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${legacy} AND deployment IS NULL`;
+    return rows[0]
+      ? legacy
+      : deriveSupervisorMessageV2WorkflowId(
+          trustedScope,
+          dedupeKey,
+          this.#deployment
+        );
   }
 
   async migrate(): Promise<void> {
@@ -168,6 +252,11 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
     await this
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ`;
+    // Additive owner of a start intent. NULL marks a row recorded before
+    // workflow ids carried a deployment discriminator: it keeps its legacy id
+    // and is neither backfilled nor rewritten.
+    await this
+      .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS deployment TEXT`;
   }
 
   /**
@@ -401,22 +490,47 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     input: SupervisorMessageV2Input
   ): Promise<SupervisorMessageV2Input> {
     const parsed = parseSupervisorMessageV2Input(input, trustedScope);
-    const expectedWorkflowId = deriveSupervisorMessageV2WorkflowId(
+    const current = deriveSupervisorMessageV2WorkflowId(
+      trustedScope,
+      parsed.dedupeKey,
+      this.#deployment
+    );
+    const legacy = deriveSupervisorMessageV2LegacyWorkflowId(
       trustedScope,
       parsed.dedupeKey
     );
-    if (workflowId !== expectedWorkflowId) {
+    if (workflowId !== current && workflowId !== legacy) {
       throw new Error(
         "V2 workflow start intent has an invalid workflow binding"
       );
     }
     const encoded = canonical(parsed);
-    await this
-      .#sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${workflowId}, ${trustedScope.tenantId}, ${trustedScope.principal}, ${encoded}::jsonb) ON CONFLICT (workflow_id) DO NOTHING`;
+    if (workflowId === current) {
+      // Never record a dedupe key a second time under the new format while
+      // its legacy intent exists: that would start the message twice.
+      await this
+        .#sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, deployment)
+        SELECT ${workflowId}, ${trustedScope.tenantId}, ${trustedScope.principal}, ${encoded}::jsonb, ${this.#deployment}
+        WHERE NOT EXISTS (SELECT 1 FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${legacy})
+        ON CONFLICT (workflow_id) DO NOTHING`;
+    }
     const rows = await this.#sql<
-      { input_json: unknown; principal: string; tenant_id: string }[]
-    >`SELECT input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
+      (StartIntentBinding & {
+        input_json: unknown;
+        principal: string;
+        tenant_id: string;
+      })[]
+    >`SELECT workflow_id, deployment, input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
     const row = rows[0];
+    if (!row) {
+      // A legacy id is never minted; a deployment id is refused while the
+      // same dedupe key is held under its legacy id.
+      throw new Error(
+        workflowId === legacy
+          ? "V2 legacy workflow id has no recorded start intent; a new message uses its deployment workflow id"
+          : "V2 workflow start intent is held under its legacy workflow id"
+      );
+    }
     const stored =
       typeof row?.input_json === "string"
         ? JSON.parse(row.input_json)
@@ -427,10 +541,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         : undefined;
     if (
       !(
-        row &&
         row.tenant_id === trustedScope.tenantId &&
         row.principal === trustedScope.principal &&
         storedParsed &&
+        this.#isBound(row, trustedScope, storedParsed.dedupeKey) &&
         startIntentSemantics(storedParsed) === startIntentSemantics(parsed)
       )
     ) {
@@ -453,8 +567,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     trustedScope: TrustedSupervisorMessageV2Scope
   ): Promise<SupervisorMessageV2Input> {
     const rows = await this.#sql<
-      { input_json: unknown; principal: string; tenant_id: string }[]
-    >`SELECT input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
+      (StartIntentBinding & {
+        input_json: unknown;
+        principal: string;
+        tenant_id: string;
+      })[]
+    >`SELECT workflow_id, deployment, input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
     const row = rows[0];
     const input =
       typeof row?.input_json === "string"
@@ -474,10 +592,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       );
     }
     const parsed = parseSupervisorMessageV2Input(input, trustedScope);
-    if (
-      workflowId !==
-      deriveSupervisorMessageV2WorkflowId(trustedScope, parsed.dedupeKey)
-    ) {
+    if (!this.#isBound(row, trustedScope, parsed.dedupeKey)) {
       throw new Error(
         "V2 workflow start intent has an invalid workflow binding"
       );
@@ -493,8 +608,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     workflowId: string;
   }): Promise<TrustedSupervisorMessageV2Scope | undefined> {
     const rows = await this.#sql<
-      { input_json: unknown; principal: string; tenant_id: string }[]
-    >`SELECT input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${input.workflowId} AND tenant_id = ${input.tenantId}`;
+      (StartIntentBinding & {
+        input_json: unknown;
+        principal: string;
+        tenant_id: string;
+      })[]
+    >`SELECT workflow_id, deployment, input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${input.workflowId} AND tenant_id = ${input.tenantId}`;
     const row = rows[0];
     if (!row) {
       return undefined;
@@ -507,8 +626,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     const parsed = parseSupervisorMessageV2Input(stored, scope);
     if (
       parsed.to !== input.recipient ||
-      deriveSupervisorMessageV2WorkflowId(scope, parsed.dedupeKey) !==
-        input.workflowId
+      !this.#isBound(row, scope, parsed.dedupeKey)
     ) {
       return undefined;
     }
@@ -522,14 +640,15 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       workflowId: string;
     }[]
   > {
+    // This deployment's intents and pre-discriminator ones; another
+    // deployment's intents in a shared database are not recovered here.
     const rows = await this.#sql<
-      {
+      (StartIntentBinding & {
         input_json: unknown;
         principal: string;
         tenant_id: string;
-        workflow_id: string;
-      }[]
-    >`SELECT input_json, principal, tenant_id, workflow_id FROM loop_supervisor_message_v2_start_intent ORDER BY workflow_id`;
+      })[]
+    >`SELECT input_json, principal, tenant_id, workflow_id, deployment FROM loop_supervisor_message_v2_start_intent WHERE deployment = ${this.#deployment} OR deployment IS NULL ORDER BY workflow_id`;
     return rows.map((row) => {
       const input =
         typeof row.input_json === "string"
@@ -543,10 +662,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         throw new Error("V2 recovery ledger row has no start input");
       }
       const parsed = parseSupervisorMessageV2Input(input, trustedScope);
-      if (
-        row.workflow_id !==
-        deriveSupervisorMessageV2WorkflowId(trustedScope, parsed.dedupeKey)
-      ) {
+      if (!this.#isBound(row, trustedScope, parsed.dedupeKey)) {
         throw new Error(
           "V2 recovery ledger row has an invalid workflow binding"
         );

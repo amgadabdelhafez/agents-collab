@@ -12,6 +12,8 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { SQL } from "bun";
 import {
+  deriveSupervisorMessageV2DeliveryId,
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2Input,
   type TrustedSupervisorMessageV2Scope,
@@ -23,6 +25,7 @@ import {
   type SupervisorMessageV2DeliveryOutcome,
   SupervisorMessageV2RecoveryRunner,
 } from "../../src/loop/supervisor-message-v2-runtime";
+import { temporalWorkflowBundleBase64 } from "../../src/loop/temporal-workflow-bundle.generated";
 import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
 import { DisposablePostgres } from "../support/disposable-postgres";
 
@@ -101,20 +104,63 @@ afterAll(async () => {
   await postgres?.close();
 });
 
-/** A ledger in a database of its own: one deployment's durable state. */
-const freshLedger =
-  async (): Promise<PostgresSupervisorMessageV2DeliveryLedger> => {
-    const name = `retention_${randomUUID().replaceAll("-", "")}`;
-    await raw.unsafe(`CREATE DATABASE ${name}`);
-    const url = new URL(postgres.databaseUrl());
-    url.pathname = `/${name}`;
-    const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-      url.toString()
-    );
-    opened.push(ledger);
-    await ledger.migrate();
-    return ledger;
-  };
+/** Each ledger's database URL, for writing rows as a previous host did. */
+const databaseOf = new Map<PostgresSupervisorMessageV2DeliveryLedger, string>();
+
+/**
+ * A ledger in a database of its own: one deployment's durable state. Its
+ * deployment is the task queue of the port it is composed with.
+ */
+const freshLedger = async (
+  deployment: string = owner.taskQueue
+): Promise<PostgresSupervisorMessageV2DeliveryLedger> => {
+  const name = `retention_${randomUUID().replaceAll("-", "")}`;
+  await raw.unsafe(`CREATE DATABASE ${name}`);
+  const url = new URL(postgres.databaseUrl());
+  url.pathname = `/${name}`;
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    url.toString(),
+    { deployment }
+  );
+  opened.push(ledger);
+  databaseOf.set(ledger, url.toString());
+  await ledger.migrate();
+  return ledger;
+};
+
+/**
+ * A start intent exactly as a pre-discriminator host recorded it: the legacy
+ * id, and no deployment (the migrated column stays NULL).
+ */
+const recordLegacyIntent = async (
+  ledger: PostgresSupervisorMessageV2DeliveryLedger,
+  input: SupervisorMessageV2Input
+): Promise<string> => {
+  const legacyId = deriveSupervisorMessageV2LegacyWorkflowId(
+    SCOPE,
+    input.dedupeKey
+  );
+  const sql = new SQL(databaseOf.get(ledger) ?? "");
+  await sql.connect();
+  try {
+    await sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${legacyId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb)`;
+  } finally {
+    await sql.close({ timeout: 0 });
+  }
+  return legacyId;
+};
+
+/** The execution a pre-discriminator host started under the legacy id. */
+const startLegacyExecution = (
+  input: SupervisorMessageV2Input,
+  legacyId: string
+) =>
+  owner.start({
+    input: { input, trustedScope: SCOPE },
+    requestId: `legacy-host-start:${legacyId}`,
+    workflowId: legacyId,
+    workflowType: "supervisor-message.v2",
+  });
 
 const inputFor = (maxDeliveryAttempts = 3): SupervisorMessageV2Input => {
   const dedupeKey = `temporal-retention-${randomUUID()}`;
@@ -171,9 +217,6 @@ const settle = async (promise: Promise<unknown>) => {
   }
 };
 const CONFLICT = { error: { code: "conflict", name: "WorkflowError" } };
-
-const workflowIdOf = (input: SupervisorMessageV2Input) =>
-  deriveSupervisorMessageV2WorkflowId(SCOPE, input.dedupeKey);
 
 describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
   test("records dead-lettered when a permanent delivery failure ends the message", async () => {
@@ -305,11 +348,12 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
     const ownerLedger = await freshLedger();
     const ownerSide = coordinatorFor(owner, ownerLedger);
     const input = inputFor();
-    const workflowId = workflowIdOf(input);
 
-    // The foreign deployment accepted the same dedupe key in the same scope
-    // (the namespace collision the pending ID format change removes).
-    const foreignLedger = await freshLedger();
+    // Both deployments accepted the same dedupe key in the same scope before
+    // workflow ids carried a deployment, so both hold it under the one legacy
+    // id: the namespace collision the format change removes for new messages
+    // but cannot remove for intents already recorded.
+    const foreignLedger = await freshLedger(foreign.taskQueue);
     const foreignSide = coordinatorFor(
       foreign,
       foreignLedger,
@@ -318,6 +362,8 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
       },
       FOREIGN_DISPATCH
     );
+    const workflowId = await recordLegacyIntent(ownerLedger, input);
+    expect(await recordLegacyIntent(foreignLedger, input)).toBe(workflowId);
     await ownerSide.coordinator.receive(SCOPE, input, "owner-receive");
     expect(
       await settle(
@@ -380,6 +426,237 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
     expect(await ownerSide.coordinator.recoverPending()).toBe(0);
     expect(await ownerLedger.terminalOutcome(workflowId, SCOPE)).toBe(
       "terminated"
+    );
+  });
+});
+
+describe("V2 workflow id deployment discriminator on real Temporal and PostgreSQL", () => {
+  test("the shipped workflow bundle delivers a message under its deployment-format id", async () => {
+    // The orchestration server runs this generated bundle in process, not
+    // the workflow source: its delivery_request must accept the new id.
+    const taskQueue = `v2-bundle-${process.pid}`;
+    const bundled = await Worker.create({
+      connection: environment.nativeConnection,
+      namespace: environment.namespace,
+      taskQueue,
+      workflowBundle: {
+        code: Buffer.from(temporalWorkflowBundleBase64, "base64").toString(
+          "utf8"
+        ),
+      },
+    });
+    const bundledRun = bundled.run();
+    try {
+      const port = new TemporalWorkflowPort(environment.client.workflow, {
+        taskQueue,
+      });
+      const { coordinator, delivered } = coordinatorFor(
+        port,
+        await freshLedger(taskQueue)
+      );
+      const input = inputFor();
+      const received = await settle(
+        coordinator.receive(SCOPE, input, "bundle-receive")
+      );
+      const workflowId = deriveSupervisorMessageV2WorkflowId(
+        SCOPE,
+        input.dedupeKey,
+        taskQueue
+      );
+      expect(received).toMatchObject({
+        value: { projection: { deliveryAttempts: 1 }, workflowId },
+      });
+      expect(delivered).toEqual([
+        deriveSupervisorMessageV2DeliveryId(SCOPE, workflowId, 1),
+      ]);
+    } finally {
+      bundled.shutdown();
+      await bundledRun;
+    }
+  }, 120_000);
+
+  test("two deployments sharing a namespace run the same message under their own ids", async () => {
+    // The other deployment's own worker, polling its own queue.
+    const foreignWorker = await Worker.create({
+      connection: environment.nativeConnection,
+      namespace: environment.namespace,
+      taskQueue: foreign.taskQueue,
+      workflowsPath: new URL(
+        "../../src/loop/temporal-workflow.ts",
+        import.meta.url
+      ).pathname,
+    });
+    const foreignRun = foreignWorker.run();
+    try {
+      await bothDeploymentsReceive();
+    } finally {
+      foreignWorker.shutdown();
+      await foreignRun;
+    }
+  }, 120_000);
+
+  const bothDeploymentsReceive = async () => {
+    const input = inputFor();
+    const ownerLedger = await freshLedger();
+    const ownerSide = coordinatorFor(owner, ownerLedger);
+    const foreignLedger = await freshLedger(foreign.taskQueue);
+    const foreignSide = coordinatorFor(
+      foreign,
+      foreignLedger,
+      undefined,
+      FOREIGN_DISPATCH
+    );
+
+    const ours = await settle(
+      ownerSide.coordinator.receive(SCOPE, input, "owner-receive")
+    );
+    const theirs = await settle(
+      foreignSide.coordinator.receive(SCOPE, input, "foreign-receive")
+    );
+
+    expect(ours).toMatchObject({ value: { created: true } });
+    expect(theirs).toMatchObject({ value: { created: true } });
+    const ourId = (ours as { value: { workflowId: string } }).value.workflowId;
+    const theirId = (theirs as { value: { workflowId: string } }).value
+      .workflowId;
+    expect(ourId).toBe(
+      deriveSupervisorMessageV2WorkflowId(
+        SCOPE,
+        input.dedupeKey,
+        owner.taskQueue
+      )
+    );
+    expect(theirId).toBe(
+      deriveSupervisorMessageV2WorkflowId(
+        SCOPE,
+        input.dedupeKey,
+        foreign.taskQueue
+      )
+    );
+    expect(ownerSide.delivered).toHaveLength(1);
+    expect(foreignSide.delivered).toHaveLength(1);
+    // Each execution runs on its own deployment's queue only.
+    expect(await owner.presence(ourId)).toBe("running");
+    expect(await foreign.presence(theirId)).toBe("running");
+    expect(await settle(foreign.presence(ourId))).toEqual(CONFLICT);
+    expect(await settle(owner.presence(theirId))).toEqual(CONFLICT);
+  };
+
+  test("an in-flight legacy execution is recovered, deduplicated and acknowledged under its legacy id", async () => {
+    const input = inputFor();
+    const ledger = await freshLedger();
+    const { coordinator, delivered } = coordinatorFor(owner, ledger);
+    // The pre-discriminator host recorded the intent and started the
+    // execution, then stopped before delivering.
+    const legacyId = await recordLegacyIntent(ledger, input);
+    await startLegacyExecution(input, legacyId);
+
+    expect(await coordinator.recoverPending()).toBe(1);
+    expect(delivered).toEqual([
+      deriveSupervisorMessageV2DeliveryId(SCOPE, legacyId, 1),
+    ]);
+
+    // A sender retry after the upgrade: the same execution, not a new one.
+    const retried = await coordinator.receive(SCOPE, input, "sender-retry");
+    expect(retried.workflowId).toBe(legacyId);
+    expect(retried.created).toBe(false);
+    expect(delivered).toHaveLength(1);
+    expect(
+      await owner.presence(
+        deriveSupervisorMessageV2WorkflowId(
+          SCOPE,
+          input.dedupeKey,
+          owner.taskQueue
+        )
+      )
+    ).toBe("missing");
+
+    await coordinator.claim(SCOPE, legacyId, input.to, "legacy-claim");
+    const acknowledged = await coordinator.acknowledge(
+      SCOPE,
+      legacyId,
+      input.to,
+      "legacy-ack"
+    );
+    expect(acknowledged.phase).toBe("acknowledged");
+    expect(await ledger.terminalOutcome(legacyId, SCOPE)).toBe("acknowledged");
+    expect(await coordinator.recoverPending()).toBe(0);
+    expect(delivered).toHaveLength(1);
+  });
+
+  /**
+   * A legacy id both deployments hold: the owner's execution runs on its
+   * queue, and the other deployment's coordinator addresses it by that id.
+   * Its status read, claim and acknowledgement are each refused before
+   * reaching the execution, and nothing is recorded on either side.
+   */
+  const heldLegacyMessage = async () => {
+    const input = inputFor();
+    const ownerLedger = await freshLedger();
+    const ownerSide = coordinatorFor(owner, ownerLedger);
+    const foreignLedger = await freshLedger(foreign.taskQueue);
+    const foreignSide = coordinatorFor(
+      foreign,
+      foreignLedger,
+      () => {
+        throw new Error("a foreign execution must never be delivered");
+      },
+      FOREIGN_DISPATCH
+    );
+    const workflowId = await recordLegacyIntent(ownerLedger, input);
+    await recordLegacyIntent(foreignLedger, input);
+    await ownerSide.coordinator.receive(SCOPE, input, "owner-receive");
+    const before = await ownerSide.coordinator.status(SCOPE, workflowId);
+    expect(before.phase).toBe("routed");
+    return { before, foreignLedger, foreignSide, input, ownerSide, workflowId };
+  };
+
+  test("refuses another deployment's status read of the owner's execution", async () => {
+    const { foreignSide, workflowId } = await heldLegacyMessage();
+    expect(
+      await settle(foreignSide.coordinator.status(SCOPE, workflowId))
+    ).toEqual(CONFLICT);
+  });
+
+  test("refuses another deployment's claim of the owner's execution and leaves it unclaimed", async () => {
+    const { before, foreignSide, input, ownerSide, workflowId } =
+      await heldLegacyMessage();
+    expect(
+      await settle(
+        foreignSide.coordinator.claim(
+          SCOPE,
+          workflowId,
+          input.to,
+          "foreign-claim"
+        )
+      )
+    ).toEqual(CONFLICT);
+    expect(await ownerSide.coordinator.status(SCOPE, workflowId)).toEqual(
+      before
+    );
+  });
+
+  test("refuses another deployment's acknowledgement of the owner's execution and records nothing", async () => {
+    const { before, foreignLedger, foreignSide, input, ownerSide, workflowId } =
+      await heldLegacyMessage();
+    await ownerSide.coordinator.claim(SCOPE, workflowId, input.to, "claim");
+    const claimed = await ownerSide.coordinator.status(SCOPE, workflowId);
+    expect(claimed.phase).not.toBe(before.phase);
+    expect(
+      await settle(
+        foreignSide.coordinator.acknowledge(
+          SCOPE,
+          workflowId,
+          input.to,
+          "foreign-ack"
+        )
+      )
+    ).toEqual(CONFLICT);
+    expect(await ownerSide.coordinator.status(SCOPE, workflowId)).toEqual(
+      claimed
+    );
+    expect(await foreignLedger.terminalOutcome(workflowId, SCOPE)).toBe(
+      undefined
     );
   });
 });

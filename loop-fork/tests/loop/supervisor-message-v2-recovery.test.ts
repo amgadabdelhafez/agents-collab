@@ -25,14 +25,17 @@ if (!fixture) {
   throw new Error("missing V2 fixture");
 }
 const SCOPE = fixture.expectedScope;
+const DEPLOYMENT = "recovery-test-queue";
 const WORKFLOW_ID = deriveSupervisorMessageV2WorkflowId(
   SCOPE,
-  fixture.input.dedupeKey
+  fixture.input.dedupeKey,
+  DEPLOYMENT
 );
 const OTHER_INPUT = { ...fixture.input, dedupeKey: "v2-recovery-other" };
 const OTHER_WORKFLOW_ID = deriveSupervisorMessageV2WorkflowId(
   SCOPE,
-  OTHER_INPUT.dedupeKey
+  OTHER_INPUT.dedupeKey,
+  DEPLOYMENT
 );
 
 const unused = (name: string) => () => {
@@ -162,6 +165,11 @@ const ledgerWith = (
       return Promise.resolve();
     },
     terminalOutcome: (workflowId) => Promise.resolve(terminal.get(workflowId)),
+    deployment: DEPLOYMENT,
+    workflowIdFor: (scope, dedupeKey) =>
+      Promise.resolve(
+        deriveSupervisorMessageV2WorkflowId(scope, dedupeKey, DEPLOYMENT)
+      ),
   };
   return { completionChecks, ledger, terminal };
 };
