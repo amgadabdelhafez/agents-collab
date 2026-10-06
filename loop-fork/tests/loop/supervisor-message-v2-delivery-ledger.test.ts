@@ -7,15 +7,20 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { SQL, sleep } from "bun";
+import type { SupervisorA2AResultBinding } from "../../src/loop/a2a-supervisor-result";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
 import {
   deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2LegacyWorkflowId,
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
+  SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
 } from "../../src/loop/supervisor-message-v2-contract";
 import {
@@ -39,6 +44,11 @@ import {
   type WorkflowSignalCommand,
   type WorkflowStartCommand,
 } from "../../src/loop/workflow-port";
+import {
+  deriveSupervisorMessageV2WorkflowId as baseEraContractId,
+  deriveSupervisorMessageV2ResultGraphWorkflowId as baseEraResultGraphId,
+} from "../fixtures/base-era-40097564/supervisor-message-v2-contract";
+import { PostgresSupervisorMessageV2DeliveryLedger as BaseEraLedger } from "../fixtures/base-era-40097564/supervisor-message-v2-delivery-ledger";
 import { DisposablePostgres } from "../support/disposable-postgres";
 
 const fixture = structuredClone(supervisorMessageV2ReplayFixtures[0]);
@@ -1424,6 +1434,211 @@ describe("V2 workflow id format marker on PostgreSQL", () => {
       );
       expect(refused).toBe(message);
     }
+  });
+});
+
+/**
+ * The base-era build's own ledger code: the files of 40097564 this ledger
+ * class needs, vendored unmodified under tests/fixtures. Each is pinned to
+ * its git blob id at that commit, so the rollback tests below run the code a
+ * rollback runs, not a re-statement of it.
+ */
+const BASE_ERA_DIR = join(import.meta.dir, "../fixtures/base-era-40097564");
+const BASE_ERA_BLOBS = {
+  "supervisor-message-v2-contract.ts":
+    "d0817f1d208cfa571f199de91ef9820301294e06",
+  "supervisor-message-v2-delivery-ledger.ts":
+    "7627d03498d12eca502d03d339628120569d357c",
+  "supervisor-message-v2-runtime.ts":
+    "dec3179efce0947012f581f34ce1a9f9b7538f90",
+  "supervisor-message-v2-workflow-identity.ts":
+    "42d53804edaa8e891df4e3c2dc6d7439669dab7c",
+  "supervisor-message-workflow.ts": "5b47b5b8a92d3308c924c48b7de08013cbb12ec4",
+  "workflow-port.ts": "b7cc06349ae1801367cda6e6c2d23e27626aec7a",
+} as const;
+
+/** `git hash-object` of a file's bytes. */
+const gitBlobId = (bytes: Buffer): string =>
+  createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`)
+    .update(bytes)
+    .digest("hex");
+
+describe("V2 rollback to the real base-era (40097564) ledger on PostgreSQL", () => {
+  /** One database shared by this build's ledgers and the base-era ledger. */
+  const sharedDatabase = async () => {
+    const databaseUrl = await freshDatabase();
+    const open = async (
+      buildId: string,
+      options: {
+        deployment?: string;
+        resultGraphKey?: SupervisorResultGraphKey;
+        workflowIdFormat?: "deployment" | "legacy";
+      } = {}
+    ) => {
+      const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+        databaseUrl,
+        { buildId, deployment: DEPLOYMENT, ...options }
+      );
+      opened.push(ledger);
+      await ledger.migrate();
+      return ledger;
+    };
+    const openBaseEra = async () => {
+      const ledger = await BaseEraLedger.connect(databaseUrl);
+      opened.push(ledger);
+      await ledger.migrate();
+      return ledger;
+    };
+    return { open, openBaseEra };
+  };
+
+  const settle = (work: Promise<unknown>) =>
+    work.then(
+      () => "accepted",
+      (error: Error) => error.message
+    );
+
+  test("the vendored base-era ledger files are byte-identical to 40097564", () => {
+    for (const [file, blob] of Object.entries(BASE_ERA_BLOBS)) {
+      expect({
+        blob: gitBlobId(readFileSync(join(BASE_ERA_DIR, file))),
+        file,
+      }).toEqual({ blob, file });
+    }
+  });
+
+  test("rollback: the real base-era ledger migrates, recovers, deduplicates and records over default legacy-write rows, and this build reads its rows back", async () => {
+    const { open, openBaseEra } = await sharedDatabase();
+    const upgraded = await open("upgrade-build.v1");
+    const first = inputFor(`real-rollback-first-${randomUUID()}`);
+    const second = inputFor(`real-rollback-second-${randomUUID()}`);
+    const recorded: string[] = [];
+    for (const input of [first, second]) {
+      const workflowId = await upgraded.workflowIdFor(SCOPE, input.dedupeKey);
+      // The id the base-era contract derives, from its own code.
+      expect(workflowId).toBe(baseEraContractId(SCOPE, input.dedupeKey));
+      await upgraded.recordStartIntent(workflowId, SCOPE, input);
+      recorded.push(workflowId);
+    }
+
+    const baseEra = await openBaseEra();
+    expect(
+      (await baseEra.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([...recorded].sort());
+    // A sender retry of a message this build accepted, a new message, and
+    // a terminal outcome, all through the base-era code.
+    const [firstId, secondId] = recorded as [string, string];
+    expect(await settle(baseEra.recordStartIntent(firstId, SCOPE, first))).toBe(
+      "accepted"
+    );
+    const third = inputFor(`real-rollback-third-${randomUUID()}`);
+    const thirdId = baseEraContractId(SCOPE, third.dedupeKey);
+    expect(await settle(baseEra.recordStartIntent(thirdId, SCOPE, third))).toBe(
+      "accepted"
+    );
+    await baseEra.recordTerminalOutcome(secondId, SCOPE, "acknowledged");
+    expect(await baseEra.recoverableStarts()).toHaveLength(3);
+
+    // Roll forward again: this build reads every base-era row as its own.
+    const again = await open("upgrade-build.v2");
+    expect(again.workflowIdFormat).toBe("legacy");
+    expect(await again.workflowIdFor(SCOPE, third.dedupeKey)).toBe(thirdId);
+    expect(await again.terminalOutcome(secondId, SCOPE)).toBe("acknowledged");
+    expect(
+      (await again.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([firstId, secondId, thirdId].sort());
+  });
+
+  test("after the flip to deployment ids the real base-era ledger can record nothing, and its recovery refuses instead of starting", async () => {
+    const { open, openBaseEra } = await sharedDatabase();
+    const upgraded = await open("upgrade-build.v1");
+    const held = inputFor(`real-flip-held-${randomUUID()}`);
+    const heldId = await upgraded.workflowIdFor(SCOPE, held.dedupeKey);
+    await upgraded.recordStartIntent(heldId, SCOPE, held);
+    const flipped = await open("flip-build.v1", {
+      workflowIdFormat: "deployment",
+    });
+    const fresh = inputFor(`real-flip-fresh-${randomUUID()}`);
+    await flipped.recordStartIntent(workflowIdOf(fresh), SCOPE, fresh);
+
+    const baseEra = await openBaseEra();
+    const newcomer = inputFor(`real-flip-newcomer-${randomUUID()}`);
+    for (const input of [held, newcomer]) {
+      expect(
+        await settle(
+          baseEra.recordStartIntent(
+            baseEraContractId(SCOPE, input.dedupeKey),
+            SCOPE,
+            input
+          )
+        )
+      ).toBe(formatRefusal("deployment", "flip-build.v1", "legacy"));
+    }
+    expect(await settle(baseEra.recoverableStarts())).toBe(
+      "V2 recovery ledger row has an invalid workflow binding"
+    );
+  });
+
+  test("rollback limit: the base-era ledger does not publish a result this build bound to its keyed graph, and lets the message be re-bound to its unkeyed graph", async () => {
+    const { open, openBaseEra } = await sharedDatabase();
+    const key = SupervisorResultGraphKey.fromSecret(
+      randomBytes(32).toString("hex")
+    );
+    const upgraded = await open("upgrade-build.v1", { resultGraphKey: key });
+    const input = inputFor(`real-rollback-binding-${randomUUID()}`);
+    const workflowId = await upgraded.workflowIdFor(SCOPE, input.dedupeKey);
+    await upgraded.recordStartIntent(workflowId, SCOPE, input);
+    const keyed: SupervisorA2AResultBinding = {
+      a2aTaskId: "task:rollback-binding",
+      graphTaskId: "result-node",
+      graphWorkflowId: deriveSupervisorMessageV2ResultGraphWorkflowId(
+        key,
+        SCOPE,
+        workflowId
+      ),
+      messageWorkflowId: workflowId,
+      recipient: input.to,
+    };
+    await upgraded.bindResult(SCOPE, keyed);
+    expect(
+      await upgraded.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toEqual(keyed);
+
+    const baseEra = await openBaseEra();
+    expect(
+      await baseEra.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toBeUndefined();
+    const unkeyed = {
+      ...keyed,
+      graphWorkflowId: baseEraResultGraphId(SCOPE, workflowId),
+    };
+    await baseEra.bindResult(SCOPE, unkeyed);
+    expect(
+      await baseEra.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toEqual(unkeyed);
+  });
+
+  test("default legacy-write mode does not isolate deployments that share a database: each recovers and resolves the other's messages until the flip", async () => {
+    const { open } = await sharedDatabase();
+    const queueA = await open("upgrade-build.v1", { deployment: "queue-a" });
+    const queueB = await open("upgrade-build.v1", { deployment: "queue-b" });
+    expect([queueA.workflowIdFormat, queueB.workflowIdFormat]).toEqual([
+      "legacy",
+      "legacy",
+    ]);
+    const input = inputFor(`shared-legacy-${randomUUID()}`);
+    const workflowId = await queueB.workflowIdFor(SCOPE, input.dedupeKey);
+    await queueB.recordStartIntent(workflowId, SCOPE, input);
+
+    // queue-a recovers queue-b's intent and resolves its dedupe key to it.
+    expect(
+      (await queueA.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([workflowId]);
+    expect(await queueA.workflowIdFor(SCOPE, input.dedupeKey)).toBe(workflowId);
+    expect(await settle(queueA.startIntent(workflowId, SCOPE))).toBe(
+      "accepted"
+    );
   });
 });
 

@@ -249,9 +249,19 @@ interface StartIntentBinding {
  * recovered, acknowledged and deduplicated under its legacy id; a row of this
  * deployment under its deployment id. A sender retry of a dedupe key resolves
  * to the row already recorded in either format, so a message is never started
- * a second time across a format change. No existing row is rewritten. Rows of
- * another deployment sharing the database are not this ledger's: it neither
- * recovers nor authorizes them.
+ * a second time across a format change. No existing row is rewritten.
+ *
+ * Deployment isolation (decision 6) covers deployment-format rows only: a
+ * deployment-format row of another deployment sharing the database is not
+ * this ledger's, and it neither recovers nor authorizes it. A legacy row
+ * names no deployment, so every ledger on the database treats it as its own,
+ * as a pre-discriminator build does: each recovers it, and a dedupe key
+ * resolves to the same legacy id on every deployment. In `legacy` format,
+ * the default, every new row is such a row, so hosts on different task
+ * queues that share the database get no isolation until every one of them
+ * writes `deployment`. The task-queue ownership checks of the workflow port
+ * still refuse an execution another task queue already holds; they cannot
+ * refuse a start whose execution does not exist yet.
  *
  * Mixed versions. The database refuses (by trigger, for every writer,
  * including a pre-discriminator build) a start intent in any format but the
@@ -366,9 +376,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
 
   /**
    * Whether a row's id is the one its dedupe key derives for its owner: the
-   * deployment-scoped id on this deployment's rows, the legacy id on a row
-   * recorded before the discriminator (deployment NULL). Anything else,
-   * including another deployment's row, is not bound for this ledger.
+   * deployment-scoped id on this deployment's rows, the legacy id on a
+   * legacy row (deployment NULL), whichever build or deployment wrote it.
+   * Anything else, including another deployment's deployment-format row, is
+   * not bound for this ledger.
    */
   #isBound(
     row: StartIntentBinding,
@@ -1035,8 +1046,9 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       workflowId: string;
     }[]
   > {
-    // This deployment's intents and pre-discriminator ones; another
-    // deployment's intents in a shared database are not recovered here.
+    // This deployment's intents and every legacy one; another deployment's
+    // deployment-format intents in a shared database are not recovered here.
+    // A legacy intent names no deployment, so every deployment recovers it.
     const rows = await this.#sql<
       (StartIntentBinding & {
         input_json: unknown;

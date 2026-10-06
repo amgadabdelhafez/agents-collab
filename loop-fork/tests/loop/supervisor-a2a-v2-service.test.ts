@@ -524,6 +524,75 @@ test("service hands the ledger its build and the configured workflow id format, 
   expect("workflowIdFormat" in (seen[1] ?? {})).toBe(false);
 });
 
+test("service start logs the workflow id format the ledger resolved, and warns that legacy ids do not isolate deployments", async () => {
+  const start = async (resolved: "deployment" | "legacy") => {
+    const lines: string[] = [];
+    const outcome = await createSupervisorA2AV2Service({
+      card: {
+        description: "format log",
+        supervisorId: RECIPIENT,
+        url: "http://a2a.local/a2a",
+      },
+      databaseUrl: "postgres://user:private-password@127.0.0.1:5432/db",
+      delivery: {
+        deliver: () => Promise.resolve({ status: "accepted" as const }),
+      },
+      dispatchOwner: "v2-dispatcher:format-log",
+      host: {
+        buildId: "format-log.v1",
+        taskQueue: "format-log-queue",
+      } as never,
+      log: (line) => lines.push(line),
+      now: () => NOW,
+      policy: POLICY,
+      providerReadiness: { ready: () => ({}) as never },
+      rebindAuthority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:test",
+          reasonCode: "allowed",
+        }),
+      },
+      route: {
+        authenticator: { authenticate: () => undefined },
+        tenant: SCOPE.tenantId,
+      },
+      supervisorId: RECIPIENT,
+      dependencies: {
+        connectLedger: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+            workflowIdFormat: resolved,
+          }) as never,
+        // Start stops at the next stage; the log line is already written.
+        connectSessions: () => Promise.reject(new Error("stop here")),
+        connectTaskStore: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+          }) as never,
+        createHost: () => Promise.reject(new Error("unused")),
+        createWorkflows: () => {
+          throw new Error("unused");
+        },
+      },
+    }).then(
+      () => "started",
+      () => "refused"
+    );
+    expect(outcome).toBe("refused");
+    return lines;
+  };
+
+  expect(await start("legacy")).toEqual([
+    'A2A V2 workflow ids: legacy format. The deployment discriminator is off: every host sharing this ledger database recovers and deduplicates the others\' messages. Set a2aV2.workflowIdFormat "deployment" on every such host once all of them run a build that supports it',
+  ]);
+  expect(await start("deployment")).toEqual([
+    "A2A V2 workflow ids: deployment format, scoped to this host's task queue",
+  ]);
+});
+
 const BIND_MESSAGE = deriveSupervisorMessageV2WorkflowId(
   SCOPE,
   "bind",

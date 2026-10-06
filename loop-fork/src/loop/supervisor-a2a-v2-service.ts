@@ -98,6 +98,8 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   resultBinding?: PostgresSupervisorMessageV2DeliveryLedger["resultBinding"];
   recipientAssignment?: PostgresSupervisorMessageV2DeliveryLedger["recipientAssignment"];
   unpublishableResultBindings?: PostgresSupervisorMessageV2DeliveryLedger["unpublishableResultBindings"];
+  /** The format `migrate` resolved new messages to be written in. */
+  readonly workflowIdFormat?: PostgresSupervisorMessageV2DeliveryLedger["workflowIdFormat"];
   close(): Promise<void>;
   migrate(): Promise<void>;
 };
@@ -574,6 +576,28 @@ const reportUnpublishableResultBindings = async (
   }
 };
 
+/**
+ * One start line naming the workflow id format the ledger resolved. Legacy
+ * ids carry no deployment discriminator, so decision 6's per-deployment
+ * isolation is off until the operator opts in to "deployment". The line says
+ * so: a host sharing the ledger database on another task queue then recovers
+ * and deduplicates this host's messages, and this host theirs.
+ */
+const reportWorkflowIdFormat = (
+  ledger: LedgerResource,
+  log: (line: string) => void = (line) => console.error(line)
+): void => {
+  if (ledger.workflowIdFormat === "legacy") {
+    log(
+      'A2A V2 workflow ids: legacy format. The deployment discriminator is off: every host sharing this ledger database recovers and deduplicates the others\' messages. Set a2aV2.workflowIdFormat "deployment" on every such host once all of them run a build that supports it'
+    );
+  } else if (ledger.workflowIdFormat === "deployment") {
+    log(
+      "A2A V2 workflow ids: deployment format, scoped to this host's task queue"
+    );
+  }
+};
+
 const createAssignmentRoute = (
   options: SupervisorA2AV2ServiceOptions,
   ledger: LedgerResource,
@@ -672,6 +696,7 @@ export const createSupervisorA2AV2Service = async (
         : {}),
     });
     await ledger.migrate();
+    reportWorkflowIdFormat(ledger, options.log);
     await reportUnpublishableResultBindings(ledger, options.log);
     stage = "session-store";
     sessions = await dependencies.connectSessions({

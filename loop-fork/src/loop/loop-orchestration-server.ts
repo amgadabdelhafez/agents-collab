@@ -155,8 +155,11 @@ export interface A2AV2Config {
   tenant: string;
   /**
    * The V2 workflow id format new messages are written in: "legacy" (the id
-   * a pre-discriminator build reads, so that build can still be rolled back
-   * to) or "deployment" (scoped to this host's task queue). Omitted, the
+   * a pre-discriminator build reads, so that build's workflow-id path still
+   * works after a rollback) or "deployment" (scoped to this host's task
+   * queue). Legacy ids carry no deployment discriminator, so hosts on
+   * different task queues that share the ledger database are not isolated
+   * from each other until all of them write "deployment". Omitted, the
    * format the ledger database records, or "legacy" when it records none.
    * "deployment" is an explicit opt-in; returning to "legacy" is refused
    * while any deployment-format message is unsettled.

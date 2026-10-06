@@ -984,6 +984,8 @@ test("service start logs each binding that will never publish once, with ids onl
       });
     service = await start();
     const expected = [
+      // The start line naming the resolved workflow id format.
+      "A2A V2 workflow ids: deployment format, scoped to this host's task queue",
       `A2A V2 result binding will never publish (body-chosen-graph): tenant ${scope.tenantId} message ${mine} A2A task task:stranded-mine; re-bind it to its message-derived result graph`,
       `A2A V2 result binding will never publish (body-chosen-graph): tenant ${other.tenantId} message ${theirs} A2A task task:stranded-theirs; re-bind it to its message-derived result graph`,
     ];
