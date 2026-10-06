@@ -33,6 +33,7 @@ import {
   blocksBridgeBounce,
   bridgePath,
   formatBridgeInbox,
+  keylessClaudeResultReplyWarning,
   normalizeBridgeTarget,
   readBridgeEvents,
   readBridgeStatus,
@@ -374,10 +375,18 @@ const handleSendMessageTool = async (
   ) {
     result.status = "accepted";
   }
+  const keylessReplyWarning = keylessClaudeResultReplyWarning(source, options);
+  if (keylessReplyWarning) {
+    process.stderr.write(`loop-bridge send_message: ${keylessReplyWarning}\n`);
+  }
   writeJsonRpc({
     id,
     jsonrpc: "2.0",
-    result: toolContent(formatDispatchResult(result)),
+    result: toolContent(
+      keylessReplyWarning
+        ? `${formatDispatchResult(result)}\n${keylessReplyWarning}`
+        : formatDispatchResult(result)
+    ),
   });
 };
 

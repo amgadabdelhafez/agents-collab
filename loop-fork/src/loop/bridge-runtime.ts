@@ -1858,6 +1858,23 @@ export const drainCodexAppServerMessages = (
   return deliverCodexBridgeMessage(runDir, message);
 };
 
+// Pane-backed targets with pending messages, in queue order. Codex is left to
+// its app-server when one is configured. Reads the ledger and manifest only;
+// it never probes tmux.
+const pendingPaneTargets = (
+  runDir: string,
+  hasCodexRemote: boolean
+): Set<BridgeMessage["target"]> =>
+  new Set(
+    readPendingBridgeMessages(runDir)
+      .filter(
+        (entry) =>
+          !(entry.target === "codex" && hasCodexRemote) &&
+          paneIdForTarget(runDir, entry.target) !== undefined
+      )
+      .map((entry) => entry.target)
+  );
+
 export const drainTmuxBridgeMessages = async (
   runDir: string
 ): Promise<boolean> => {
@@ -1875,15 +1892,7 @@ export const drainTmuxBridgeMessages = async (
   // Ring every pane-backed target with pending messages, in queue order. A
   // target whose doorbell is not due (or whose pane is busy) must not hide
   // another target's inbox, such as Claude's behind an undrained Codex inbound.
-  const targets = new Set(
-    readPendingBridgeMessages(runDir)
-      .filter(
-        (entry) =>
-          !(entry.target === "codex" && status.hasCodexRemote) &&
-          paneIdForTarget(runDir, entry.target) !== undefined
-      )
-      .map((entry) => entry.target)
-  );
+  const targets = pendingPaneTargets(runDir, status.hasCodexRemote);
   let notified = false;
   for (const target of targets) {
     if (await notifyTmuxBridgeInbox(runDir, target)) {
@@ -1905,9 +1914,20 @@ const drainBridgeWorkerCycle = async (
     !deliveredToCodex &&
     status.hasCodexRemote &&
     (await drainCodexTmuxMessages(runDir));
-  return (
-    deliveredToCodex || notifiedCodex || (await drainTmuxBridgeMessages(runDir))
-  );
+  // Fairness: Codex progress must not skip the pane doorbell pass. Returning
+  // early on it let a steady Codex stream starve Claude's inbox forever. When
+  // the Codex path made progress, the pass still runs whenever another pane
+  // target has pending messages (so Codex-only app-server traffic still never
+  // probes tmux); otherwise it runs as before. drainTmuxBridgeMessages leaves
+  // app-server Codex out, so Codex is not rung twice, and each other target
+  // is considered every cycle and rung when its own doorbell is due
+  // (BRIDGE_NOTIFICATION_RETRY_MS).
+  const codexProgressed = deliveredToCodex || notifiedCodex;
+  const notifiedPanes =
+    (!codexProgressed ||
+      pendingPaneTargets(runDir, status.hasCodexRemote).size > 0) &&
+    (await drainTmuxBridgeMessages(runDir));
+  return codexProgressed || notifiedPanes;
 };
 
 const bridgeWorkerWaitPolicy = (
