@@ -8,7 +8,9 @@ import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-mes
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  type SupervisorMessageV2RecoveryPort,
   SupervisorMessageV2RecoveryRunner,
+  SupervisorMessageV2RecoveryStartupError,
   type SupervisorMessageV2TerminalOutcome,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import {
@@ -50,6 +52,8 @@ const workflowsWith = (
     foreign?: string;
     /** Overrides `presence` per call; may throw, as the Temporal port does. */
     presenceOf?: (workflowId: string, call: number) => WorkflowPresence;
+    /** An error `start` throws for this ID instead of starting it. */
+    startError?: (workflowId: string) => Error | undefined;
     status?: (workflowId: string) => Record<string, unknown>;
     withoutPresence?: boolean;
   } = {}
@@ -98,6 +102,10 @@ const workflowsWith = (
       };
     },
     start: (command) => {
+      const failure = options.startError?.(command.workflowId);
+      if (failure) {
+        throw failure;
+      }
       if (command.workflowId === options.foreign) {
         throw new WorkflowError(
           "conflict",
@@ -502,14 +510,212 @@ describe("SupervisorMessage V2 receive against workflow retention", () => {
   });
 });
 
-describe("SupervisorMessage V2 recovery runner startup", () => {
-  const runnerFailingWith = (error: Error) => {
+describe("SupervisorMessage V2 recovery failure classification", () => {
+  const twoRecords = () =>
+    ledgerWith(false, [
+      {
+        input: structuredClone(fixture.input),
+        trustedScope: SCOPE,
+        workflowId: WORKFLOW_ID,
+      },
+      {
+        input: structuredClone(OTHER_INPUT),
+        trustedScope: SCOPE,
+        workflowId: OTHER_WORKFLOW_ID,
+      },
+    ]);
+  const reportedBy = async (port: WorkflowPort) => {
+    const { ledger } = twoRecords();
+    const reports: { kind: string; message: string; workflowId: string }[] = [];
+    await coordinator(port, ledger).recoverPending((failure) => {
+      reports.push({
+        kind: failure.kind,
+        message: (failure.error as Error).message,
+        workflowId: failure.workflowId,
+      });
+    });
+    return reports;
+  };
+  const heldBy = (workflowId: string) =>
+    new WorkflowError(
+      "conflict",
+      `workflow ${workflowId} belongs to another task queue`
+    );
+
+  test("reports an ID another deployment holds at start as a foreign execution", async () => {
+    const workflows = workflowsWith("missing", { foreign: WORKFLOW_ID });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "foreign-execution",
+        message: `workflow ${WORKFLOW_ID} belongs to another task queue`,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+    expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+      OTHER_WORKFLOW_ID,
+    ]);
+  });
+
+  test("reports an ID another deployment holds at the presence check as a foreign execution", async () => {
+    const workflows = workflowsWith("missing", {
+      presenceOf: (workflowId) => {
+        if (workflowId === WORKFLOW_ID) {
+          throw heldBy(workflowId);
+        }
+        return "missing";
+      },
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "foreign-execution",
+        message: `workflow ${WORKFLOW_ID} belongs to another task queue`,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+  });
+
+  test("reports an owner change between the presence check and the status read as a foreign execution", async () => {
+    const workflows = workflowsWith("closed", {
+      presenceOf: (workflowId, call) => {
+        if (workflowId === WORKFLOW_ID && call > 1) {
+          throw heldBy(workflowId);
+        }
+        return "closed";
+      },
+      status: () => ({
+        deliveredAt: null,
+        deliveryAttempts: 0,
+        nextRetryAt: null,
+        phase: "canceled",
+      }),
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "foreign-execution",
+        message: `workflow ${WORKFLOW_ID} belongs to another task queue`,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+  });
+
+  test("reports a non-conflict start failure as failed, never as a foreign execution", async () => {
+    const workflows = workflowsWith("missing", {
+      startError: (workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? new Error("Temporal frontend unavailable")
+          : undefined,
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "failed",
+        message: "Temporal frontend unavailable",
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+    expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+      OTHER_WORKFLOW_ID,
+    ]);
+  });
+
+  test("reports a non-conflict presence failure as failed, never as a foreign execution", async () => {
+    const workflows = workflowsWith("missing", {
+      presenceOf: (workflowId) => {
+        if (workflowId === WORKFLOW_ID) {
+          throw new WorkflowError("invalid-state", "describe failed");
+        }
+        return "missing";
+      },
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      { kind: "failed", message: "describe failed", workflowId: WORKFLOW_ID },
+    ]);
+  });
+
+  test("reports a non-conflict presence failure after the status read as failed", async () => {
+    const workflows = workflowsWith("closed", {
+      presenceOf: (workflowId, call) => {
+        if (workflowId === WORKFLOW_ID && call > 1) {
+          throw new WorkflowError("invalid-state", "describe failed");
+        }
+        return "closed";
+      },
+      status: () => ({
+        deliveredAt: null,
+        deliveryAttempts: 0,
+        nextRetryAt: null,
+        phase: "canceled",
+      }),
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      { kind: "failed", message: "describe failed", workflowId: WORKFLOW_ID },
+    ]);
+  });
+
+  test("reports a failed outcome lookup on a closed execution as failed", async () => {
+    const workflows = workflowsWith("closed", {
+      status: (workflowId) => {
+        if (workflowId === WORKFLOW_ID) {
+          throw new Error("query of a closed execution failed");
+        }
+        return {
+          deliveredAt: null,
+          deliveryAttempts: 0,
+          nextRetryAt: null,
+          phase: "canceled",
+        };
+      },
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "failed",
+        message: "query of a closed execution failed",
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+  });
+
+  test("a conflict raised past the ownership checks is failed, not foreign", async () => {
+    // Only start and presence address the ID's owner. A conflict from a
+    // later step (here the status read) says nothing about ownership.
+    const workflows = workflowsWith("running", {
+      status: (workflowId) => {
+        if (workflowId === WORKFLOW_ID) {
+          throw new WorkflowError("conflict", "status read conflicted");
+        }
+        return {
+          deliveredAt: null,
+          deliveryAttempts: 0,
+          nextRetryAt: null,
+          phase: "routed",
+        };
+      },
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "failed",
+        message: "status read conflicted",
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+  });
+});
+
+describe("SupervisorMessage V2 recovery runner", () => {
+  const T0 = Date.parse("2026-10-05T00:00:00.000Z");
+
+  const runnerOver = (
+    recoveryPort: SupervisorMessageV2RecoveryPort,
+    options: { maxBackoffMs?: number } = {}
+  ) => {
+    let clock = T0;
     const lines: string[] = [];
     const intervals: (() => void)[] = [];
     const runner = new SupervisorMessageV2RecoveryRunner({
-      coordinator: { recoverPending: () => Promise.reject(error) },
+      coordinator: recoveryPort,
       intervalMs: 1000,
       log: (line) => lines.push(line),
+      ...options,
+      now: () => clock,
       timer: {
         clearInterval: () => undefined,
         setInterval: (callback) => {
@@ -518,36 +724,370 @@ describe("SupervisorMessage V2 recovery runner startup", () => {
         },
       },
     });
-    return { intervals, lines, runner };
+    return {
+      advance: (ms: number) => {
+        clock += ms;
+      },
+      intervals,
+      lines,
+      runner,
+    };
   };
 
-  test("starts past an intent whose ID another deployment holds, and keeps sweeping", async () => {
-    const { intervals, lines, runner } = runnerFailingWith(
-      new WorkflowError(
-        "conflict",
-        `workflow ${WORKFLOW_ID} belongs to another task queue`
-      )
+  const twoRecordsWith = (
+    startError: (workflowId: string) => Error | undefined
+  ) => {
+    const workflows = workflowsWith("running", { startError });
+    const { ledger } = ledgerWith(false, [
+      {
+        input: structuredClone(fixture.input),
+        trustedScope: SCOPE,
+        workflowId: WORKFLOW_ID,
+      },
+      {
+        input: structuredClone(OTHER_INPUT),
+        trustedScope: SCOPE,
+        workflowId: OTHER_WORKFLOW_ID,
+      },
+    ]);
+    return { recovery: coordinator(workflows.port, ledger), workflows };
+  };
+
+  const refusalOf = (runner: SupervisorMessageV2RecoveryRunner) =>
+    runner.start().then(
+      () => undefined,
+      (error: unknown) => error
     );
+
+  test("starts past an ID another deployment holds, logs which ID and recipient, and keeps sweeping", async () => {
+    const { recovery, workflows } = twoRecordsWith((workflowId) =>
+      workflowId === WORKFLOW_ID
+        ? new WorkflowError(
+            "conflict",
+            `workflow ${workflowId} belongs to another task queue`
+          )
+        : undefined
+    );
+    const { intervals, lines, runner } = runnerOver(recovery);
     try {
-      await expect(runner.start()).resolves.toBeUndefined();
+      expect(await refusalOf(runner)).toBeUndefined();
       expect(lines).toEqual([
-        "V2 initial recovery deferred an intent held by another deployment",
+        `V2 recovery skipped workflow ${WORKFLOW_ID} for ${fixture.input.to}: WorkflowError (conflict): workflow ${WORKFLOW_ID} belongs to another task queue`,
       ]);
       expect(intervals).toHaveLength(1);
+      expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+        OTHER_WORKFLOW_ID,
+      ]);
     } finally {
       await runner.close();
     }
   });
 
-  test("still refuses startup on any other workflow error", async () => {
-    const { intervals, runner } = runnerFailingWith(
-      new WorkflowError("invalid-state", "workflow state is unreadable")
+  test("refuses startup when any recorded start fails for another reason, after trying every record", async () => {
+    const { recovery, workflows } = twoRecordsWith((workflowId) =>
+      workflowId === WORKFLOW_ID
+        ? new Error("Temporal frontend unavailable")
+        : undefined
     );
+    const { intervals, lines, runner } = runnerOver(recovery);
     try {
-      await expect(runner.start()).rejects.toMatchObject({
-        code: "invalid-state",
-      });
+      const refused = await refusalOf(runner);
+      expect(refused).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+      expect((refused as Error).name).toBe(
+        "SupervisorMessageV2RecoveryStartupError"
+      );
+      expect((refused as Error).message).toBe(
+        `V2 initial recovery failed for 1 recorded start: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: Temporal frontend unavailable`
+      );
+      expect(
+        (refused as SupervisorMessageV2RecoveryStartupError).failures.map(
+          (failure) => [failure.workflowId, failure.kind]
+        )
+      ).toEqual([[WORKFLOW_ID, "failed"]]);
       expect(intervals).toEqual([]);
+      expect(lines).toEqual([]);
+      // The healthy record was still recovered before startup was refused.
+      expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+        OTHER_WORKFLOW_ID,
+      ]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("refuses startup on a non-conflict failure even when another record is foreign-held", async () => {
+    const { recovery } = twoRecordsWith((workflowId) =>
+      workflowId === WORKFLOW_ID
+        ? new WorkflowError(
+            "conflict",
+            `workflow ${workflowId} belongs to another task queue`
+          )
+        : new WorkflowError("invalid-state", "start snapshot unreadable")
+    );
+    const { intervals, lines, runner } = runnerOver(recovery);
+    try {
+      const refused = await refusalOf(runner);
+      expect((refused as Error).message).toBe(
+        `V2 initial recovery failed for 1 recorded start: workflow ${OTHER_WORKFLOW_ID} for ${OTHER_INPUT.to}: WorkflowError (invalid-state): start snapshot unreadable`
+      );
+      expect(lines).toEqual([
+        `V2 recovery skipped workflow ${WORKFLOW_ID} for ${fixture.input.to}: WorkflowError (conflict): workflow ${WORKFLOW_ID} belongs to another task queue`,
+      ]);
+      expect(intervals).toEqual([]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("names every failing record when it refuses startup", async () => {
+    const { recovery } = twoRecordsWith(
+      (workflowId) => new Error(`start of ${workflowId} failed`)
+    );
+    const { runner } = runnerOver(recovery);
+    try {
+      expect(((await refusalOf(runner)) as Error).message).toBe(
+        `V2 initial recovery failed for 2 recorded starts: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: start of ${WORKFLOW_ID} failed; workflow ${OTHER_WORKFLOW_ID} for ${OTHER_INPUT.to}: Error: start of ${OTHER_WORKFLOW_ID} failed`
+      );
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("refuses startup whenever the whole initial sweep fails, whatever the error", async () => {
+    const failures = [
+      new WorkflowError("conflict", "a held ID rejected the whole sweep"),
+      Object.assign(new Error("Temporal query failed"), {
+        name: "QueryFailedError",
+      }),
+      Object.assign(new Error("Temporal unavailable"), {
+        name: "ServiceError",
+      }),
+      new Error("ledger offline"),
+    ];
+    for (const failure of failures) {
+      const { intervals, lines, runner } = runnerOver({
+        recoverPending: () => Promise.reject(failure),
+      });
+      try {
+        expect(await refusalOf(runner)).toBe(failure);
+        expect(intervals).toEqual([]);
+        expect(lines).toEqual([]);
+      } finally {
+        await runner.close();
+      }
+    }
+  });
+
+  test("a periodic sweep retries a failing record with bounded backoff and logs every failure transition", async () => {
+    let failing = false;
+    const { recovery, workflows } = twoRecordsWith((workflowId) =>
+      failing && workflowId === WORKFLOW_ID
+        ? new Error("Temporal frontend unavailable")
+        : undefined
+    );
+    const { advance, lines, runner } = runnerOver(recovery, {
+      maxBackoffMs: 4000,
+    });
+    const startsOf = (workflowId: string) =>
+      workflows.starts.filter((start) => start.workflowId === workflowId)
+        .length;
+    const failed = (attempt: number, delayMs: number) =>
+      `V2 recovery of workflow ${WORKFLOW_ID} for ${fixture.input.to} failed (attempt ${attempt}); retrying in ${delayMs} ms: Error: Temporal frontend unavailable`;
+    try {
+      await runner.start();
+      expect(lines).toEqual([]);
+      failing = true;
+
+      // Attempt n waits min(interval * 2^(n-1), maxBackoffMs) before n+1.
+      const expected: string[] = [];
+      for (const [attempt, delayMs] of [
+        [1, 1000],
+        [2, 2000],
+        [3, 4000],
+        [4, 4000],
+      ] as const) {
+        expect(await runner.sweep()).toBe(0);
+        expected.push(failed(attempt, delayMs));
+        expect(lines).toEqual(expected);
+
+        // Not yet due: the record is left alone and nothing is logged,
+        // while the healthy record is still swept.
+        advance(delayMs - 1);
+        const others = startsOf(OTHER_WORKFLOW_ID);
+        await runner.sweep();
+        expect(startsOf(OTHER_WORKFLOW_ID)).toBe(others + 1);
+        expect(lines).toEqual(expected);
+        advance(1);
+      }
+
+      failing = false;
+      await runner.sweep();
+      expected.push(
+        `V2 recovery of workflow ${WORKFLOW_ID} for ${fixture.input.to} resumed after 4 failed attempts`
+      );
+      expect(lines).toEqual(expected);
+      // Healthy again: every sweep attempts it, with no further lines.
+      const before = startsOf(WORKFLOW_ID);
+      await runner.sweep();
+      await runner.sweep();
+      expect(startsOf(WORKFLOW_ID)).toBe(before + 2);
+      expect(lines).toEqual(expected);
+
+      // A new failure starts again from the first backoff step.
+      failing = true;
+      await runner.sweep();
+      expect(lines.at(-1)).toBe(failed(1, 1000));
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("a record in backoff is not attempted before it is due", async () => {
+    let attempts = 0;
+    const { recovery } = twoRecordsWith((workflowId) => {
+      if (workflowId !== WORKFLOW_ID) {
+        return undefined;
+      }
+      attempts += 1;
+      return attempts > 1
+        ? new Error("Temporal frontend unavailable")
+        : undefined;
+    });
+    const { advance, runner } = runnerOver(recovery);
+    try {
+      await runner.start();
+      await runner.sweep();
+      expect(attempts).toBe(2);
+      advance(999);
+      await runner.sweep();
+      await runner.sweep();
+      expect(attempts).toBe(2);
+      advance(1);
+      await runner.sweep();
+      expect(attempts).toBe(3);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("a failing record that leaves the ledger stops being retried, and says so", async () => {
+    const workflows = workflowsWith("running", {
+      startError: () => new Error("Temporal frontend unavailable"),
+    });
+    const records: {
+      input: typeof fixture.input;
+      trustedScope: TrustedSupervisorMessageV2Scope;
+      workflowId: string;
+    }[] = [];
+    const { ledger } = ledgerWith(false, records);
+    const { lines, runner } = runnerOver(coordinator(workflows.port, ledger));
+    const record = {
+      input: structuredClone(fixture.input),
+      trustedScope: SCOPE,
+      workflowId: WORKFLOW_ID,
+    };
+    const firstFailure = `V2 recovery of workflow ${WORKFLOW_ID} for ${fixture.input.to} failed (attempt 1); retrying in 1000 ms: Error: Temporal frontend unavailable`;
+    try {
+      await runner.start();
+      records.push(record);
+      await runner.sweep();
+      expect(lines).toEqual([firstFailure]);
+      records.splice(0);
+      await runner.sweep();
+      expect(lines).toEqual([
+        firstFailure,
+        `V2 recovery of workflow ${WORKFLOW_ID} for ${fixture.input.to} stopped: its start intent is no longer recorded after 1 failed attempt`,
+      ]);
+      // Recorded again, it is a fresh failure, not a later backoff step.
+      records.push(record);
+      await runner.sweep();
+      expect(lines.at(-1)).toBe(firstFailure);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("a periodic whole-sweep failure is logged on every tick, never thrown", async () => {
+    let sweeps = 0;
+    const { intervals, lines, runner } = runnerOver({
+      recoverPending: () => {
+        sweeps += 1;
+        return sweeps === 1
+          ? Promise.resolve(0)
+          : Promise.reject(new Error("ledger offline"));
+      },
+    });
+    try {
+      await runner.start();
+      intervals[0]?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      intervals[0]?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(lines).toEqual([
+        "V2 delivery recovery sweep failed: ledger offline",
+        "V2 delivery recovery sweep failed: ledger offline",
+      ]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("rejects a backoff bound below the interval, above an hour, or fractional", () => {
+    for (const maxBackoffMs of [999, 3_600_001, 1500.5]) {
+      expect(
+        () =>
+          new SupervisorMessageV2RecoveryRunner({
+            coordinator: { recoverPending: () => Promise.resolve(0) },
+            intervalMs: 1000,
+            maxBackoffMs,
+          })
+      ).toThrow("V2 recovery backoff bound is invalid");
+    }
+    // The bound may equal either end of its range.
+    for (const maxBackoffMs of [1000, 3_600_000]) {
+      expect(
+        () =>
+          new SupervisorMessageV2RecoveryRunner({
+            coordinator: { recoverPending: () => Promise.resolve(0) },
+            intervalMs: 1000,
+            maxBackoffMs,
+          })
+      ).not.toThrow();
+    }
+  });
+
+  test("defaults the backoff bound to ten minutes, or to the interval when that is longer", async () => {
+    // An hour-long interval is accepted without an explicit bound.
+    expect(
+      () =>
+        new SupervisorMessageV2RecoveryRunner({
+          coordinator: { recoverPending: () => Promise.resolve(0) },
+          intervalMs: 3_600_000,
+        })
+    ).not.toThrow();
+
+    const { recovery } = twoRecordsWith((workflowId) =>
+      workflowId === WORKFLOW_ID
+        ? new Error("Temporal frontend unavailable")
+        : undefined
+    );
+    let started = false;
+    const { advance, lines, runner } = runnerOver({
+      recoverPending: (report, due) =>
+        started ? recovery.recoverPending(report, due) : Promise.resolve(0),
+    });
+    try {
+      await runner.start();
+      started = true;
+      const delays: string[] = [];
+      for (let attempt = 1; attempt <= 11; attempt += 1) {
+        await runner.sweep();
+        const delay = /retrying in (\d+) ms/.exec(lines.at(-1) ?? "")?.[1];
+        delays.push(delay ?? "none");
+        advance(Number(delay));
+      }
+      // 1s doubling per attempt: 2^9 s = 512000 ms, then capped at 600000.
+      expect(delays.slice(-3)).toEqual(["256000", "512000", "600000"]);
     } finally {
       await runner.close();
     }

@@ -88,17 +88,40 @@ export class SupervisorMessageV2ReadinessUnavailableError extends Error {
  * post-effect records. A caller must opt in and own its shutdown lifecycle.
  */
 export interface SupervisorMessageV2RecoveryPort {
+  /**
+   * With `due`, a record whose workflow ID it rejects is left alone for this
+   * sweep: not attempted, not reported, not counted.
+   */
   recoverPending(
-    report?: (failure: SupervisorMessageV2RecoveryFailure) => void
+    report?: (failure: SupervisorMessageV2RecoveryFailure) => void,
+    due?: (workflowId: string) => boolean
   ): Promise<number>;
 }
 
-/** One recorded start that a recovery sweep could not recover. */
+/**
+ * One recorded start that a recovery sweep could not recover.
+ * `foreign-execution`: the workflow ID is held by an execution this
+ * deployment does not own (another task queue or another workflow type), as
+ * raised by the port's start or presence check for that ID. `failed`: any
+ * other failure for this record, including a PostgreSQL error and a conflict
+ * raised by any later step.
+ */
 export interface SupervisorMessageV2RecoveryFailure {
   error: unknown;
+  kind: "failed" | "foreign-execution";
   recipient: string;
   workflowId: string;
 }
+
+/** A failure of one record, before the sweep names its record. */
+type RecordFailure = Pick<SupervisorMessageV2RecoveryFailure, "error" | "kind">;
+
+/**
+ * The port raises a conflict when an ID this host starts or checks is held
+ * by an execution it does not own (another task queue or workflow type).
+ */
+const isForeignExecution = (error: unknown): boolean =>
+  error instanceof WorkflowError && error.code === "conflict";
 
 const recoveryFailureText = (error: unknown): string => {
   if (error instanceof WorkflowError) {
@@ -109,10 +132,44 @@ const recoveryFailureText = (error: unknown): string => {
     : "unknown error";
 };
 
+const recordText = (failure: SupervisorMessageV2RecoveryFailure): string =>
+  `workflow ${failure.workflowId} for ${failure.recipient}`;
+
+const plural = (count: number, noun: string): string =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * Service-start recovery refuses to start the host when a recorded start
+ * failed for any reason other than a foreign execution holding its ID.
+ */
+export class SupervisorMessageV2RecoveryStartupError extends Error {
+  readonly failures: readonly SupervisorMessageV2RecoveryFailure[];
+
+  constructor(failures: readonly SupervisorMessageV2RecoveryFailure[]) {
+    super(
+      `V2 initial recovery failed for ${plural(failures.length, "recorded start")}: ${failures
+        .map(
+          (failure) =>
+            `${recordText(failure)}: ${recoveryFailureText(failure.error)}`
+        )
+        .join("; ")}`
+    );
+    this.name = "SupervisorMessageV2RecoveryStartupError";
+    this.failures = failures;
+  }
+}
+
 export interface SupervisorMessageV2RecoveryRunnerOptions {
   coordinator: SupervisorMessageV2RecoveryPort;
   intervalMs: number;
   log?: (message: string) => void;
+  /**
+   * Upper bound of a failing record's retry delay. Attempt n of a failing
+   * record waits min(intervalMs * 2^(n-1), maxBackoffMs) before the next.
+   * Defaults to ten minutes, never below `intervalMs`.
+   */
+  maxBackoffMs?: number;
+  now?: () => number;
   timer?: SupervisorMessageV2RecoveryTimer;
 }
 
@@ -135,12 +192,40 @@ const SYSTEM_RECOVERY_TIMER: SupervisorMessageV2RecoveryTimer = {
   },
 };
 
+/** Default upper bound of a failing record's retry delay. */
+const DEFAULT_MAX_RECOVERY_BACKOFF_MS = 600_000;
+
+/** A record whose recovery failed, waiting for its next attempt. */
+interface SupervisorMessageV2FailingRecovery {
+  attempts: number;
+  recipient: string;
+  retryAt: number;
+}
+
+/**
+ * Runs service-start recovery and the periodic sweep.
+ *
+ * Service start: only a record whose ID is held by an execution this
+ * deployment does not own is skipped (logged with its ID and recipient), so
+ * a foreign deployment cannot keep this host down. Any other per-record
+ * failure refuses startup, naming every failing record, after every other
+ * record was recovered; so does a failure of the whole sweep.
+ *
+ * Periodic sweep: a failing record is retried with bounded exponential
+ * backoff, and every transition is logged: each failed attempt (with its
+ * attempt number and delay), its recovery, and its removal from the ledger.
+ * A failing record never delays the others.
+ */
 export class SupervisorMessageV2RecoveryRunner
   implements SupervisorMessageV2RecoveryLifecycle
 {
   readonly #coordinator: SupervisorMessageV2RecoveryPort;
+  /** workflowId -> the record's failure state, until it recovers. */
+  readonly #failing = new Map<string, SupervisorMessageV2FailingRecovery>();
   readonly #intervalMs: number;
   readonly #log: (message: string) => void;
+  readonly #maxBackoffMs: number;
+  readonly #now: () => number;
   /** workflowId -> the line last logged for it, so a sweep repeats nothing. */
   readonly #reportedSkips = new Map<string, string>();
   readonly #timerPort: SupervisorMessageV2RecoveryTimer;
@@ -157,9 +242,21 @@ export class SupervisorMessageV2RecoveryRunner
     ) {
       throw new Error("V2 recovery interval is invalid");
     }
+    const maxBackoffMs =
+      options.maxBackoffMs ??
+      Math.max(options.intervalMs, DEFAULT_MAX_RECOVERY_BACKOFF_MS);
+    if (
+      !Number.isSafeInteger(maxBackoffMs) ||
+      maxBackoffMs < options.intervalMs ||
+      maxBackoffMs > 3_600_000
+    ) {
+      throw new Error("V2 recovery backoff bound is invalid");
+    }
     this.#coordinator = options.coordinator;
     this.#intervalMs = options.intervalMs;
     this.#log = options.log ?? ((message) => console.error(message));
+    this.#maxBackoffMs = maxBackoffMs;
+    this.#now = options.now ?? Date.now;
     this.#timerPort = options.timer ?? SYSTEM_RECOVERY_TIMER;
   }
 
@@ -183,38 +280,49 @@ export class SupervisorMessageV2RecoveryRunner
     await this.#inFlight?.catch(() => undefined);
   }
 
-  async sweep(): Promise<number> {
+  /** One periodic sweep. Only a failure of the whole sweep rejects. */
+  sweep(): Promise<number> {
+    return this.#sweep(false);
+  }
+
+  async #sweep(initial: boolean): Promise<number> {
     if (this.#closed) {
       return 0;
     }
     if (this.#inFlight) {
       return 0;
     }
-    // A record that cannot be recovered (for example an ID another
-    // deployment's execution holds) is skipped and reported here, so it
-    // degrades only that message's recipient: it neither refuses service
-    // start nor stops recovery of every other record.
-    const skipped = new Map<string, string>();
-    const run = this.#coordinator.recoverPending((failure) => {
-      skipped.set(
-        failure.workflowId,
-        `V2 recovery skipped workflow ${failure.workflowId} for ${failure.recipient}: ${recoveryFailureText(failure.error)}`
-      );
-    });
+    const now = this.#now();
+    const recorded = new Set<string>();
+    const attempted = new Set<string>();
+    const failures: SupervisorMessageV2RecoveryFailure[] = [];
+    const run = this.#coordinator.recoverPending(
+      (failure) => {
+        failures.push(failure);
+      },
+      (workflowId) => {
+        recorded.add(workflowId);
+        const failing = this.#failing.get(workflowId);
+        if (failing !== undefined && failing.retryAt > now) {
+          return false;
+        }
+        attempted.add(workflowId);
+        return true;
+      }
+    );
     this.#inFlight = run;
     try {
       const recovered = await run;
-      for (const workflowId of this.#reportedSkips.keys()) {
-        if (!skipped.has(workflowId)) {
-          this.#reportedSkips.delete(workflowId);
-        }
+      this.#reportSkips(
+        failures.filter((failure) => failure.kind === "foreign-execution")
+      );
+      const failed = failures.filter(
+        (failure) => failure.kind !== "foreign-execution"
+      );
+      if (initial && failed.length > 0) {
+        throw new SupervisorMessageV2RecoveryStartupError(failed);
       }
-      for (const [workflowId, line] of skipped) {
-        if (this.#reportedSkips.get(workflowId) !== line) {
-          this.#reportedSkips.set(workflowId, line);
-          this.#log(line);
-        }
-      }
+      this.#retryLater(failed, now, recorded, attempted);
       return recovered;
     } finally {
       if (this.#inFlight === run) {
@@ -223,29 +331,75 @@ export class SupervisorMessageV2RecoveryRunner
     }
   }
 
-  async #start(): Promise<void> {
-    try {
-      await this.sweep();
-    } catch (error) {
-      // A restarted worker must remain alive to recover a previously failing
-      // workflow task. Killing it on the first Temporal query failure creates
-      // a startup/recovery deadlock. Other failures still refuse startup.
-      if (error instanceof WorkflowError && error.code === "conflict") {
-        // The sweep already recovered every other intent. An ID held by
-        // another deployment stays held until that execution is purged, so
-        // refusing startup would let a foreign deployment keep this host down.
-        this.#log(
-          "V2 initial recovery deferred an intent held by another deployment"
-        );
-      } else if (
-        !(error instanceof Error) ||
-        (error.name !== "QueryFailedError" && error.name !== "ServiceError")
-      ) {
-        throw error;
-      } else {
-        this.#log("V2 initial recovery awaiting Temporal query retry");
+  /**
+   * An ID held by another deployment's execution stays held until that
+   * execution is purged. It degrades only that message's recipient, is
+   * logged once per distinct line, and is looked at again on every sweep.
+   */
+  #reportSkips(skips: readonly SupervisorMessageV2RecoveryFailure[]): void {
+    const skipped = new Map<string, string>();
+    for (const failure of skips) {
+      skipped.set(
+        failure.workflowId,
+        `V2 recovery skipped ${recordText(failure)}: ${recoveryFailureText(failure.error)}`
+      );
+    }
+    for (const workflowId of this.#reportedSkips.keys()) {
+      if (!skipped.has(workflowId)) {
+        this.#reportedSkips.delete(workflowId);
       }
     }
+    for (const [workflowId, line] of skipped) {
+      if (this.#reportedSkips.get(workflowId) !== line) {
+        this.#reportedSkips.set(workflowId, line);
+        this.#log(line);
+      }
+    }
+  }
+
+  #retryLater(
+    failed: readonly SupervisorMessageV2RecoveryFailure[],
+    now: number,
+    recorded: ReadonlySet<string>,
+    attempted: ReadonlySet<string>
+  ): void {
+    const failedNow = new Set(failed.map((failure) => failure.workflowId));
+    for (const [workflowId, failing] of this.#failing) {
+      const record = `workflow ${workflowId} for ${failing.recipient}`;
+      const attempts = plural(failing.attempts, "failed attempt");
+      if (!recorded.has(workflowId)) {
+        this.#failing.delete(workflowId);
+        this.#log(
+          `V2 recovery of ${record} stopped: its start intent is no longer recorded after ${attempts}`
+        );
+      } else if (attempted.has(workflowId) && !failedNow.has(workflowId)) {
+        this.#failing.delete(workflowId);
+        this.#log(`V2 recovery of ${record} resumed after ${attempts}`);
+      }
+    }
+    for (const failure of failed) {
+      const attempts =
+        (this.#failing.get(failure.workflowId)?.attempts ?? 0) + 1;
+      const delayMs = Math.min(
+        this.#intervalMs * 2 ** (attempts - 1),
+        this.#maxBackoffMs
+      );
+      this.#failing.set(failure.workflowId, {
+        attempts,
+        recipient: failure.recipient,
+        retryAt: now + delayMs,
+      });
+      this.#log(
+        `V2 recovery of ${recordText(failure)} failed (attempt ${attempts}); retrying in ${delayMs} ms: ${recoveryFailureText(failure.error)}`
+      );
+    }
+  }
+
+  async #start(): Promise<void> {
+    // Any failure but a foreign-held ID refuses startup, including a failure
+    // of the whole sweep: the host must not serve while a recorded start it
+    // owns cannot be recovered.
+    await this.#sweep(true);
     if (this.#closed) {
       return;
     }
@@ -691,36 +845,42 @@ export class SupervisorMessageV2Coordinator {
    * envelopes whose earlier lease has expired, so an interrupted external
    * effect can converge without a sender replaying the original request.
    *
-   * Each record is recovered on its own: one that fails (an ID held by a
-   * foreign execution, a Temporal error for that workflow) does not stop the
-   * others. With `report`, each such failure is handed to it and the sweep
-   * resolves; without it, the first failure is thrown after every other
-   * record was attempted. Reading the ledger itself still fails the sweep.
+   * Each record is recovered on its own: one that fails does not stop the
+   * others. A conflict the port raises when this host starts the ID or
+   * checks its presence means another deployment's execution holds it; that
+   * record is left alone and its failure is a `foreign-execution`. Any other
+   * error (Temporal, PostgreSQL, a conflict from a later step) is `failed`.
+   * With `report`, each failure is handed to it and the sweep resolves; the
+   * caller decides what each kind means. Without it, the first failure is
+   * thrown after every other record was attempted. Reading the ledger itself
+   * still fails the sweep.
    */
   async recoverPending(
-    report?: (failure: SupervisorMessageV2RecoveryFailure) => void
+    report?: (failure: SupervisorMessageV2RecoveryFailure) => void,
+    due?: (workflowId: string) => boolean
   ): Promise<number> {
     let recovered = 0;
     let unreported: { error: unknown } | undefined;
     for (const record of await this.#ledger.recoverableStarts()) {
-      // A failure confined to one intent (an ID held by another deployment's
-      // execution, a Temporal error for that workflow) is deferred or
-      // reported: the sweep still recovers the remaining intents.
-      const deferred: unknown[] = [];
+      if (due && !due(record.workflowId)) {
+        continue;
+      }
+      const failures: RecordFailure[] = [];
       try {
-        if (await this.#recoverStart(record, deferred)) {
+        if (await this.#recoverStart(record, failures)) {
           recovered += 1;
         }
       } catch (error) {
-        deferred.push(error);
+        failures.push({ error, kind: "failed" });
       }
-      for (const error of deferred) {
+      for (const { error, kind } of failures) {
         if (!report) {
           unreported ??= { error };
           continue;
         }
         report({
           error,
+          kind,
           recipient: record.input.to,
           workflowId: record.workflowId,
         });
@@ -738,10 +898,10 @@ export class SupervisorMessageV2Coordinator {
       trustedScope: TrustedSupervisorMessageV2Scope;
       workflowId: string;
     },
-    deferred: unknown[]
+    failures: RecordFailure[]
   ): Promise<boolean> {
     const { input, trustedScope, workflowId } = record;
-    if (await this.#closedForRecovery(record, deferred)) {
+    if (await this.#closedForRecovery(record, failures)) {
       return false;
     }
     try {
@@ -752,12 +912,12 @@ export class SupervisorMessageV2Coordinator {
         workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
       });
     } catch (error) {
-      // The ID is held by an execution this host does not own. Leave it
-      // alone, recover the remaining intents, and still fail the sweep.
-      if (!(error instanceof WorkflowError && error.code === "conflict")) {
+      // The ID is held by an execution this host does not own: leave it
+      // alone. Any other start failure is this record's own failure.
+      if (!isForeignExecution(error)) {
         throw error;
       }
-      deferred.push(error);
+      failures.push({ error, kind: "foreign-execution" });
       return false;
     }
     const projection = await this.status(trustedScope, workflowId);
@@ -806,32 +966,27 @@ export class SupervisorMessageV2Coordinator {
       trustedScope: TrustedSupervisorMessageV2Scope;
       workflowId: string;
     },
-    deferred: unknown[]
+    failures: RecordFailure[]
   ): Promise<boolean> {
     const { input, trustedScope, workflowId } = record;
     if (await this.#ledger.terminalOutcome(workflowId, trustedScope)) {
       return true;
     }
-    let presence: WorkflowPresence | undefined;
-    try {
-      presence = await this.#recoveryPresence(workflowId);
-    } catch (error) {
+    const presence = await this.#ownPresence(workflowId, failures);
+    if (presence === "foreign") {
       // Another deployment's execution holds this ID. It is neither ours to
       // start nor ours to read an outcome from: leave the intent open.
-      if (!(error instanceof WorkflowError && error.code === "conflict")) {
-        throw error;
-      }
-      deferred.push(error);
       return true;
     }
     if (presence === "closed") {
       // Record the outcome while the engine still holds the execution, so a
       // later retention purge cannot make it look never started.
-      try {
-        await this.#recordClosedOutcome(trustedScope, workflowId, input);
-      } catch (error) {
-        deferred.push(error);
-      }
+      await this.#recordClosedOutcome(
+        trustedScope,
+        workflowId,
+        input,
+        failures
+      );
       return true;
     }
     return (
@@ -1069,16 +1224,36 @@ export class SupervisorMessageV2Coordinator {
     );
   }
 
+  /**
+   * This deployment's presence for the ID, or `foreign` (with the conflict
+   * added to `failures`) when another deployment's execution holds it.
+   */
+  async #ownPresence(
+    workflowId: string,
+    failures: RecordFailure[]
+  ): Promise<WorkflowPresence | "foreign" | undefined> {
+    try {
+      return await this.#recoveryPresence(workflowId);
+    } catch (error) {
+      if (!isForeignExecution(error)) {
+        throw error;
+      }
+      failures.push({ error, kind: "foreign-execution" });
+      return "foreign";
+    }
+  }
+
   async #recordClosedOutcome(
     trustedScope: TrustedSupervisorMessageV2Scope,
     workflowId: string,
-    input: SupervisorMessageV2Input
+    input: SupervisorMessageV2Input,
+    failures: RecordFailure[]
   ): Promise<void> {
     const projection = await this.status(trustedScope, workflowId);
     // The status query addresses the ID, not the execution the presence
     // check saw. Record only if the ID still names our own closed execution:
     // a foreign one raises a conflict here, and a purged one is not proof.
-    if ((await this.#recoveryPresence(workflowId)) !== "closed") {
+    if ((await this.#ownPresence(workflowId, failures)) !== "closed") {
       return;
     }
     const outcome = terminalOutcomeOf(
