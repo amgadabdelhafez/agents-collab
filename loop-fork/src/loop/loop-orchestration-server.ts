@@ -847,6 +847,12 @@ const createDefaultRuntimeHost = async (input: {
       pathname: `${a2aConfig.routePath}/assignment`,
       principal: a2aConfig.principal,
     },
+    // The same operator-configured entries name the graph tasks this host's
+    // tenant may bind results to.
+    resultGraphTasks: a2aConfig.resultArtifacts?.map((entry) => ({
+      graphWorkflowId: entry.graphWorkflowId,
+      graphTaskId: entry.graphTaskId,
+    })),
     verifyResultArtifact: a2aConfig.resultArtifacts
       ? createGitResultArtifactVerifier(a2aConfig.resultArtifacts)
       : undefined,

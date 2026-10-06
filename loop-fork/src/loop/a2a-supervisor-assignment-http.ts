@@ -15,7 +15,9 @@ const reply = (status: number, code: string) =>
   Response.json({ code }, { status, headers: { "cache-control": "no-store" } });
 
 /** Authenticated supervisor-only assignment. Sender scope is route-owned;
- * the durable service verifies task/message/recipient before recording it. */
+ * the body names the graph task, which the durable service checks against
+ * its host allowlist, task/message/recipient and the graph, and reserves for
+ * this A2A task before recording it. */
 export const createSupervisorA2AAssignmentHttpHandler =
   (options: {
     authenticator: SupervisorA2AAuthenticator;

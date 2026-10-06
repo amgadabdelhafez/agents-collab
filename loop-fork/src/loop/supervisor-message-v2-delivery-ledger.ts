@@ -76,9 +76,33 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       a2a_task_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal TEXT NOT NULL,
       binding_json JSONB NOT NULL, PRIMARY KEY (workflow_id, a2a_task_id)
     )`;
+    // An unreleased revision reserved a graph task per message workflow with
+    // this index, which refused follow-up turns of the same A2A task.
+    await this
+      .#sql`DROP INDEX IF EXISTS loop_supervisor_message_v2_result_binding_graph_task`;
+    // Graphs carry no tenant. A graph task is evidence for exactly one A2A
+    // task (and all of its follow-up message workflows), across every tenant.
+    await this
+      .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_result_graph_task (
+      graph_workflow_id TEXT NOT NULL, graph_task_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL, a2a_task_id TEXT NOT NULL,
+      PRIMARY KEY (graph_workflow_id, graph_task_id)
+    )`;
+    // Bindings recorded before reservations existed are reserved in a stable
+    // order. A later binding that reused the graph task for another A2A task
+    // is then never returned for publication.
+    await this
+      .#sql`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
+      SELECT binding_json->>'graphWorkflowId', binding_json->>'graphTaskId', tenant_id, a2a_task_id
+      FROM loop_supervisor_message_v2_result_binding
+      ORDER BY tenant_id, a2a_task_id, workflow_id
+      ON CONFLICT DO NOTHING`;
   }
 
-  /** Host-only immutable assignment. No HTTP caller chooses a graph. */
+  /** Immutable assignment. The authenticated sender names the graph task
+   * (the HTTP assignment route forwards it); the host checks its allowlist,
+   * the message, recipient and graph task. This ledger reserves that graph
+   * task for this one A2A task, in the same transaction as the binding. */
   async bindResult(
     scope: TrustedSupervisorMessageV2Scope,
     binding: SupervisorA2AResultBinding
@@ -101,18 +125,36 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     if (!assigned || assigned.principal !== scope.principal) {
       throw new Error("Result recipient is not assigned");
     }
-    await this
-      .#sql`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
-      VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb)
-      ON CONFLICT (workflow_id, a2a_task_id) DO NOTHING`;
-    const existing = await this.resultBinding(
-      scope,
-      binding.messageWorkflowId,
-      binding.a2aTaskId
-    );
-    if (canonical(existing) !== canonical(binding)) {
-      throw new Error("Result binding conflicts with prior assignment");
-    }
+    await this.#sql.begin(async (sql) => {
+      await sql`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
+        VALUES (${binding.graphWorkflowId}, ${binding.graphTaskId}, ${scope.tenantId}, ${binding.a2aTaskId})
+        ON CONFLICT DO NOTHING`;
+      const reserved = await sql<
+        { a2a_task_id: string; tenant_id: string }[]
+      >`SELECT tenant_id, a2a_task_id FROM loop_supervisor_message_v2_result_graph_task
+        WHERE graph_workflow_id = ${binding.graphWorkflowId} AND graph_task_id = ${binding.graphTaskId}`;
+      if (
+        reserved[0]?.tenant_id !== scope.tenantId ||
+        reserved[0]?.a2a_task_id !== binding.a2aTaskId
+      ) {
+        throw new Error("Result graph task is reserved for another A2A task");
+      }
+      await sql`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
+        VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb)
+        ON CONFLICT (workflow_id, a2a_task_id) DO NOTHING`;
+      const existing = await sql<
+        { binding_json: unknown }[]
+      >`SELECT binding_json FROM loop_supervisor_message_v2_result_binding
+        WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
+      const stored =
+        typeof existing[0]?.binding_json === "string"
+          ? JSON.parse(existing[0].binding_json)
+          : existing[0]?.binding_json;
+      // Throwing here also rolls back a reservation this call just made.
+      if (!stored || canonical(stored) !== canonical(binding)) {
+        throw new Error("Result binding conflicts with prior assignment");
+      }
+    });
   }
 
   async resultBinding(
@@ -122,8 +164,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
   ): Promise<SupervisorA2AResultBinding | undefined> {
     const rows = await this.#sql<
       { binding_json: unknown }[]
-    >`SELECT binding_json FROM loop_supervisor_message_v2_result_binding
-      WHERE workflow_id = ${workflowId} AND a2a_task_id = ${taskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
+    >`SELECT b.binding_json FROM loop_supervisor_message_v2_result_binding b
+      JOIN loop_supervisor_message_v2_result_graph_task r
+        ON r.graph_workflow_id = b.binding_json->>'graphWorkflowId'
+        AND r.graph_task_id = b.binding_json->>'graphTaskId'
+        AND r.tenant_id = b.tenant_id AND r.a2a_task_id = b.a2a_task_id
+      WHERE b.workflow_id = ${workflowId} AND b.a2a_task_id = ${taskId} AND b.tenant_id = ${scope.tenantId} AND b.principal = ${scope.principal}`;
     if (!rows[0]) {
       return undefined;
     }

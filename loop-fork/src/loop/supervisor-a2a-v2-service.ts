@@ -10,7 +10,9 @@ import {
   type SupervisorA2AAuthenticator,
 } from "./a2a-supervisor-http";
 import {
+  assertSupervisorA2AResultGraphTask,
   publishSupervisorA2AAcceptedResult,
+  type SupervisorA2AResultArtifactTarget,
   type SupervisorA2AResultBinding,
 } from "./a2a-supervisor-result";
 import {
@@ -141,13 +143,22 @@ export interface SupervisorA2AV2ServiceOptions {
     principalForRecipient(recipient: string): string | undefined;
   };
   recoveryIntervalMs?: number;
+  /** Host-owned allowlist of the graph tasks this host's single route tenant
+   * may bind results to (the operator's result artifact configuration).
+   * Graphs carry no tenant, so a caller-named graph task outside it is
+   * refused. Absent, no result can be bound. */
+  resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
   route: {
     authenticator: SupervisorA2AAuthenticator;
     pathname?: string;
     tenant: string;
   };
   supervisorId: string;
-  verifyResultArtifact?(reference: string): Promise<boolean>;
+  /** True only when `reference` is verified evidence for exactly `target`. */
+  verifyResultArtifact?(
+    reference: string,
+    target: SupervisorA2AResultArtifactTarget
+  ): Promise<boolean>;
 }
 
 export interface SupervisorA2AV2Service {
@@ -217,6 +228,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly assignmentRoute: SupervisorA2AV2Service["assignmentRoute"];
   readonly #workflows: WorkflowPort;
   readonly #now: () => string;
+  readonly #resultGraphTasks: readonly SupervisorA2AResultArtifactTarget[];
   readonly #verifyResultArtifact: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
   readonly recipientRoute: SupervisorA2AV2Service["recipientRoute"];
   readonly governance: GovernedSupervisorMessageV2Service | undefined;
@@ -236,6 +248,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
     workflows: WorkflowPort;
     now: () => string;
+    resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
     verifyResultArtifact?: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
     recipientRoute?: SupervisorA2AV2Service["recipientRoute"];
     governance?: GovernedSupervisorMessageV2Service;
@@ -251,6 +264,10 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.assignmentRoute = input.assignmentRoute;
     this.#workflows = input.workflows;
     this.#now = input.now;
+    this.#resultGraphTasks = (input.resultGraphTasks ?? []).map((target) => ({
+      graphWorkflowId: target.graphWorkflowId,
+      graphTaskId: target.graphTaskId,
+    }));
     this.#verifyResultArtifact = input.verifyResultArtifact;
     this.recipientRoute = input.recipientRoute;
     this.governance = input.governance;
@@ -293,6 +310,22 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     ) {
       throw new Error("Result binding does not belong to the scoped A2A task");
     }
+    // The graph is caller-named and carries no tenant: it must be one this
+    // host configured, it must hold this recipient's task, and the ledger then
+    // reserves that graph task for this one A2A task.
+    if (
+      !this.#resultGraphTasks.some(
+        (target) =>
+          target.graphWorkflowId === binding.graphWorkflowId &&
+          target.graphTaskId === binding.graphTaskId
+      )
+    ) {
+      throw new Error("Result graph task is not configured for this host");
+    }
+    await assertSupervisorA2AResultGraphTask({
+      binding,
+      workflows: this.#workflows,
+    });
     await this.#ledger.bindResult(scope, binding);
   }
 
@@ -556,6 +589,7 @@ export const createSupervisorA2AV2Service = async (
       assignmentRoute,
       workflows,
       now: options.now,
+      resultGraphTasks: options.resultGraphTasks,
       verifyResultArtifact: options.verifyResultArtifact,
       recipientRoute,
       governance,

@@ -14,9 +14,61 @@ export interface SupervisorA2AResultBinding {
   recipient: string;
 }
 
+/** The graph task an acceptance artifact must be evidence for. */
+export interface SupervisorA2AResultArtifactTarget {
+  graphTaskId: string;
+  graphWorkflowId: string;
+}
+
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 const artifactReference = /^artifact:\/\/sha256\/[a-f0-9]{64}$/;
+/** A completion set must be a non-empty list of real workflow ids: an empty
+ * or partly malformed list would let `every()` complete the task vacuously. */
+const workflowIdsOf = (task: Task | undefined): string[] => {
+  const value = task?.metadata?.[WORKFLOW_IDS_METADATA_KEY];
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some((entry) => typeof entry !== "string" || entry.length === 0)
+  ) {
+    throw new Error("Result task workflow ids are missing or malformed");
+  }
+  return value as string[];
+};
+
+/** Bind-time check that the named graph task exists and is not another
+ * worker's. Publication re-checks phase, worker and receipts. The caller also
+ * requires the graph task to be on its host's allowlist, and the ledger
+ * reserves it for one A2A task. */
+export const assertSupervisorA2AResultGraphTask = async (input: {
+  binding: SupervisorA2AResultBinding;
+  workflows: Pick<WorkflowPort, "query">;
+}): Promise<void> => {
+  const projection = (
+    await input.workflows.query({
+      workflowId: input.binding.graphWorkflowId,
+      name: "status",
+    })
+  ).value;
+  if (
+    !record(projection) ||
+    projection.schema !== "task-graph-projection.v1" ||
+    !Array.isArray(projection.nodes)
+  ) {
+    throw new Error("Result graph projection is invalid");
+  }
+  const node = projection.nodes.find(
+    (value: unknown) =>
+      record(value) && value.taskId === input.binding.graphTaskId
+  );
+  if (
+    !record(node) ||
+    (node.workerId !== null && node.workerId !== input.binding.recipient)
+  ) {
+    throw new Error("Result graph task is unrelated to this recipient");
+  }
+};
 const artifactSemantics = (artifact: Artifact): string =>
   JSON.stringify(Artifact.toJSON(artifact), (_key, value) =>
     record(value)
@@ -34,10 +86,18 @@ export const publishSupervisorA2AAcceptedResult = async (input: {
   context: ServerCallContext;
   store: TaskStore;
   workflows: Pick<WorkflowPort, "query">;
-  verifyArtifact(reference: string): Promise<boolean>;
+  /** True only when `reference` is verified evidence for exactly `target`. */
+  verifyArtifact(
+    reference: string,
+    target: SupervisorA2AResultArtifactTarget
+  ): Promise<boolean>;
   now(): string;
 }): Promise<void> => {
   const binding = input.binding;
+  const target: SupervisorA2AResultArtifactTarget = {
+    graphWorkflowId: binding.graphWorkflowId,
+    graphTaskId: binding.graphTaskId,
+  };
   const task = await input.store.load(binding.a2aTaskId, input.context);
   if (
     task?.status &&
@@ -51,15 +111,7 @@ export const publishSupervisorA2AAcceptedResult = async (input: {
       "A failed or canceled task cannot accept a successful result"
     );
   }
-  if (
-    !(
-      task &&
-      Array.isArray(task.metadata?.[WORKFLOW_IDS_METADATA_KEY]) &&
-      task.metadata[WORKFLOW_IDS_METADATA_KEY].includes(
-        binding.messageWorkflowId
-      )
-    )
-  ) {
+  if (!(task && workflowIdsOf(task).includes(binding.messageWorkflowId))) {
     throw new Error("Result does not belong to this A2A task");
   }
   const result = await input.workflows.query({
@@ -93,7 +145,7 @@ export const publishSupervisorA2AAcceptedResult = async (input: {
       typeof receipt.checkId !== "string" ||
       typeof receipt.artifactRef !== "string" ||
       !artifactReference.test(receipt.artifactRef) ||
-      !(await input.verifyArtifact(receipt.artifactRef))
+      !(await input.verifyArtifact(receipt.artifactRef, target))
     ) {
       throw new Error("Result acceptance artifact is unverified");
     }
@@ -146,8 +198,11 @@ export const publishSupervisorA2AAcceptedResult = async (input: {
     if (prior && artifactSemantics(prior) !== artifactSemantics(artifact)) {
       throw new Error("Accepted result conflicts with prior artifact");
     }
+    const workflowIds = workflowIdsOf(task);
+    if (!workflowIds.includes(binding.messageWorkflowId)) {
+      throw new Error("Result does not belong to this A2A task");
+    }
     const artifacts = prior ? task.artifacts : [...task.artifacts, artifact];
-    const workflowIds = task.metadata?.[WORKFLOW_IDS_METADATA_KEY] as string[];
     const allAccepted = workflowIds.every((workflowId) =>
       artifacts.some((value) => value.artifactId === `accepted:${workflowId}`)
     );

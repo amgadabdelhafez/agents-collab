@@ -1,17 +1,29 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
+import type { SupervisorA2AResultArtifactTarget } from "./a2a-supervisor-result";
 
+/** One committed artifact, allowlisted as evidence for exactly one graph
+ * task. It never verifies for another task's acceptance receipt. */
 export interface GitResultArtifactBinding {
   artifactRef: string;
   commit: string;
+  graphTaskId: string;
+  graphWorkflowId: string;
   path: string;
   repositoryRoot: string;
 }
+const graphReference = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
 const reference = /^artifact:\/\/sha256\/[a-f0-9]{64}$/;
 const commitId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const safePath = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
 const regularBlob = /^(100644|100755) blob [a-f0-9]+\t([^\0]+)\0$/;
+/** Byte-identical evidence may serve several graph tasks, one entry each. */
+const bindingKey = (
+  artifactRef: string,
+  target: SupervisorA2AResultArtifactTarget
+): string =>
+  JSON.stringify([artifactRef, target.graphWorkflowId, target.graphTaskId]);
 
 /** Exact committed bytes only. No worktree fallback, remote access, arbitrary
  * caller path, replace refs, symlink blob, or transcript retrieval. */
@@ -25,20 +37,33 @@ export const createGitResultArtifactVerifier = (
   for (const entry of entries) {
     if (
       Object.keys(entry).sort().join(",") !==
-        "artifactRef,commit,path,repositoryRoot" ||
+        "artifactRef,commit,graphTaskId,graphWorkflowId,path,repositoryRoot" ||
       !reference.test(entry.artifactRef) ||
+      typeof entry.graphTaskId !== "string" ||
+      !graphReference.test(entry.graphTaskId) ||
+      typeof entry.graphWorkflowId !== "string" ||
+      !graphReference.test(entry.graphWorkflowId) ||
       !commitId.test(entry.commit) ||
       !isAbsolute(entry.repositoryRoot) ||
       !safePath.test(entry.path) ||
       entry.path.split("/").some((part) => part === "." || part === "..") ||
-      bindings.has(entry.artifactRef)
+      bindings.has(bindingKey(entry.artifactRef, entry))
     ) {
       throw new Error("Invalid or duplicate committed result artifact binding");
     }
-    bindings.set(entry.artifactRef, { ...entry });
+    bindings.set(bindingKey(entry.artifactRef, entry), { ...entry });
   }
-  return async (artifactRef: string): Promise<boolean> => {
-    const binding = bindings.get(artifactRef);
+  return async (
+    artifactRef: string,
+    target: SupervisorA2AResultArtifactTarget
+  ): Promise<boolean> => {
+    if (
+      typeof target?.graphWorkflowId !== "string" ||
+      typeof target.graphTaskId !== "string"
+    ) {
+      return false;
+    }
+    const binding = bindings.get(bindingKey(artifactRef, target));
     if (!binding) {
       return false;
     }

@@ -264,6 +264,7 @@ const descriptor = (): SupervisorSessionDescriptorV2 => ({
 const serviceOptions = (input: {
   databaseUrl: string;
   environment: TestWorkflowEnvironment;
+  graphWorkflowId: string;
   root: string;
   taskQueue: string;
   delivery: {
@@ -282,10 +283,15 @@ const serviceOptions = (input: {
   delivery: input.delivery,
   dispatchOwner: "v2-dispatcher:service-factory-proof",
   assignmentRoute: { pathname: "/assignment", principal: SCOPE.principal },
-  verifyResultArtifact: (reference: string) =>
+  resultGraphTasks: ["result-node", "second-node"].map((graphTaskId) => ({
+    graphWorkflowId: input.graphWorkflowId,
+    graphTaskId,
+  })),
+  verifyResultArtifact: (reference: string, target: { graphTaskId: string }) =>
     Promise.resolve(
-      reference ===
-        `artifact://sha256/${createHash("sha256").update("controlled accepted result fixture v1\n").digest("hex")}`
+      target.graphTaskId === "result-node" &&
+        reference ===
+          `artifact://sha256/${createHash("sha256").update("controlled accepted result fixture v1\n").digest("hex")}`
     ),
   messageAuthority: {
     decide: () => ({
@@ -485,6 +491,172 @@ test("service factory closes every acquired resource after a partial migration f
   expect(closes).toEqual(["ledger", "task-store"]);
 });
 
+test("result binding refuses a graph task the host has not configured or that is another worker's, before the ledger records it", async () => {
+  const bound: unknown[] = [];
+  const queried: string[] = [];
+  const closed = () => Promise.resolve();
+  const create = (
+    resultGraphTasks?: { graphTaskId: string; graphWorkflowId: string }[]
+  ) =>
+    createSupervisorA2AV2Service({
+      ...({
+        assignmentRoute: {
+          pathname: "/assignment",
+          principal: SCOPE.principal,
+        },
+        card: {
+          description: "binding wiring",
+          supervisorId: RECIPIENT,
+          url: "http://a2a.local/a2a",
+        },
+        databaseUrl: "postgres://127.0.0.1:5432/unused",
+        delivery: {
+          deliver: () => Promise.resolve({ status: "accepted" as const }),
+        },
+        dispatchOwner: "v2-dispatcher:binding-wiring",
+        host: {
+          authority: {
+            decide: () => ({
+              allowed: true,
+              authorityRef: "authority:test",
+              reasonCode: "allowed",
+            }),
+          },
+          buildId: "binding-wiring.v1",
+          delivery: {
+            deliver: () => Promise.resolve({ status: "accepted" as const }),
+          },
+          identity: "binding-wiring",
+          namespace: "default",
+          nativeConnection: {},
+          receipts: { record: () => undefined },
+          store: {} as JsonlSupervisorThreadStore,
+          taskQueue: "binding-wiring",
+          workflowBundle: { code: "unused" },
+          workflowClient: {},
+        },
+        now: () => NOW,
+        policy: POLICY,
+        providerReadiness: { ready: () => ({}) as never },
+        rebindAuthority: {
+          decide: () => ({
+            allowed: true,
+            authorityRef: "authority:test",
+            reasonCode: "allowed",
+          }),
+        },
+        route: {
+          authenticator: {
+            authenticate: () => ({
+              principal: SCOPE.principal,
+              supervisorId: SENDER,
+            }),
+          },
+          tenant: SCOPE.tenantId,
+        },
+        supervisorId: RECIPIENT,
+      } as const),
+      resultGraphTasks,
+      dependencies: {
+        connectLedger: () =>
+          Promise.resolve({
+            bindResult: (_scope: unknown, binding: unknown) => {
+              bound.push(binding);
+              return Promise.resolve();
+            },
+            close: closed,
+            migrate: closed,
+          }) as never,
+        connectSessions: () =>
+          Promise.resolve({
+            assertReady: closed,
+            close: closed,
+            migrate: closed,
+          }) as never,
+        connectTaskStore: () =>
+          Promise.resolve({
+            close: closed,
+            load: () =>
+              Promise.resolve({
+                id: "task:bind",
+                contextId: "context:bind",
+                history: [],
+                artifacts: [],
+                metadata: { [WORKFLOW_IDS_METADATA_KEY]: ["message:bind"] },
+                status: { state: TaskState.TASK_STATE_SUBMITTED },
+              }),
+            migrate: closed,
+            save: closed,
+          }) as never,
+        createHost: () => Promise.resolve({ close: closed }) as never,
+        createWorkflows: () =>
+          ({
+            query: (input: { workflowId: string }) => {
+              queried.push(input.workflowId);
+              return Promise.resolve({
+                revision: 1,
+                status: "running",
+                workflowId: input.workflowId,
+                value: {
+                  schema: "task-graph-projection.v1",
+                  nodes: [
+                    { taskId: "node:mine", workerId: RECIPIENT },
+                    { taskId: "node:theirs", workerId: PEER },
+                  ],
+                },
+              });
+            },
+          }) as never,
+      },
+    });
+  const binding = {
+    a2aTaskId: "task:bind",
+    messageWorkflowId: "message:bind",
+    graphWorkflowId: "graph:bind",
+    graphTaskId: "node:mine",
+    recipient: RECIPIENT,
+  };
+  const unconfigured = await create();
+  try {
+    await expect(unconfigured.bindResult(SCOPE, binding)).rejects.toThrow(
+      "not configured"
+    );
+  } finally {
+    await unconfigured.close();
+  }
+  const service = await create([
+    { graphWorkflowId: "graph:bind", graphTaskId: "node:mine" },
+    { graphWorkflowId: "graph:bind", graphTaskId: "node:theirs" },
+  ]);
+  try {
+    for (const foreign of [
+      { graphTaskId: "node:unlisted" },
+      { graphWorkflowId: "graph:other-tenant" },
+    ]) {
+      await expect(
+        service.bindResult(SCOPE, { ...binding, ...foreign })
+      ).rejects.toThrow("not configured");
+    }
+    expect(queried).toEqual([]);
+    const refused = await service.assignmentRoute?.httpHandler(
+      new Request("http://local/assignment", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...binding, graphTaskId: "node:unlisted" }),
+      })
+    );
+    expect(refused?.status).toBe(409);
+    await expect(
+      service.bindResult(SCOPE, { ...binding, graphTaskId: "node:theirs" })
+    ).rejects.toThrow("unrelated");
+    expect(bound).toEqual([]);
+    await service.bindResult(SCOPE, binding);
+    expect(bound).toEqual([binding]);
+  } finally {
+    await service.close();
+  }
+});
+
 test("standard V2 factory authenticates before task mutation and preserves scoped delivery and DAG readiness across host recreation", async () => {
   const root = mkdtempSync(join(tmpdir(), "supervisor-a2a-v2-service-"));
   const address = process.env.LOOP_VERTICAL_TEMPORAL_ADDRESS;
@@ -509,6 +681,8 @@ test("standard V2 factory authenticates before task mutation and preserves scope
   const ownedWorkflowIds = new Set<string>();
   const messageId = `factory-reconnect-${randomUUID()}`;
   const taskQueue = `supervisor-a2a-v2-service-${process.pid}-${randomUUID().slice(0, 8)}`;
+  // The host allowlists this graph's tasks before any binding names them.
+  const graphWorkflowId = `task-graph:result-${randomUUID()}`;
   try {
     postgres = await DisposablePostgres.create();
     const sessionInput = {
@@ -553,6 +727,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
         databaseUrl: postgres.databaseUrl(),
         delivery,
         environment,
+        graphWorkflowId,
         root,
         taskQueue,
       })
@@ -660,6 +835,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
         databaseUrl: postgres.databaseUrl(),
         delivery,
         environment,
+        graphWorkflowId,
         root,
         taskQueue,
       })
@@ -686,13 +862,12 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     if (!("id" in submitted)) {
       throw new Error("Expected an A2A task");
     }
-    const graphWorkflowId = `task-graph:result-${randomUUID()}`;
-    ownedWorkflowIds.add(graphWorkflowId);
     const workflows = new TemporalWorkflowPort(environment.client.workflow, {
       taskQueue,
     });
     const resultBytes = Buffer.from("controlled accepted result fixture v1\n");
     const artifactRef = `artifact://sha256/${createHash("sha256").update(resultBytes).digest("hex")}`;
+    ownedWorkflowIds.add(graphWorkflowId);
     await workflows.start({
       workflowId: graphWorkflowId,
       workflowType: "task-graph.v1",
@@ -703,6 +878,16 @@ test("standard V2 factory authenticates before task mutation and preserves scope
         nodes: [
           {
             taskId: "result-node",
+            acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
+            authorityGates: [],
+            dependencies: [],
+            ownerRepository: "agents-collab",
+            readScopes: ["src"],
+            writeScopes: [],
+            specArtifactRef: artifactRef,
+          },
+          {
+            taskId: "second-node",
             acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
             authorityGates: [],
             dependencies: [],
@@ -757,15 +942,21 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     expect((await assign("recipient-fixture"))?.status).toBe(401);
     expect((await assign("service-factory-token"))?.status).toBe(200);
     await recreated.bindResult(SCOPE, binding);
+    // A graph task the host has not allowlisted is refused before the graph.
     await expect(
       recreated.bindResult(SCOPE, { ...binding, graphTaskId: "foreign-node" })
-    ).rejects.toThrow("conflicts");
+    ).rejects.toThrow("not configured");
+    // A second, allowlisted graph task cannot replace the immutable binding.
+    await expect(
+      recreated.bindResult(SCOPE, { ...binding, graphTaskId: "second-node" })
+    ).rejects.toThrow("conflicts with prior assignment");
     await recreated.close();
     recreated = await createSupervisorA2AV2Service(
       serviceOptions({
         databaseUrl: postgres.databaseUrl(),
         delivery,
         environment,
+        graphWorkflowId,
         root,
         taskQueue,
       })
@@ -855,8 +1046,43 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     const peerWorkflow = [...ownedWorkflowIds].find(
       (id) => id !== workflowId && id !== graphWorkflowId
     );
-    if (!peerWorkflow) {
+    if (!(peerWorkflow && "id" in peerTask)) {
       throw new Error("Missing delivered peer workflow");
+    }
+    const peerBinding = {
+      a2aTaskId: peerTask.id,
+      messageWorkflowId: peerWorkflow,
+      graphWorkflowId,
+      graphTaskId: "result-node",
+      recipient: PEER,
+    };
+    // That graph task is another recipient's, already-credited work.
+    await expect(recreated.bindResult(SCOPE, peerBinding)).rejects.toThrow(
+      "unrelated"
+    );
+    const reservation = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      postgres.databaseUrl()
+    );
+    try {
+      // Even past the graph check, the ledger reserves a graph task for the
+      // A2A task it was first bound to, so another task cannot reuse it.
+      await expect(reservation.bindResult(SCOPE, peerBinding)).rejects.toThrow(
+        "reserved for another A2A task"
+      );
+      // The refused bind left no row behind: the reservation and binding are
+      // one transaction, and an unrelated graph task stays unreserved.
+      await expect(
+        reservation.resultBinding(SCOPE, peerWorkflow, peerTask.id)
+      ).resolves.toBeUndefined();
+      await reservation.bindResult(SCOPE, {
+        ...peerBinding,
+        graphTaskId: "second-node",
+      });
+      await expect(
+        reservation.resultBinding(SCOPE, peerWorkflow, peerTask.id)
+      ).resolves.toMatchObject({ graphTaskId: "second-node" });
+    } finally {
+      await reservation.close();
     }
     const projection = await environment.client.workflow
       .getHandle(peerWorkflow)
@@ -877,6 +1103,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
         databaseUrl: postgres.databaseUrl(),
         delivery,
         environment,
+        graphWorkflowId,
         root,
         taskQueue,
       })
