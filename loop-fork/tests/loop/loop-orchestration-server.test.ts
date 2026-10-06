@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BridgeStatus } from "../../src/loop/bridge-store";
 import {
   type A2AV2Config,
@@ -9,7 +13,14 @@ import {
   enrollConfiguredA2AV2Session,
   parseLoopOrchestrationConfig,
   requireA2AV2Enrollment,
+  resultGraphWorkflowIdForConfig,
+  runLoopOrchestrationServer,
 } from "../../src/loop/loop-orchestration-server";
+import {
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
+  deriveSupervisorMessageV2WorkflowId,
+  SupervisorResultGraphKey,
+} from "../../src/loop/supervisor-message-v2-contract";
 import type { SupervisorSessionDescriptorV2 } from "../../src/loop/supervisor-session-v2";
 
 const config = () => ({
@@ -70,9 +81,15 @@ test("orchestration config rejects inline secrets, remote listeners, and unknown
   );
 });
 
-const a2aV2 = (resultArtifacts: unknown[]) => ({
+const a2aV2 = (
+  resultArtifacts: unknown[],
+  extra: Record<string, unknown> = {
+    resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+  }
+) => ({
   ...config(),
   a2aV2: {
+    ...extra,
     databaseUrlEnv: "LOOP_A2A_V2_DATABASE_URL",
     endpointRef: "endpoint:local-a2a",
     policy: {
@@ -114,17 +131,159 @@ test("orchestration config refuses a result artifact for a graph no message resu
       ])
     )
   ).toThrow(
-    "orchestration a2aV2 resultArtifacts[0] graphWorkflowId is not a message-derived result graph"
+    "orchestration a2aV2 resultArtifacts[0] graphWorkflowId is not a message-derived result graph (supervisor-result-graph:v3:<hmac-sha256>, from `loop orchestration result-graph-id`)"
   );
 });
 
-test("orchestration config accepts a result artifact bound to a message-derived graph task", () => {
-  const graphWorkflowId = `supervisor-result-graph:v2:${"c".repeat(64)}`;
-  expect(
-    parseLoopOrchestrationConfig(
+test("orchestration config accepts a result artifact bound to a keyed graph task, and to an unkeyed v2 graph recorded before the key", () => {
+  for (const graphWorkflowId of [
+    `supervisor-result-graph:v3:${"c".repeat(64)}`,
+    `supervisor-result-graph:v2:${"c".repeat(64)}`,
+  ]) {
+    const parsed = parseLoopOrchestrationConfig(
       a2aV2([{ ...artifact, graphTaskId: "result-node", graphWorkflowId }])
-    ).a2aV2?.resultArtifacts
-  ).toEqual([{ ...artifact, graphTaskId: "result-node", graphWorkflowId }]);
+    ).a2aV2;
+    expect(parsed?.resultArtifacts).toEqual([
+      { ...artifact, graphTaskId: "result-node", graphWorkflowId },
+    ]);
+    expect(parsed?.resultGraphKeyEnv).toBe("LOOP_A2A_V2_RESULT_GRAPH_KEY");
+  }
+});
+
+test("orchestration config refuses result artifacts without a result graph key environment, with the exact migration", () => {
+  const graphWorkflowId = `supervisor-result-graph:v3:${"c".repeat(64)}`;
+  expect(() =>
+    parseLoopOrchestrationConfig(
+      a2aV2([{ ...artifact, graphTaskId: "result-node", graphWorkflowId }], {})
+    )
+  ).toThrow(
+    "orchestration a2aV2 resultArtifacts requires resultGraphKeyEnv: name the environment variable holding the host's result graph HMAC key (at least 32 bytes), then compute each graphWorkflowId with `loop orchestration result-graph-id <config-path> <message-workflow-id>`"
+  );
+  // A V2 route that binds no results needs no key.
+  expect(
+    parseLoopOrchestrationConfig(a2aV2([], {})).a2aV2?.resultGraphKeyEnv
+  ).toBeUndefined();
+});
+
+test("orchestration config names the result graph key by environment variable only", () => {
+  for (const resultGraphKeyEnv of [
+    "an-inline-secret-value-that-must-not-be-configured",
+    "",
+    42,
+  ]) {
+    expect(() =>
+      parseLoopOrchestrationConfig(a2aV2([], { resultGraphKeyEnv }))
+    ).toThrow("orchestration a2aV2 resultGraphKeyEnv is invalid");
+  }
+});
+
+/** A config file on disk, as the server and the CLI tool read it. */
+const configFile = (value: unknown) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-orch-config-"));
+  const path = join(root, "orchestration.json");
+  writeFileSync(path, JSON.stringify(value));
+  return { path, remove: () => rmSync(root, { force: true, recursive: true }) };
+};
+
+test("result-graph-id computes the keyed id the server derives, from the configured key environment", () => {
+  const file = configFile(a2aV2([]));
+  const secret = randomBytes(32).toString("hex");
+  try {
+    const scope = { principal: "principal:harness", tenantId: "tenant:local" };
+    const message = deriveSupervisorMessageV2WorkflowId(scope, "cli-proof");
+    const computed = resultGraphWorkflowIdForConfig(file.path, message, {
+      LOOP_A2A_V2_RESULT_GRAPH_KEY: secret,
+    });
+    expect(computed).toBe(
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        SupervisorResultGraphKey.fromSecret(secret),
+        scope,
+        message
+      )
+    );
+    expect(computed).not.toContain(secret);
+    expect(() =>
+      resultGraphWorkflowIdForConfig(file.path, message, {})
+    ).toThrow(
+      "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY"
+    );
+    try {
+      resultGraphWorkflowIdForConfig(file.path, message, {
+        LOOP_A2A_V2_RESULT_GRAPH_KEY: "short-throwaway",
+      });
+      throw new Error("a short key was accepted");
+    } catch (error) {
+      expect(String(error)).toContain(
+        "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY must hold at least 32 bytes"
+      );
+      expect(String(error)).not.toContain("short-throwaway");
+    }
+    expect(() =>
+      resultGraphWorkflowIdForConfig(file.path, "task-graph:any", {
+        LOOP_A2A_V2_RESULT_GRAPH_KEY: secret,
+      })
+    ).toThrow();
+  } finally {
+    file.remove();
+  }
+  const keyless = configFile(a2aV2([], {}));
+  try {
+    expect(() =>
+      resultGraphWorkflowIdForConfig(
+        keyless.path,
+        deriveSupervisorMessageV2WorkflowId(
+          { principal: "principal:harness", tenantId: "tenant:local" },
+          "cli-proof"
+        ),
+        {}
+      )
+    ).toThrow("orchestration a2aV2 has no resultGraphKeyEnv");
+  } finally {
+    keyless.remove();
+  }
+  const v1Only = configFile(config());
+  try {
+    expect(() =>
+      resultGraphWorkflowIdForConfig(
+        v1Only.path,
+        deriveSupervisorMessageV2WorkflowId(
+          { principal: "principal:harness", tenantId: "tenant:local" },
+          "cli-proof"
+        ),
+        {}
+      )
+    ).toThrow("orchestration config has no a2aV2 route");
+  } finally {
+    v1Only.remove();
+  }
+});
+
+test("the server refuses to start when the configured result graph key environment is absent or short, naming only the variable", async () => {
+  // A port nothing listens on: the refusal must come before any connection.
+  const file = configFile({ ...a2aV2([]), address: "127.0.0.1:9" });
+  const env = {
+    LOOP_A2A_V2_DATABASE_URL: "postgres://unused.invalid/none",
+    LOOP_HARNESS_ORCHESTRATION_TOKEN: randomBytes(16).toString("hex"),
+  };
+  try {
+    await expect(runLoopOrchestrationServer(file.path, env)).rejects.toThrow(
+      "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY"
+    );
+    const short = "short-throwaway-key";
+    const failure = await runLoopOrchestrationServer(file.path, {
+      ...env,
+      LOOP_A2A_V2_RESULT_GRAPH_KEY: short,
+    }).then(
+      () => "started",
+      (error: unknown) => String(error)
+    );
+    expect(failure).toContain(
+      "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY must hold at least 32 bytes"
+    );
+    expect(failure).not.toContain(short);
+  } finally {
+    file.remove();
+  }
 });
 
 const a2aConfig = (): A2AV2Config => ({

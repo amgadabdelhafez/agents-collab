@@ -41,7 +41,12 @@ import {
   type SupervisorMessageGovernedOperation,
 } from "./supervisor-message-governance";
 import { SupervisorMessageV2BridgeDeliveryPort } from "./supervisor-message-v2-bridge-delivery";
-import { SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE } from "./supervisor-message-v2-contract";
+import {
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
+  SUPERVISOR_MESSAGE_V2_LEGACY_RESULT_GRAPH_WORKFLOW_ID_RE,
+  SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE,
+  SupervisorResultGraphKey,
+} from "./supervisor-message-v2-contract";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
   SupervisorControlSurfaceAuthenticator,
@@ -129,6 +134,12 @@ export interface A2AV2Config {
   principal: string;
   recipient: string;
   resultArtifacts?: GitResultArtifactBinding[];
+  /**
+   * Name of the environment variable holding the host secret that keys
+   * result graph ids (HMAC-SHA256, at least 32 bytes). Never the secret
+   * itself. Required when `resultArtifacts` has entries.
+   */
+  resultGraphKeyEnv?: string;
   routePath: string;
   sessionTtlMs: number;
   tenant: string;
@@ -192,6 +203,7 @@ export interface LoopOrchestrationFetchHandlerOptions {
     | "pathnames"
     | "recipientRoute"
     | "assignmentRoute"
+    | "resultGraphRoute"
   >;
   authenticator: SupervisorControlSurfaceAuthenticator;
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
@@ -235,6 +247,10 @@ export const createLoopOrchestrationFetchHandler = (
     const assignment = options.a2aV2Service?.assignmentRoute;
     if (assignment && url.pathname === assignment.pathname) {
       return assignment.httpHandler(request);
+    }
+    const resultGraph = options.a2aV2Service?.resultGraphRoute;
+    if (resultGraph && url.pathname === resultGraph.pathname) {
+      return resultGraph.httpHandler(request);
     }
     return v1Handler(request);
   };
@@ -285,9 +301,11 @@ const RETIRED_RESULT_ARTIFACT_KEYS = "artifactRef,commit,path,repositoryRoot";
  * for any graph task's acceptance receipt. That shape is refused at startup
  * with the exact fix rather than accepted: accepting it would restore the
  * defect. Each entry now also names the one graph task it is evidence for,
- * and the graph must be a message-derived result graph
- * (`deriveSupervisorMessageV2ResultGraphWorkflowId(scope, messageWorkflowId)`),
- * since no other graph can ever be bound.
+ * and the graph must be a message-derived result graph, since no other graph
+ * can ever be bound: the keyed id
+ * (`deriveSupervisorMessageV2ResultGraphWorkflowId(key, scope, message)`,
+ * computed with `loop orchestration result-graph-id`), or the unkeyed v2 id
+ * of a binding recorded before the key existed.
  */
 const assertCurrentResultArtifactShape = (
   entry: unknown,
@@ -299,17 +317,20 @@ const assertCurrentResultArtifactShape = (
   }
   if (Object.keys(entry).sort().join(",") === RETIRED_RESULT_ARTIFACT_KEYS) {
     throw new Error(
-      `${label} uses the retired shape {artifactRef, commit, path, repositoryRoot}: add graphWorkflowId and graphTaskId naming the one graph task this artifact is evidence for (graphWorkflowId is the message-derived result graph, supervisor-result-graph:v2:<sha256>)`
+      `${label} uses the retired shape {artifactRef, commit, path, repositoryRoot}: add graphWorkflowId and graphTaskId naming the one graph task this artifact is evidence for (graphWorkflowId is the message-derived result graph, supervisor-result-graph:v3:<hmac-sha256>, from \`loop orchestration result-graph-id\`)`
     );
   }
   if (
     typeof entry.graphWorkflowId === "string" &&
     !SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE.test(
       entry.graphWorkflowId
+    ) &&
+    !SUPERVISOR_MESSAGE_V2_LEGACY_RESULT_GRAPH_WORKFLOW_ID_RE.test(
+      entry.graphWorkflowId
     )
   ) {
     throw new Error(
-      `${label} graphWorkflowId is not a message-derived result graph (supervisor-result-graph:v2:<sha256>), so no result could ever bind to it`
+      `${label} graphWorkflowId is not a message-derived result graph (supervisor-result-graph:v3:<hmac-sha256>, from \`loop orchestration result-graph-id\`), so no result could ever bind to it`
     );
   }
 };
@@ -336,6 +357,7 @@ const parseA2AV2 = (
       "sessionTtlMs",
       "tenant",
       ...(value.resultArtifacts === undefined ? [] : ["resultArtifacts"]),
+      ...(value.resultGraphKeyEnv === undefined ? [] : ["resultGraphKeyEnv"]),
     ],
     "orchestration a2aV2"
   );
@@ -413,7 +435,25 @@ const parseA2AV2 = (
   if (!recipientBinding?.manifestPath) {
     throw new Error("orchestration a2aV2 recipient is not a Loop binding");
   }
+  const resultGraphKeyEnv =
+    value.resultGraphKeyEnv === undefined
+      ? undefined
+      : required(
+          value.resultGraphKeyEnv,
+          TOKEN_ENV_RE,
+          "orchestration a2aV2 resultGraphKeyEnv"
+        );
+  if (
+    Array.isArray(value.resultArtifacts) &&
+    value.resultArtifacts.length > 0 &&
+    !resultGraphKeyEnv
+  ) {
+    throw new Error(
+      "orchestration a2aV2 resultArtifacts requires resultGraphKeyEnv: name the environment variable holding the host's result graph HMAC key (at least 32 bytes), then compute each graphWorkflowId with `loop orchestration result-graph-id <config-path> <message-workflow-id>`"
+    );
+  }
   return {
+    ...(resultGraphKeyEnv ? { resultGraphKeyEnv } : {}),
     resultArtifacts: (() => {
       if (value.resultArtifacts === undefined) {
         return undefined;
@@ -474,6 +514,32 @@ const required = (value: unknown, pattern: RegExp, label: string): string => {
     throw new Error(`${label} is invalid`);
   }
   return value;
+};
+
+/**
+ * The host secret keying result graph ids, read from the operator-named
+ * environment variable. Errors name the variable, never its value.
+ */
+const resolveResultGraphKey = (
+  config: A2AV2Config,
+  env: NodeJS.ProcessEnv
+): SupervisorResultGraphKey | undefined => {
+  if (!config.resultGraphKeyEnv) {
+    return undefined;
+  }
+  const secret = env[config.resultGraphKeyEnv];
+  if (!secret) {
+    throw new Error(
+      `missing orchestration A2A V2 result graph key environment ${config.resultGraphKeyEnv}`
+    );
+  }
+  try {
+    return SupervisorResultGraphKey.fromSecret(secret);
+  } catch {
+    throw new Error(
+      `orchestration A2A V2 result graph key environment ${config.resultGraphKeyEnv} must hold at least 32 bytes`
+    );
+  }
 };
 
 const readConfigFile = (path: string): unknown => {
@@ -1143,6 +1209,11 @@ const createDefaultRuntimeHost = async (input: {
       pathname: `${a2aConfig.routePath}/assignment`,
       principal: a2aConfig.principal,
     },
+    resultGraphKey: resolveResultGraphKey(a2aConfig, input.env),
+    resultGraphRoute: {
+      pathname: `${a2aConfig.routePath}/result-graph`,
+      principal: a2aConfig.principal,
+    },
     // The same operator-configured entries name the graph tasks this host's
     // tenant may bind results to.
     resultGraphTasks: a2aConfig.resultArtifacts?.map((entry) => ({
@@ -1264,6 +1335,35 @@ const validateConfiguredRuntimeEnvironment = (
       `missing orchestration A2A V2 database environment ${config.a2aV2.databaseUrlEnv}`
     );
   }
+  if (config.a2aV2) {
+    resolveResultGraphKey(config.a2aV2, env);
+  }
+};
+
+/**
+ * The operator tool behind `loop orchestration result-graph-id`: the keyed
+ * result graph id this config's server derives for one message of its route
+ * tenant and control principal, for a `resultArtifacts` entry. It reads the
+ * key from the configured environment variable and prints only the id.
+ */
+export const resultGraphWorkflowIdForConfig = (
+  configPath: string,
+  messageWorkflowId: string,
+  env: NodeJS.ProcessEnv = process.env
+): string => {
+  const config = parseLoopOrchestrationConfig(readConfigFile(configPath));
+  if (!config.a2aV2) {
+    throw new Error("orchestration config has no a2aV2 route");
+  }
+  const key = resolveResultGraphKey(config.a2aV2, env);
+  if (!key) {
+    throw new Error("orchestration a2aV2 has no resultGraphKeyEnv");
+  }
+  return deriveSupervisorMessageV2ResultGraphWorkflowId(
+    key,
+    { principal: config.a2aV2.principal, tenantId: config.a2aV2.tenant },
+    messageWorkflowId
+  );
 };
 
 export const runLoopOrchestrationServer = async (

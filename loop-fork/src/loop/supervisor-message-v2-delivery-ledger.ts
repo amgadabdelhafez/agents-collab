@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import {
+  deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
@@ -9,6 +10,7 @@ import {
   SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
+  type SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
 } from "./supervisor-message-v2-contract";
 import {
@@ -20,6 +22,20 @@ import {
 const DISPATCH_OWNER = /^v2-dispatcher:[A-Za-z0-9._:-]{1,255}$/;
 const POSTGRES_URL = /^postgres(?:ql)?:\/\//i;
 const RESULT_REFERENCE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
+/** Recorded once the pre-reservation binding scan has run on a database. */
+const RESULT_GRAPH_TASK_BACKFILL_MARKER = "result-graph-task-backfill.v1";
+
+/** A recorded binding that will never publish, by ids only. */
+export interface SupervisorMessageV2UnpublishableResultBinding {
+  a2aTaskId: string;
+  graphTaskId: string | null;
+  graphWorkflowId: string | null;
+  messageWorkflowId: string;
+  /** body-chosen-graph: recorded before graphs were derived from the
+   * message; malformed: the stored binding cannot be read. */
+  reason: "body-chosen-graph" | "malformed";
+  tenantId: string;
+}
 
 const canonical = (value: unknown): string =>
   JSON.stringify(value, (_key, entry) =>
@@ -70,18 +86,28 @@ const parseStoredBinding = (
     : undefined;
 };
 
-/** The message-derived result graph, or undefined for an id that is not a V2
- * message workflow id (which then matches no binding). */
-const derivedResultGraph = (
-  scope: TrustedSupervisorMessageV2Scope,
-  workflowId: string
-): string | undefined => {
+/** Undefined for an id that is not a V2 message workflow id (which then
+ * matches no binding). */
+const attempt = (derive: () => string): string | undefined => {
   try {
-    return deriveSupervisorMessageV2ResultGraphWorkflowId(scope, workflowId);
+    return derive();
   } catch {
     return undefined;
   }
 };
+
+/** The retired unkeyed v2 graph of a message: accepted only for bindings
+ * recorded before the key existed. */
+const legacyResultGraph = (
+  scope: TrustedSupervisorMessageV2Scope,
+  workflowId: string
+): string | undefined =>
+  attempt(() =>
+    deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId(
+      scope,
+      workflowId
+    )
+  );
 
 /**
  * `receivedAt` records the first accepted ingress event and is retained as
@@ -116,24 +142,62 @@ const parseDispatchOwner = (owner: string): string => {
 };
 
 /** Private, reopenable ledger for canonical V2 delivery identities. */
+export interface PostgresSupervisorMessageV2DeliveryLedgerOptions {
+  /** The host secret keying result graph ids. Without it nothing can be
+   * bound, and only bindings recorded under the unkeyed v2 id publish. */
+  resultGraphKey?: SupervisorResultGraphKey;
+}
+
 export class PostgresSupervisorMessageV2DeliveryLedger
   implements SupervisorMessageV2DeliveryLedger
 {
   readonly #sql: SQL;
+  readonly #resultGraphKey: SupervisorResultGraphKey | undefined;
 
-  private constructor(sql: SQL) {
+  private constructor(sql: SQL, resultGraphKey?: SupervisorResultGraphKey) {
     this.#sql = sql;
+    this.#resultGraphKey = resultGraphKey;
   }
 
   static async connect(
-    databaseUrl: string
+    databaseUrl: string,
+    options: PostgresSupervisorMessageV2DeliveryLedgerOptions = {}
   ): Promise<PostgresSupervisorMessageV2DeliveryLedger> {
     if (!POSTGRES_URL.test(databaseUrl)) {
       throw new Error("V2 delivery ledger needs an explicit PostgreSQL URL");
     }
     const sql = new SQL(databaseUrl);
     await sql.connect();
-    return new PostgresSupervisorMessageV2DeliveryLedger(sql);
+    return new PostgresSupervisorMessageV2DeliveryLedger(
+      sql,
+      options.resultGraphKey
+    );
+  }
+
+  /** The keyed graph of a message, or undefined without the key. */
+  #keyedResultGraph(
+    scope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): string | undefined {
+    const key = this.#resultGraphKey;
+    return key
+      ? attempt(() =>
+          deriveSupervisorMessageV2ResultGraphWorkflowId(key, scope, workflowId)
+        )
+      : undefined;
+  }
+
+  /** True when `graphWorkflowId` is derived from this message: the keyed id,
+   * or the unkeyed v2 id a binding recorded before the key may still name. */
+  #isDerivedResultGraph(
+    scope: TrustedSupervisorMessageV2Scope,
+    workflowId: string,
+    graphWorkflowId: string
+  ): boolean {
+    return (
+      graphWorkflowId === this.#keyedResultGraph(scope, workflowId) ||
+      graphWorkflowId === legacyResultGraph(scope, workflowId)
+    );
   }
 
   async migrate(): Promise<void> {
@@ -160,6 +224,20 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       tenant_id TEXT NOT NULL, a2a_task_id TEXT NOT NULL,
       PRIMARY KEY (graph_workflow_id, graph_task_id)
     )`;
+    await this
+      .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_schema_marker (
+      name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
+    // Bindings that will never publish, recorded by the one-time scan below
+    // and cleared when the message is re-bound to its derived graph.
+    await this
+      .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_unpublishable_result_binding (
+      workflow_id TEXT NOT NULL, a2a_task_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('body-chosen-graph', 'malformed')),
+      graph_workflow_id TEXT, graph_task_id TEXT,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (workflow_id, a2a_task_id)
+    )`;
     await this.#backfillResultGraphTasks();
     // Additive terminal marker on the start intent. NULL means no terminal
     // outcome was observed; a value closes the workflow for recovery, sender
@@ -171,53 +249,103 @@ export class PostgresSupervisorMessageV2DeliveryLedger
   }
 
   /**
-   * Bindings recorded before reservations existed. A binding whose graph is
-   * the one derived from its own message is reserved, in a stable order, so
-   * the first such binding keeps it. Any other binding named a graph the
-   * request body chose: it is not reserved, `resultBinding` never returns
-   * it, and `bindResult` lets that message be re-bound to its derived graph.
-   * Malformed rows are skipped rather than stopping the host. Rows are parsed
-   * here rather than with JSON operators because bindings are stored as JSON
-   * strings (see `storedJson`).
+   * Bindings recorded before reservations existed, scanned once per schema
+   * version: a marker row records the scan in the same transaction. Every
+   * binding written since is reserved by `bindResult` itself, so a later
+   * start never rescans the table. Only a binary older than 2b1b1893 could
+   * add an unreserved row afterwards; such a row is not picked up.
+   *
+   * A binding whose graph is the unkeyed v2 graph derived from its own
+   * message is reserved, in a stable order, so the first such binding keeps
+   * it. Any other binding named a graph the request body chose, or cannot be
+   * read: it is not reserved, `resultBinding` never returns it, and it is
+   * recorded as unpublishable (ids only) so the host can report it.
+   * `bindResult` lets that message be re-bound to its keyed graph. Rows are
+   * parsed here rather than with JSON operators because bindings are stored
+   * as JSON strings (see `storedJson`).
    */
   async #backfillResultGraphTasks(): Promise<void> {
+    await this.#sql.begin(async (sql) => {
+      const done = await sql<
+        { name: string }[]
+      >`SELECT name FROM loop_supervisor_message_v2_schema_marker WHERE name = ${RESULT_GRAPH_TASK_BACKFILL_MARKER}`;
+      if (done[0]) {
+        return;
+      }
+      const rows = await sql<
+        {
+          a2a_task_id: string;
+          binding_json: unknown;
+          principal: string;
+          tenant_id: string;
+          workflow_id: string;
+        }[]
+      >`SELECT workflow_id, a2a_task_id, tenant_id, principal, binding_json
+        FROM loop_supervisor_message_v2_result_binding
+        ORDER BY tenant_id, a2a_task_id, workflow_id`;
+      for (const row of rows) {
+        const binding = parseStoredBinding(
+          storedJson(row.binding_json),
+          row.workflow_id,
+          row.a2a_task_id
+        );
+        if (
+          binding &&
+          binding.graphWorkflowId ===
+            legacyResultGraph(
+              { tenantId: row.tenant_id, principal: row.principal },
+              row.workflow_id
+            )
+        ) {
+          await sql`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
+            VALUES (${binding.graphWorkflowId}, ${binding.graphTaskId}, ${row.tenant_id}, ${row.a2a_task_id})
+            ON CONFLICT DO NOTHING`;
+          continue;
+        }
+        // No keyed binding can be here: migrate records the marker before
+        // this code ever binds, so every other row predates the key.
+        await sql`INSERT INTO loop_supervisor_message_v2_unpublishable_result_binding (workflow_id, a2a_task_id, tenant_id, reason, graph_workflow_id, graph_task_id)
+          VALUES (${row.workflow_id}, ${row.a2a_task_id}, ${row.tenant_id}, ${binding ? "body-chosen-graph" : "malformed"},
+            ${binding?.graphWorkflowId ?? null}, ${binding?.graphTaskId ?? null})
+          ON CONFLICT (workflow_id, a2a_task_id) DO NOTHING`;
+      }
+      await sql`INSERT INTO loop_supervisor_message_v2_schema_marker (name) VALUES (${RESULT_GRAPH_TASK_BACKFILL_MARKER})
+        ON CONFLICT (name) DO NOTHING`;
+    });
+  }
+
+  /** Recorded bindings that will never publish. Pass a tenant to list only
+   * that tenant's. Ids only: no message body, no secret. */
+  async unpublishableResultBindings(
+    tenantId?: string
+  ): Promise<SupervisorMessageV2UnpublishableResultBinding[]> {
     const rows = await this.#sql<
       {
         a2a_task_id: string;
-        binding_json: unknown;
-        principal: string;
+        graph_task_id: string | null;
+        graph_workflow_id: string | null;
+        reason: SupervisorMessageV2UnpublishableResultBinding["reason"];
         tenant_id: string;
         workflow_id: string;
       }[]
-    >`SELECT workflow_id, a2a_task_id, tenant_id, principal, binding_json
-      FROM loop_supervisor_message_v2_result_binding
+    >`SELECT workflow_id, a2a_task_id, tenant_id, reason, graph_workflow_id, graph_task_id
+      FROM loop_supervisor_message_v2_unpublishable_result_binding
+      WHERE ${tenantId ?? null}::text IS NULL OR tenant_id = ${tenantId ?? null}
       ORDER BY tenant_id, a2a_task_id, workflow_id`;
-    for (const row of rows) {
-      const binding = parseStoredBinding(
-        storedJson(row.binding_json),
-        row.workflow_id,
-        row.a2a_task_id
-      );
-      if (
-        !binding ||
-        binding.graphWorkflowId !==
-          derivedResultGraph(
-            { tenantId: row.tenant_id, principal: row.principal },
-            row.workflow_id
-          )
-      ) {
-        continue;
-      }
-      await this
-        .#sql`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
-        VALUES (${binding.graphWorkflowId}, ${binding.graphTaskId}, ${row.tenant_id}, ${row.a2a_task_id})
-        ON CONFLICT DO NOTHING`;
-    }
+    return rows.map((row) => ({
+      a2aTaskId: row.a2a_task_id,
+      graphTaskId: row.graph_task_id,
+      graphWorkflowId: row.graph_workflow_id,
+      messageWorkflowId: row.workflow_id,
+      reason: row.reason,
+      tenantId: row.tenant_id,
+    }));
   }
 
   /**
-   * Immutable assignment. The graph must be the one derived from the
-   * message's own scoped identity; a body-named graph that differs is
+   * Immutable assignment. The graph must be the one derived, under this
+   * host's result graph key, from the message's own scoped identity; a
+   * body-named graph that differs (including the retired unkeyed v2 id) is
    * refused here as well as by the host. This ledger reserves the graph task
    * for this one A2A task, in the same transaction as the binding, so a
    * refused bind leaves nothing reserved.
@@ -246,9 +374,14 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     ) {
       throw new Error("Invalid result binding");
     }
+    if (!this.#resultGraphKey) {
+      throw new Error("Result graph key is not configured");
+    }
     await this.assertStartIntent(binding.messageWorkflowId, scope);
-    const derived = derivedResultGraph(scope, binding.messageWorkflowId);
-    if (binding.graphWorkflowId !== derived) {
+    if (
+      binding.graphWorkflowId !==
+      this.#keyedResultGraph(scope, binding.messageWorkflowId)
+    ) {
       throw new Error("Result graph is not derived from this message");
     }
     const assigned = await this.recipientAssignment({
@@ -307,21 +440,31 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       if (stored && canonical(stored) === canonical(binding)) {
         return;
       }
-      // A derived binding is immutable. Throwing also rolls back a
-      // reservation this call just made.
-      if (stored?.graphWorkflowId === derived) {
+      // A derived binding, keyed or recorded under the unkeyed v2 id, is
+      // immutable. Throwing also rolls back a reservation this call just made.
+      if (
+        stored &&
+        this.#isDerivedResultGraph(
+          scope,
+          binding.messageWorkflowId,
+          stored.graphWorkflowId
+        )
+      ) {
         throw new Error("Result binding conflicts with prior assignment");
       }
       // A binding recorded before graphs were derived from the message named
-      // a graph the request body chose. It was never publishable, so the
-      // message's derived graph replaces it.
+      // a graph the request body chose (or cannot be read). It was never
+      // publishable, so the message's derived graph replaces it.
       await sql`UPDATE loop_supervisor_message_v2_result_binding SET binding_json = ${canonical(binding)}::jsonb
         WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
+      await sql`DELETE FROM loop_supervisor_message_v2_unpublishable_result_binding
+        WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId}`;
     });
   }
 
-  /** The binding to publish, only while its graph is the one derived from
-   * the message and it still holds that graph task's reservation. */
+  /** The binding to publish, only while its graph is derived from the
+   * message (the keyed id, or the unkeyed v2 id of a binding recorded before
+   * the key) and it still holds that graph task's reservation. */
   async resultBinding(
     scope: TrustedSupervisorMessageV2Scope,
     workflowId: string,
@@ -342,7 +485,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     if (!value) {
       throw new Error("Stored result binding is invalid");
     }
-    if (value.graphWorkflowId !== derivedResultGraph(scope, workflowId)) {
+    if (!this.#isDerivedResultGraph(scope, workflowId, value.graphWorkflowId)) {
       return undefined;
     }
     const reserved = await this.#sql<

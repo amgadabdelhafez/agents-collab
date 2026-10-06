@@ -4,7 +4,10 @@ import {
   PostgresA2ATaskStore,
   type PostgresA2ATaskStoreOptions,
 } from "./a2a-postgres-task-store";
-import { createSupervisorA2AAssignmentHttpHandler } from "./a2a-supervisor-assignment-http";
+import {
+  createSupervisorA2AAssignmentHttpHandler,
+  createSupervisorA2AResultGraphStartHttpHandler,
+} from "./a2a-supervisor-assignment-http";
 import { WORKFLOW_IDS_METADATA_KEY } from "./a2a-supervisor-executor";
 import {
   createSupervisorA2AHttpHandler,
@@ -22,9 +25,13 @@ import {
 } from "./a2a-supervisor-v2-ingress";
 import {
   deriveSupervisorMessageV2ResultGraphWorkflowId,
+  type SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
 } from "./supervisor-message-v2-contract";
-import { PostgresSupervisorMessageV2DeliveryLedger } from "./supervisor-message-v2-delivery-ledger";
+import {
+  PostgresSupervisorMessageV2DeliveryLedger,
+  type PostgresSupervisorMessageV2DeliveryLedgerOptions,
+} from "./supervisor-message-v2-delivery-ledger";
 import {
   GovernedSupervisorMessageV2Service,
   PostgresSupervisorMessageV2GovernanceReceiptStore,
@@ -44,12 +51,17 @@ import {
   type SupervisorSessionRebindAuthorityPort,
 } from "./supervisor-session-v2";
 import { SupervisorSessionV2DagAdapter } from "./supervisor-session-v2-dag-adapter";
+import { TASK_GRAPH_WORKFLOW_TYPE } from "./task-graph-workflow";
 import {
   TemporalSupervisorRuntimeHost,
   type TemporalSupervisorRuntimeOptions,
 } from "./temporal-supervisor-runtime";
 import { TemporalWorkflowPort } from "./temporal-workflow-port";
-import type { WorkflowPort } from "./workflow-port";
+import type {
+  JsonObject,
+  WorkflowPort,
+  WorkflowStartReceipt,
+} from "./workflow-port";
 
 const PEER_SUPERVISOR_ID = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 /** Terminal A2A states in which a task can never accept a result, so the
@@ -81,6 +93,7 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   bindResult?: PostgresSupervisorMessageV2DeliveryLedger["bindResult"];
   resultBinding?: PostgresSupervisorMessageV2DeliveryLedger["resultBinding"];
   recipientAssignment?: PostgresSupervisorMessageV2DeliveryLedger["recipientAssignment"];
+  unpublishableResultBindings?: PostgresSupervisorMessageV2DeliveryLedger["unpublishableResultBindings"];
   close(): Promise<void>;
   migrate(): Promise<void>;
 };
@@ -102,7 +115,10 @@ type SessionResource = Pick<
  * Temporal constructors below.
  */
 export interface SupervisorA2AV2ServiceDependencies {
-  connectLedger(databaseUrl: string): Promise<LedgerResource>;
+  connectLedger(
+    databaseUrl: string,
+    options: PostgresSupervisorMessageV2DeliveryLedgerOptions
+  ): Promise<LedgerResource>;
   connectSessions(input: {
     authority: SupervisorSessionRebindAuthorityPort;
     databaseUrl: string;
@@ -119,8 +135,8 @@ export interface SupervisorA2AV2ServiceDependencies {
 }
 
 const defaultDependencies: SupervisorA2AV2ServiceDependencies = {
-  connectLedger: (databaseUrl) =>
-    PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl),
+  connectLedger: (databaseUrl, options) =>
+    PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
   connectSessions: (input) => PostgresSupervisorSessionV2Store.connect(input),
   connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
   createHost: (options) => TemporalSupervisorRuntimeHost.create(options),
@@ -151,6 +167,9 @@ export interface SupervisorA2AV2ServiceOptions {
     TemporalSupervisorRuntimeOptions,
     "v2Ingress" | "v2Recovery" | "v2SessionGates" | "workflowPort"
   >;
+  /** Operator log for start-time findings. Lines carry ids, never secrets
+   * or connection strings. Defaults to standard error. */
+  log?: (line: string) => void;
   /** Explicit body-free policy boundary. Absence exposes no lifecycle authority. */
   messageAuthority?: SupervisorMessageV2AuthorityPort;
   now: () => string;
@@ -164,6 +183,14 @@ export interface SupervisorA2AV2ServiceOptions {
     principalForRecipient(recipient: string): string | undefined;
   };
   recoveryIntervalMs?: number;
+  /** The host secret keying result graph ids (read by the server from an
+   * operator-named environment variable). Absent, no result can be bound
+   * and no result graph can be started; bindings recorded under the unkeyed
+   * v2 id before the key still publish. */
+  resultGraphKey?: SupervisorResultGraphKey;
+  /** Authenticated control-principal route that starts a message's result
+   * graph under its keyed id. */
+  resultGraphRoute?: { pathname: string; principal: string };
   /** Host-owned allowlist of the graph tasks this host's single route tenant
    * may bind results to (the operator's result artifact configuration). It
    * narrows, and never widens, the rule that a message binds only to its own
@@ -224,6 +251,16 @@ export interface SupervisorA2AV2Service {
     scope: TrustedSupervisorMessageV2Scope,
     descriptor: SupervisorSessionDescriptorV2
   ): Promise<SupervisorSessionDescriptorV2>;
+  resultGraphRoute?: {
+    pathname: string;
+    httpHandler(request: Request): Promise<Response>;
+  };
+  /** Starts the one task graph this message's result may bind to, under the
+   * id derived from the message with the host's result graph key. */
+  startResultGraph(
+    scope: TrustedSupervisorMessageV2Scope,
+    command: { input: JsonObject; messageWorkflowId: string; requestId: string }
+  ): Promise<{ graphWorkflowId: string; receipt: WorkflowStartReceipt }>;
 }
 
 const closeQuietly = async (
@@ -255,9 +292,11 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly assignmentRoute: SupervisorA2AV2Service["assignmentRoute"];
   readonly #workflows: WorkflowPort;
   readonly #now: () => string;
+  readonly #resultGraphKey: SupervisorResultGraphKey | undefined;
   readonly #resultGraphTasks: readonly SupervisorA2AResultArtifactTarget[];
   readonly #verifyResultArtifact: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
   readonly recipientRoute: SupervisorA2AV2Service["recipientRoute"];
+  readonly resultGraphRoute: SupervisorA2AV2Service["resultGraphRoute"];
   readonly governance: GovernedSupervisorMessageV2Service | undefined;
   readonly #receipts:
     | PostgresSupervisorMessageV2GovernanceReceiptStore
@@ -275,6 +314,8 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
     workflows: WorkflowPort;
     now: () => string;
+    resultGraphKey?: SupervisorResultGraphKey;
+    resultGraphRoute?: SupervisorA2AV2Service["resultGraphRoute"];
     resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
     verifyResultArtifact?: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
     recipientRoute?: SupervisorA2AV2Service["recipientRoute"];
@@ -291,6 +332,8 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.assignmentRoute = input.assignmentRoute;
     this.#workflows = input.workflows;
     this.#now = input.now;
+    this.#resultGraphKey = input.resultGraphKey;
+    this.resultGraphRoute = input.resultGraphRoute;
     this.#resultGraphTasks = (input.resultGraphTasks ?? []).map((target) => ({
       graphWorkflowId: target.graphWorkflowId,
       graphTaskId: target.graphTaskId,
@@ -322,6 +365,10 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     if (!this.#ledger.bindResult) {
       throw new Error("Durable result binding is unavailable");
     }
+    const key = this.#resultGraphKey;
+    if (!key) {
+      throw new Error("Result graph key is not configured");
+    }
     const context = new ServerCallContext({
       tenant: scope.tenantId,
       user: { isAuthenticated: true, userName: scope.principal },
@@ -338,13 +385,14 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
       throw new Error("Result binding does not belong to the scoped A2A task");
     }
     // A task graph carries no tenant or message identity, so the body's graph
-    // is trusted only when it is the one derived from this message's scoped
-    // identity. It must also be one this host configured and hold this
-    // recipient's task; the ledger re-checks the derivation and reserves the
-    // graph task for this one A2A task.
+    // is trusted only when it is the one derived, under this host's key, from
+    // this message's scoped identity. It must also be one this host
+    // configured and hold this recipient's task; the ledger re-checks the
+    // derivation and reserves the graph task for this one A2A task.
     if (
       binding.graphWorkflowId !==
       deriveSupervisorMessageV2ResultGraphWorkflowId(
+        key,
         scope,
         binding.messageWorkflowId
       )
@@ -381,6 +429,30 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
         );
       },
     });
+  }
+
+  async startResultGraph(
+    scope: TrustedSupervisorMessageV2Scope,
+    command: { input: JsonObject; messageWorkflowId: string; requestId: string }
+  ): Promise<{ graphWorkflowId: string; receipt: WorkflowStartReceipt }> {
+    const key = this.#resultGraphKey;
+    if (!key) {
+      throw new Error("Result graph key is not configured");
+    }
+    // Only a message recorded in this exact scope has a result graph here.
+    await this.#ledger.assertStartIntent(command.messageWorkflowId, scope);
+    const graphWorkflowId = deriveSupervisorMessageV2ResultGraphWorkflowId(
+      key,
+      scope,
+      command.messageWorkflowId
+    );
+    const receipt = await this.#workflows.start({
+      input: command.input,
+      requestId: command.requestId,
+      workflowId: graphWorkflowId,
+      workflowType: TASK_GRAPH_WORKFLOW_TYPE,
+    });
+    return { graphWorkflowId, receipt };
   }
 
   async publishResult(
@@ -458,6 +530,81 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
 }
 
 /**
+ * Recorded bindings that will never publish (a graph the request body chose
+ * before graphs were derived, or an unreadable row), reported at every start,
+ * one line each with ids only, until each message is re-bound.
+ */
+const reportUnpublishableResultBindings = async (
+  ledger: LedgerResource,
+  log: (line: string) => void = (line) => console.error(line)
+): Promise<void> => {
+  for (const entry of (await ledger.unpublishableResultBindings?.()) ?? []) {
+    log(
+      `A2A V2 result binding will never publish (${entry.reason}): tenant ${entry.tenantId} message ${entry.messageWorkflowId} A2A task ${entry.a2aTaskId}; re-bind it to its message-derived result graph`
+    );
+  }
+};
+
+const createAssignmentRoute = (
+  options: SupervisorA2AV2ServiceOptions,
+  ledger: LedgerResource,
+  bind: SupervisorA2AV2Service["bindResult"]
+): SupervisorA2AV2Service["assignmentRoute"] => {
+  if (!options.assignmentRoute) {
+    return undefined;
+  }
+  if (
+    [
+      options.route.pathname ?? "/a2a",
+      options.recipientRoute?.pathname,
+      "/healthz",
+    ].includes(options.assignmentRoute.pathname)
+  ) {
+    throw new Error("Assignment route path collides");
+  }
+  const list = ledger.unpublishableResultBindings?.bind(ledger);
+  return {
+    pathname: options.assignmentRoute.pathname,
+    httpHandler: createSupervisorA2AAssignmentHttpHandler({
+      ...options.assignmentRoute,
+      authenticator: options.route.authenticator,
+      tenant: options.route.tenant,
+      bind,
+      // The inspection surface lists only this route's tenant.
+      unpublishable: list ? (scope) => list(scope.tenantId) : undefined,
+    }),
+  };
+};
+
+const createResultGraphRoute = (
+  options: SupervisorA2AV2ServiceOptions,
+  start: SupervisorA2AV2Service["startResultGraph"]
+): SupervisorA2AV2Service["resultGraphRoute"] => {
+  if (!options.resultGraphRoute) {
+    return undefined;
+  }
+  if (
+    [
+      options.route.pathname ?? "/a2a",
+      options.recipientRoute?.pathname,
+      options.assignmentRoute?.pathname,
+      "/healthz",
+    ].includes(options.resultGraphRoute.pathname)
+  ) {
+    throw new Error("Result graph route path collides");
+  }
+  return {
+    pathname: options.resultGraphRoute.pathname,
+    httpHandler: createSupervisorA2AResultGraphStartHttpHandler({
+      ...options.resultGraphRoute,
+      authenticator: options.route.authenticator,
+      tenant: options.route.tenant,
+      start,
+    }),
+  };
+};
+
+/**
  * Construct the standard local V2 composition from the maintained A2A SDK,
  * PostgreSQL stores, and Temporal workflow port. No listener is published by
  * this function, so construction alone cannot make V2 traffic live.
@@ -479,8 +626,11 @@ export const createSupervisorA2AV2Service = async (
     });
     await taskStore.migrate();
     stage = "delivery-ledger";
-    ledger = await dependencies.connectLedger(options.databaseUrl);
+    ledger = await dependencies.connectLedger(options.databaseUrl, {
+      resultGraphKey: options.resultGraphKey,
+    });
     await ledger.migrate();
+    await reportUnpublishableResultBindings(ledger, options.log);
     stage = "session-store";
     sessions = await dependencies.connectSessions({
       authority: options.rebindAuthority,
@@ -562,6 +712,7 @@ export const createSupervisorA2AV2Service = async (
         "/healthz",
         options.recipientRoute?.pathname,
         options.assignmentRoute?.pathname,
+        options.resultGraphRoute?.pathname,
       ]);
       const peerIngress = new SupervisorA2AV2Ingress({
         card: {
@@ -599,27 +750,14 @@ export const createSupervisorA2AV2Service = async (
     };
     let recipientRoute: SupervisorA2AV2Service["recipientRoute"];
     let ownedService: OwnedSupervisorA2AV2Service;
-    let assignmentRoute: SupervisorA2AV2Service["assignmentRoute"];
-    if (options.assignmentRoute) {
-      if (
-        [
-          options.route.pathname ?? "/a2a",
-          options.recipientRoute?.pathname,
-          "/healthz",
-        ].includes(options.assignmentRoute.pathname)
-      ) {
-        throw new Error("Assignment route path collides");
-      }
-      assignmentRoute = {
-        pathname: options.assignmentRoute.pathname,
-        httpHandler: createSupervisorA2AAssignmentHttpHandler({
-          ...options.assignmentRoute,
-          authenticator: options.route.authenticator,
-          tenant: options.route.tenant,
-          bind: (scope, binding) => ownedService.bindResult(scope, binding),
-        }),
-      };
-    }
+    const assignmentRoute = createAssignmentRoute(
+      options,
+      ledger,
+      (scope, binding) => ownedService.bindResult(scope, binding)
+    );
+    const resultGraphRoute = createResultGraphRoute(options, (scope, command) =>
+      ownedService.startResultGraph(scope, command)
+    );
     if (options.recipientRoute) {
       if (
         !(governance && ledger.recipientAssignment) ||
@@ -653,6 +791,8 @@ export const createSupervisorA2AV2Service = async (
       assignmentRoute,
       workflows,
       now: options.now,
+      resultGraphKey: options.resultGraphKey,
+      resultGraphRoute,
       resultGraphTasks: options.resultGraphTasks,
       verifyResultArtifact: options.verifyResultArtifact,
       recipientRoute,

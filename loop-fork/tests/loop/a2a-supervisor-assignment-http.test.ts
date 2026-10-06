@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { createSupervisorA2AAssignmentHttpHandler } from "../../src/loop/a2a-supervisor-assignment-http";
+import {
+  createSupervisorA2AAssignmentHttpHandler,
+  createSupervisorA2AResultGraphStartHttpHandler,
+} from "../../src/loop/a2a-supervisor-assignment-http";
 
 const MiB = 1024 * 1024;
 
@@ -112,4 +115,228 @@ test("assignment route still accepts an in-limit binding", async () => {
   expect(bindings).toEqual([binding]);
   const padded = `${JSON.stringify(binding)}${" ".repeat(8192)}`;
   expect((await handler(post(padded))).status).toBe(413);
+});
+
+/** The control principal, and an authenticated caller that is not it. */
+const IDENTITIES: Record<
+  string,
+  { principal: string; supervisorId: string } | undefined
+> = {
+  "Bearer fixture": {
+    principal: "principal:control",
+    supervisorId: "supervisor:seat",
+  },
+  "Bearer other": {
+    principal: "principal:other",
+    supervisorId: "supervisor:x",
+  },
+};
+
+test("assignment route lists only what its service returns for the authenticated control principal's tenant, and refuses GET when it has no list", async () => {
+  const scopes: unknown[] = [];
+  const handler = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    pathname: "/assign",
+    principal: "principal:control",
+    tenant: "tenant:owned",
+    unpublishable: (scope) => {
+      scopes.push(scope);
+      return Promise.resolve([
+        {
+          a2aTaskId: "task:one",
+          graphTaskId: "node",
+          graphWorkflowId: "task-graph:chosen",
+          messageWorkflowId: "message:one",
+          reason: "body-chosen-graph" as const,
+          tenantId: "tenant:owned",
+        },
+      ]);
+    },
+  });
+  const get = (authorization?: string) =>
+    handler(
+      new Request("http://local/assign", {
+        headers: authorization ? { authorization } : {},
+      })
+    );
+  expect((await get()).status).toBe(401);
+  expect((await get("Bearer other")).status).toBe(403);
+  expect(scopes).toEqual([]);
+  const listed = await get("Bearer fixture");
+  expect(listed.status).toBe(200);
+  expect(listed.headers.get("cache-control")).toBe("no-store");
+  expect(await listed.json()).toEqual({
+    schema: "supervisor-result-assignment-status.v1",
+    unpublishable: [
+      {
+        a2aTaskId: "task:one",
+        graphTaskId: "node",
+        graphWorkflowId: "task-graph:chosen",
+        messageWorkflowId: "message:one",
+        reason: "body-chosen-graph",
+      },
+    ],
+  });
+  expect(scopes).toEqual([
+    { principal: "principal:control", tenantId: "tenant:owned" },
+  ]);
+  const { handler: postOnly } = createHandler();
+  expect(
+    (
+      await postOnly(
+        new Request("http://local/assign", {
+          headers: { authorization: "Bearer fixture" },
+        })
+      )
+    ).status
+  ).toBe(405);
+});
+
+const createStartHandler = (
+  start: Parameters<
+    typeof createSupervisorA2AResultGraphStartHttpHandler
+  >[0]["start"] = (_scope, command) =>
+    Promise.resolve({
+      graphWorkflowId: `derived-for:${command.messageWorkflowId}`,
+      receipt: {
+        created: true,
+        duplicate: false,
+        requestId: command.requestId,
+        revision: 1,
+        workflowId: `derived-for:${command.messageWorkflowId}`,
+        workflowType: "task-graph.v1",
+      } as never,
+    })
+) => {
+  const calls: unknown[] = [];
+  const handler = createSupervisorA2AResultGraphStartHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    pathname: "/result-graph",
+    principal: "principal:control",
+    tenant: "tenant:owned",
+    start: (scope, command) => {
+      calls.push({ scope, command });
+      return start(scope, command);
+    },
+  });
+  return { calls, handler };
+};
+
+const startRequest = (
+  body: unknown,
+  headers: Record<string, string> = { authorization: "Bearer fixture" },
+  path = "/result-graph",
+  method = "POST"
+) =>
+  new Request(`http://local${path}`, {
+    method,
+    headers: { "content-type": "application/json", ...headers },
+    ...(method === "POST"
+      ? { body: typeof body === "string" ? body : JSON.stringify(body) }
+      : {}),
+  });
+
+const startBody = {
+  input: { schema: "task-graph.v1", graphId: "g", nodes: [] },
+  messageWorkflowId: "message:one",
+  requestId: "start-one",
+};
+
+test("result graph route starts the message's graph for the authenticated control principal, never under a body-chosen id", async () => {
+  const { calls, handler } = createStartHandler();
+  const response = await handler(startRequest(startBody));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({
+    schema: "supervisor-result-graph-start-receipt.v1",
+    messageWorkflowId: "message:one",
+    graphWorkflowId: "derived-for:message:one",
+    created: true,
+  });
+  expect(calls).toEqual([
+    {
+      scope: { principal: "principal:control", tenantId: "tenant:owned" },
+      command: startBody,
+    },
+  ]);
+  // A body may not name the graph id, or anything else.
+  for (const invalid of [
+    { ...startBody, graphWorkflowId: "supervisor-result-graph:v3:chosen" },
+    { ...startBody, input: [] },
+    { ...startBody, messageWorkflowId: "" },
+    { ...startBody, requestId: "has space" },
+    { input: startBody.input, messageWorkflowId: "message:one" },
+    "not json",
+  ]) {
+    const refused = await handler(startRequest(invalid));
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({
+      code: "invalid-result-graph-start",
+    });
+  }
+  expect(calls).toHaveLength(1);
+});
+
+test("result graph route refuses unauthenticated, foreign-principal, wrong-method, wrong-path, non-JSON and oversized requests before starting anything", async () => {
+  const { calls, handler } = createStartHandler();
+  expect((await handler(startRequest(startBody, {}))).status).toBe(401);
+  expect(
+    (await handler(startRequest(startBody, { authorization: "Bearer other" })))
+      .status
+  ).toBe(403);
+  expect(
+    (
+      await handler(
+        startRequest(startBody, { authorization: "Bearer fixture" }, "/x")
+      )
+    ).status
+  ).toBe(404);
+  expect(
+    (
+      await handler(
+        startRequest(
+          startBody,
+          { authorization: "Bearer fixture" },
+          "/result-graph",
+          "GET"
+        )
+      )
+    ).status
+  ).toBe(405);
+  expect(
+    (
+      await handler(
+        startRequest(startBody, {
+          authorization: "Bearer fixture",
+          "content-type": "text/plain",
+        })
+      )
+    ).status
+  ).toBe(415);
+  const oversized = await handler(
+    startRequest({
+      ...startBody,
+      input: { ...startBody.input, pad: "x".repeat(64 * 1024) },
+    })
+  );
+  expect(oversized.status).toBe(413);
+  expect(calls).toEqual([]);
+});
+
+test("result graph route reports a refused start without its cause", async () => {
+  const { handler } = createStartHandler(() =>
+    Promise.reject(new Error("postgres://user:secret@host/db refused"))
+  );
+  const refused = await handler(startRequest(startBody));
+  expect(refused.status).toBe(409);
+  const text = await refused.text();
+  expect(JSON.parse(text)).toEqual({ code: "result-graph-start-refused" });
+  expect(text).not.toContain("secret");
 });

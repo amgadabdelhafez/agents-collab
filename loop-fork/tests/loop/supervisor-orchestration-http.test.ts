@@ -185,6 +185,28 @@ describe("authenticated orchestration HTTP surface", () => {
     expect(() => workflows.inspect("task-graph:invalid")).toThrow("not found");
   });
 
+  test("never starts a graph under a result graph id: only the message-driven route derives one", async () => {
+    const { handler, workflows } = setup();
+    for (const workflowId of [
+      `supervisor-result-graph:v3:${"c".repeat(64)}`,
+      `supervisor-result-graph:v2:${"c".repeat(64)}`,
+      "supervisor-result-graph:v9:anything",
+    ]) {
+      const refused = await handler(
+        request("/api/v1/task-graphs/start", {
+          input: graphInput(),
+          requestId: `squat-${workflowId.length}`,
+          workflowId,
+        })
+      );
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toEqual({
+        error: { code: "result-graph-id-reserved" },
+      });
+      expect(() => workflows.inspect(workflowId)).toThrow("not found");
+    }
+  });
+
   test("serves durable board, Attention, and knowledge snapshots with no-store", async () => {
     const { handler } = setup();
     for (const path of [
