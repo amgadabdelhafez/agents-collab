@@ -4,6 +4,7 @@ import {
   deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2Identity,
   deriveSupervisorMessageV2ReceiptId,
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   parseSupervisorMessageV2BoardItem,
   parseSupervisorMessageV2DeliveryEnvelope,
@@ -13,6 +14,7 @@ import {
   parseSupervisorMessageV2Projection,
   parseSupervisorMessageV2ReplayFixture,
   parseSupervisorMessageV2State,
+  SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE,
   type SupervisorMessageV2Projection,
   type SupervisorMessageV2State,
 } from "../../src/loop/supervisor-message-v2-contract";
@@ -377,6 +379,44 @@ describe("SupervisorMessage V2 tenant contract", () => {
     expect(local.receiptId).not.toBe(otherPrincipal.receiptId);
     expect(local.receiptId).not.toBe(otherClaimant.receiptId);
     expect(local.boardItemId).toMatch(/^supervisor-message-board-item:v2:/);
+  });
+
+  test("derives a message's result graph from its scoped identity alone", () => {
+    const scope = fixture.expectedScope;
+    const workflowId = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      fixture.input.dedupeKey
+    );
+    const graph = deriveSupervisorMessageV2ResultGraphWorkflowId(
+      scope,
+      workflowId
+    );
+    expect(graph).toMatch(SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE);
+    // Stable across calls: every host derives the same graph for a message.
+    expect(
+      deriveSupervisorMessageV2ResultGraphWorkflowId(scope, workflowId)
+    ).toBe(graph);
+    const otherMessage = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      "other-key"
+    );
+    for (const other of [
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        { ...scope, tenantId: "tenant:other" },
+        workflowId
+      ),
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        { ...scope, principal: "principal:other" },
+        workflowId
+      ),
+      deriveSupervisorMessageV2ResultGraphWorkflowId(scope, otherMessage),
+    ]) {
+      expect(other).not.toBe(graph);
+    }
+    // Only a V2 message workflow id has a result graph.
+    expect(() =>
+      deriveSupervisorMessageV2ResultGraphWorkflowId(scope, "task-graph:any")
+    ).toThrow();
   });
 
   test("parses only scope-bound V2 delivery, governance, receipt, and board contracts", () => {

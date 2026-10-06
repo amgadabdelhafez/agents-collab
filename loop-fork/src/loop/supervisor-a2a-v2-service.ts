@@ -1,3 +1,4 @@
+import { TaskState } from "@a2a-js/sdk";
 import { ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
 import {
   PostgresA2ATaskStore,
@@ -10,14 +11,19 @@ import {
   type SupervisorA2AAuthenticator,
 } from "./a2a-supervisor-http";
 import {
+  assertSupervisorA2AResultGraphTask,
   publishSupervisorA2AAcceptedResult,
+  type SupervisorA2AResultArtifactTarget,
   type SupervisorA2AResultBinding,
 } from "./a2a-supervisor-result";
 import {
   SupervisorA2AV2Ingress,
   type SupervisorA2AV2IngressOptions,
 } from "./a2a-supervisor-v2-ingress";
-import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
+import {
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
+  type TrustedSupervisorMessageV2Scope,
+} from "./supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "./supervisor-message-v2-delivery-ledger";
 import {
   GovernedSupervisorMessageV2Service,
@@ -46,6 +52,13 @@ import { TemporalWorkflowPort } from "./temporal-workflow-port";
 import type { WorkflowPort } from "./workflow-port";
 
 const PEER_SUPERVISOR_ID = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
+/** Terminal A2A states in which a task can never accept a result, so the
+ * graph task it reserved may pass to another A2A task. */
+const ENDED_WITHOUT_RESULT: readonly TaskState[] = [
+  TaskState.TASK_STATE_CANCELED,
+  TaskState.TASK_STATE_FAILED,
+  TaskState.TASK_STATE_REJECTED,
+];
 const validatePeerRoute = (
   peer: { pathname: string; supervisorId: string },
   reserved: readonly (string | undefined)[]
@@ -141,13 +154,22 @@ export interface SupervisorA2AV2ServiceOptions {
     principalForRecipient(recipient: string): string | undefined;
   };
   recoveryIntervalMs?: number;
+  /** Host-owned allowlist of the graph tasks this host's single route tenant
+   * may bind results to (the operator's result artifact configuration). It
+   * narrows, and never widens, the rule that a message binds only to its own
+   * message-derived graph. Absent, no result can be bound. */
+  resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
   route: {
     authenticator: SupervisorA2AAuthenticator;
     pathname?: string;
     tenant: string;
   };
   supervisorId: string;
-  verifyResultArtifact?(reference: string): Promise<boolean>;
+  /** True only when `reference` is verified evidence for exactly `target`. */
+  verifyResultArtifact?(
+    reference: string,
+    target: SupervisorA2AResultArtifactTarget
+  ): Promise<boolean>;
 }
 
 export interface SupervisorA2AV2Service {
@@ -217,6 +239,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly assignmentRoute: SupervisorA2AV2Service["assignmentRoute"];
   readonly #workflows: WorkflowPort;
   readonly #now: () => string;
+  readonly #resultGraphTasks: readonly SupervisorA2AResultArtifactTarget[];
   readonly #verifyResultArtifact: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
   readonly recipientRoute: SupervisorA2AV2Service["recipientRoute"];
   readonly governance: GovernedSupervisorMessageV2Service | undefined;
@@ -236,6 +259,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
     workflows: WorkflowPort;
     now: () => string;
+    resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
     verifyResultArtifact?: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
     recipientRoute?: SupervisorA2AV2Service["recipientRoute"];
     governance?: GovernedSupervisorMessageV2Service;
@@ -251,6 +275,10 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.assignmentRoute = input.assignmentRoute;
     this.#workflows = input.workflows;
     this.#now = input.now;
+    this.#resultGraphTasks = (input.resultGraphTasks ?? []).map((target) => ({
+      graphWorkflowId: target.graphWorkflowId,
+      graphTaskId: target.graphTaskId,
+    }));
     this.#verifyResultArtifact = input.verifyResultArtifact;
     this.recipientRoute = input.recipientRoute;
     this.governance = input.governance;
@@ -293,7 +321,50 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     ) {
       throw new Error("Result binding does not belong to the scoped A2A task");
     }
-    await this.#ledger.bindResult(scope, binding);
+    // A task graph carries no tenant or message identity, so the body's graph
+    // is trusted only when it is the one derived from this message's scoped
+    // identity. It must also be one this host configured and hold this
+    // recipient's task; the ledger re-checks the derivation and reserves the
+    // graph task for this one A2A task.
+    if (
+      binding.graphWorkflowId !==
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        scope,
+        binding.messageWorkflowId
+      )
+    ) {
+      throw new Error("Result graph is not derived from this message");
+    }
+    if (
+      !this.#resultGraphTasks.some(
+        (target) =>
+          target.graphWorkflowId === binding.graphWorkflowId &&
+          target.graphTaskId === binding.graphTaskId
+      )
+    ) {
+      throw new Error("Result graph task is not configured for this host");
+    }
+    await assertSupervisorA2AResultGraphTask({
+      binding,
+      workflows: this.#workflows,
+    });
+    await this.#ledger.bindResult(scope, binding, {
+      // Another A2A task carrying this message holds the graph task. It is
+      // released only once that task has ended without a result.
+      releasable: async (holder) => {
+        const held = await this.#taskStore.load(
+          holder.a2aTaskId,
+          new ServerCallContext({
+            tenant: holder.tenantId,
+            user: { isAuthenticated: true, userName: scope.principal },
+          })
+        );
+        return (
+          held?.status !== undefined &&
+          ENDED_WITHOUT_RESULT.includes(held.status.state)
+        );
+      },
+    });
   }
 
   async publishResult(
@@ -556,6 +627,7 @@ export const createSupervisorA2AV2Service = async (
       assignmentRoute,
       workflows,
       now: options.now,
+      resultGraphTasks: options.resultGraphTasks,
       verifyResultArtifact: options.verifyResultArtifact,
       recipientRoute,
       governance,

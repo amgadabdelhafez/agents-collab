@@ -38,6 +38,7 @@ import {
   type SupervisorMessageGovernedOperation,
 } from "./supervisor-message-governance";
 import { SupervisorMessageV2BridgeDeliveryPort } from "./supervisor-message-v2-bridge-delivery";
+import { SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE } from "./supervisor-message-v2-contract";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
   SupervisorControlSurfaceAuthenticator,
@@ -268,6 +269,43 @@ const requireRoutePath = (value: unknown, label: string): string => {
   return routePath;
 };
 
+const RETIRED_RESULT_ARTIFACT_KEYS = "artifactRef,commit,path,repositoryRoot";
+
+/**
+ * Migration guard for `a2aV2.resultArtifacts`. Entries used to be
+ * `{artifactRef, commit, path, repositoryRoot}`, and such an artifact verified
+ * for any graph task's acceptance receipt. That shape is refused at startup
+ * with the exact fix rather than accepted: accepting it would restore the
+ * defect. Each entry now also names the one graph task it is evidence for,
+ * and the graph must be a message-derived result graph
+ * (`deriveSupervisorMessageV2ResultGraphWorkflowId(scope, messageWorkflowId)`),
+ * since no other graph can ever be bound.
+ */
+const assertCurrentResultArtifactShape = (
+  entry: unknown,
+  index: number
+): void => {
+  const label = `orchestration a2aV2 resultArtifacts[${index}]`;
+  if (!isRecord(entry)) {
+    throw new Error(`${label} is invalid`);
+  }
+  if (Object.keys(entry).sort().join(",") === RETIRED_RESULT_ARTIFACT_KEYS) {
+    throw new Error(
+      `${label} uses the retired shape {artifactRef, commit, path, repositoryRoot}: add graphWorkflowId and graphTaskId naming the one graph task this artifact is evidence for (graphWorkflowId is the message-derived result graph, supervisor-result-graph:v2:<sha256>)`
+    );
+  }
+  if (
+    typeof entry.graphWorkflowId === "string" &&
+    !SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE.test(
+      entry.graphWorkflowId
+    )
+  ) {
+    throw new Error(
+      `${label} graphWorkflowId is not a message-derived result graph (supervisor-result-graph:v2:<sha256>), so no result could ever bind to it`
+    );
+  }
+};
+
 const parseA2AV2 = (
   value: unknown,
   supervisors: readonly SupervisorConfig[]
@@ -375,6 +413,7 @@ const parseA2AV2 = (
       if (!Array.isArray(value.resultArtifacts)) {
         throw new Error("orchestration resultArtifacts must be an array");
       }
+      value.resultArtifacts.forEach(assertCurrentResultArtifactShape);
       const entries = value.resultArtifacts as GitResultArtifactBinding[];
       createGitResultArtifactVerifier(entries);
       return entries.map((entry) => ({ ...entry }));
@@ -847,6 +886,12 @@ const createDefaultRuntimeHost = async (input: {
       pathname: `${a2aConfig.routePath}/assignment`,
       principal: a2aConfig.principal,
     },
+    // The same operator-configured entries name the graph tasks this host's
+    // tenant may bind results to.
+    resultGraphTasks: a2aConfig.resultArtifacts?.map((entry) => ({
+      graphWorkflowId: entry.graphWorkflowId,
+      graphTaskId: entry.graphTaskId,
+    })),
     verifyResultArtifact: a2aConfig.resultArtifacts
       ? createGitResultArtifactVerifier(a2aConfig.resultArtifacts)
       : undefined,

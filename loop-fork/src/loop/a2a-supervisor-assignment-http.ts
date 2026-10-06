@@ -14,8 +14,13 @@ const fields = [
 const reply = (status: number, code: string) =>
   Response.json({ code }, { status, headers: { "cache-control": "no-store" } });
 
-/** Authenticated supervisor-only assignment. Sender scope is route-owned;
- * the durable service verifies task/message/recipient before recording it. */
+/** Authenticated supervisor-only assignment. Sender scope is route-owned.
+ * The body's graphWorkflowId is not trusted: the durable service refuses it
+ * unless it equals the graph derived from the message's scoped identity
+ * (`deriveSupervisorMessageV2ResultGraphWorkflowId`). The body only chooses
+ * the graph task inside that graph, which the service checks against its
+ * host allowlist, task/message/recipient and the graph, and reserves for
+ * this A2A task before recording it. */
 export const createSupervisorA2AAssignmentHttpHandler =
   (options: {
     authenticator: SupervisorA2AAuthenticator;
