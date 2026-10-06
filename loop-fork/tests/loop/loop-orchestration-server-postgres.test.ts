@@ -388,11 +388,15 @@ const waitFor = async <T>(
   throw new Error(`timed out waiting for ${label}`);
 };
 
+const PEER = "supervisor:harness-peer";
+
 const compositionFixture = (input: {
   address: string;
   /** Extra a2aV2 config fields and the environment they name. */
   a2aExtra?: Record<string, unknown>;
   envExtra?: Record<string, string>;
+  /** Also configure the run's Claude seat as a peer recipient. */
+  peer?: boolean;
   readinessOutageBoundMs?: number;
   /** The deployment (task queue); a fresh one unless the test derives ids
    * for it before the config exists. */
@@ -403,11 +407,12 @@ const compositionFixture = (input: {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "loop-orch-compose-")));
   const runDir = join(root, "run");
   const manifestPath = join(runDir, "manifest.json");
-  const writeSeat = (thread: string) =>
+  const writeSeat = (thread: string, claudeSessionId = "") =>
     writeRunManifest(
       manifestPath,
       createRunManifest(
         {
+          claudeSessionId,
           codexRemoteUrl: "ws://127.0.0.1:4500",
           codexThreadId: thread,
           cwd: root,
@@ -476,6 +481,17 @@ const compositionFixture = (input: {
           supervisorId: "supervisor:harness",
           tokenEnv: "LOOP_TEST_HARNESS_TOKEN",
         },
+        ...(input.peer
+          ? [
+              {
+                manifestPath,
+                principal: "principal:harness",
+                seat: "claude",
+                supervisorId: PEER,
+                tokenEnv: "LOOP_TEST_PEER_TOKEN",
+              },
+            ]
+          : []),
       ],
       taskQueue,
     })
@@ -486,6 +502,7 @@ const compositionFixture = (input: {
     env: {
       LOOP_TEST_A2A_DATABASE_URL: postgres.databaseUrl(),
       LOOP_TEST_HARNESS_TOKEN: randomUUID(),
+      LOOP_TEST_PEER_TOKEN: randomUUID(),
       ...input.envExtra,
     } as Record<string, string>,
     port,
@@ -516,6 +533,10 @@ const sessionDescriptor = (
   sessionRef: `session:${input.thread}`,
   tenantId: config.tenant,
 });
+
+/** The server's /healthz body. */
+const health = async (fixture: { port: number }): Promise<unknown> =>
+  (await fetch(`http://127.0.0.1:${fixture.port}/healthz`)).json();
 
 /** Runs the real server; `ready` is "ready" or why it never got there. */
 const startServer = (
@@ -633,6 +654,177 @@ test("the orchestration server refuses to start when a configured seat cannot be
     clearTimeout(timer);
     stop.abort();
     await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server starts with a stopped peer seat, reports it not enrolled, and enrolls it from the sweep", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  // The Codex recipient is live; the Claude peer seat has no session yet.
+  const fixture = compositionFixture({
+    address: environment.address,
+    peer: true,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const admin = await connectStore(config);
+  const errors = spyOn(console, "error");
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(
+      await admin.current(scopeOf(config), config.recipient)
+    ).toMatchObject({ revision: 1, sessionRef: "session:thread-a" });
+    expect(await admin.current(scopeOf(config), PEER)).toBeUndefined();
+    const lines = () => errors.mock.calls.map(([line]) => String(line));
+    expect(lines()).toContain(
+      `orchestration A2A V2 session enrollment failed for ${PEER}: configured A2A V2 recipient session is unavailable`
+    );
+    // /healthz stays ready for the live recipient and names the peer.
+    expect(await health(fixture)).toEqual({
+      // The readiness-outage counters (decision 8) sit beside notEnrolled.
+      a2aV2ReadinessOutage: {
+        boundMs: 900_000,
+        deferredDeliveries: 0,
+        outageFailures: 0,
+        recipientsDeferred: 0,
+      },
+      notEnrolled: [PEER],
+      schema: "loop-orchestration-health.v1",
+      state: "ready",
+    });
+    // The peer's Claude session comes up while the server runs: the existing
+    // reconciliation sweep enrolls it after its retry delay, no restart.
+    fixture.writeSeat("thread-a", "claude-peer-session");
+    const enrolled = await waitFor("the sweep to enroll the peer", async () => {
+      const current = await admin.current(scopeOf(config), PEER);
+      return current ? current : undefined;
+    });
+    expect(enrolled).toMatchObject({
+      provider: "claude-code",
+      revision: 1,
+      sessionRef: "session:claude-peer-session",
+    });
+    await waitFor("the recovery line", () =>
+      Promise.resolve(
+        lines().includes(
+          `orchestration A2A V2 session enrollment recovered for ${PEER}`
+        )
+          ? true
+          : undefined
+      )
+    );
+    expect(await health(fixture)).toEqual({
+      // The readiness-outage counters (decision 8) sit beside notEnrolled.
+      a2aV2ReadinessOutage: {
+        boundMs: 900_000,
+        deferredDeliveries: 0,
+        outageFailures: 0,
+        recipientsDeferred: 0,
+      },
+      notEnrolled: [],
+      schema: "loop-orchestration-health.v1",
+      state: "ready",
+    });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
+    await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("a V2 delivery pending for a stopped peer at start neither refuses start nor reaches the provider: it spends one attempt on the readiness refusal", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const fixture = compositionFixture({
+    address: environment.address,
+    peer: true,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  const scope = scopeOf(config);
+  const dedupeKey = `peer-pending-${randomUUID().slice(0, 8)}`;
+  // The server's ledger mints ids for its deployment, its task queue.
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    scope,
+    dedupeKey,
+    fixture.taskQueue
+  );
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl(),
+    { deployment: fixture.taskQueue }
+  );
+  const errors = spyOn(console, "error");
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    await ledger.migrate();
+    // Accepted for the peer while the server was down; still pending.
+    await ledger.recordStartIntent(workflowId, scope, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey,
+      from: "supervisor:sender",
+      messageId: `message-${dedupeKey}`,
+      policy: {
+        claimTimeoutMs: 60_000,
+        escalationTimeoutMs: 120_000,
+        maxDeliveryAttempts: 3,
+        // Long enough that only start-time recovery attempts it here.
+        retryDelayMs: 600_000,
+      },
+      principal: scope.principal,
+      receivedAt: new Date().toISOString(),
+      tenantId: scope.tenantId,
+      threadId: `thread-${dedupeKey}`,
+      to: PEER,
+    });
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    const status = await waitFor("the start-time attempt", async () => {
+      const result = (await environment.client.workflow
+        .getHandle(workflowId)
+        .query("workflow-port-query", "status", { trustedScope: scope })
+        .catch(() => undefined)) as
+        | { value?: { deliveryAttempts?: number } }
+        | undefined;
+      return (result?.value?.deliveryAttempts ?? 0) >= 1
+        ? result?.value
+        : undefined;
+    });
+    expect(status).toMatchObject({
+      deadLetteredAt: null,
+      deliveredAt: null,
+      deliveryAttempts: 1,
+      phase: "retry-scheduled",
+      to: PEER,
+    });
+    // The record was recovered, not skipped: no recovery failure for it.
+    expect(
+      errors.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes(workflowId))
+    ).toEqual([]);
+    expect(await health(fixture)).toMatchObject({ notEnrolled: [PEER] });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate()
+      .catch(() => undefined);
+    await ledger.close();
     fixture.remove();
   }
 }, 120_000);
@@ -968,6 +1160,8 @@ test("the orchestration server reports its configured readiness-outage bound and
         outageFailures: 0,
         recipientsDeferred: 0,
       },
+      // Every configured seat is enrolled (session retention's field).
+      notEnrolled: [],
       schema: "loop-orchestration-health.v1",
       state: "ready",
     });
