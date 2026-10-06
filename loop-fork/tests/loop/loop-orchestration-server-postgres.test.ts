@@ -397,6 +397,9 @@ const compositionFixture = (input: {
   envExtra?: Record<string, string>;
   /** Also configure the run's Claude seat as a peer recipient. */
   peer?: boolean;
+  /** The run starts with no Claude pane: the directory has no route to the
+   * peer seat until the test writes a seat that declares one. */
+  noClaudePane?: boolean;
   readinessOutageBoundMs?: number;
   /** The deployment (task queue); a fresh one unless the test derives ids
    * for it before the config exists. */
@@ -407,7 +410,7 @@ const compositionFixture = (input: {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "loop-orch-compose-")));
   const runDir = join(root, "run");
   const manifestPath = join(runDir, "manifest.json");
-  const writeSeat = (thread: string, claudeSessionId = "") =>
+  const writeSeat = (thread: string, claudeSessionId = "", claudePane = true) =>
     writeRunManifest(
       manifestPath,
       createRunManifest(
@@ -422,15 +425,16 @@ const compositionFixture = (input: {
           repoId: "repo-compose",
           runId: "1",
           state: "working",
-          tmuxPaneLeft: "%1",
-          tmuxPaneLeftAgent: "claude",
+          ...(claudePane
+            ? { tmuxPaneLeft: "%1", tmuxPaneLeftAgent: "claude" as const }
+            : {}),
           tmuxPaneRight: "%2",
           tmuxPaneRightAgent: "codex",
         },
         "2026-10-05T00:00:00.000Z"
       )
     );
-  writeSeat(input.thread);
+  writeSeat(input.thread, "", !input.noClaudePane);
   const port = freePort();
   const taskQueue =
     input.taskQueue ?? `orchestration-composition-${randomUUID().slice(0, 8)}`;
@@ -773,6 +777,68 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
     expect(await assignmentStatus(fixture)).toMatchObject({
       notEnrolled: [],
     });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
+    await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server starts with a peer seat that is not running (no route), counts it without naming it, and enrolls it once its pane starts", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  // The Codex recipient is live; the run declares no Claude pane yet, so the
+  // directory has no route to the peer seat: it is not running.
+  const fixture = compositionFixture({
+    address: environment.address,
+    noClaudePane: true,
+    peer: true,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const admin = await connectStore(config);
+  const errors = spyOn(console, "error");
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(await admin.current(scopeOf(config), PEER)).toBeUndefined();
+    const lines = () => errors.mock.calls.map(([line]) => String(line));
+    expect(lines()).toContain(
+      `orchestration A2A V2 session enrollment failed for ${PEER}: configured A2A V2 recipient seat is not running`
+    );
+    expect(await health(fixture)).toMatchObject({
+      notEnrolledCount: 1,
+      state: "ready",
+    });
+    expect(JSON.stringify(await health(fixture))).not.toContain(PEER);
+    expect(await assignmentStatus(fixture)).toMatchObject({
+      notEnrolled: [PEER],
+    });
+    // The Claude pane starts while the server runs: the sweep enrolls it.
+    fixture.writeSeat("thread-a", "claude-peer-run-session");
+    const enrolled = await waitFor("the sweep to enroll the peer", async () => {
+      const current = await admin.current(scopeOf(config), PEER);
+      return current ? current : undefined;
+    });
+    expect(enrolled).toMatchObject({
+      provider: "claude-code",
+      sessionRef: "session:claude-peer-run-session",
+    });
+    await waitFor("the recovery line", () =>
+      Promise.resolve(
+        lines().includes(
+          `orchestration A2A V2 session enrollment recovered for ${PEER}`
+        )
+          ? true
+          : undefined
+      )
+    );
+    expect(await health(fixture)).toMatchObject({ notEnrolledCount: 0 });
   } finally {
     stop.abort();
     await running?.catch(() => undefined);

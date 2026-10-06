@@ -1681,6 +1681,7 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
     postgres = await DisposablePostgres.create();
     const databaseUrl = postgres.databaseUrl();
     service = await createSupervisorA2AV2Service({
+      assignmentRoute: { pathname: "/assignment", principal: scope.principal },
       card: {
         description: "shared readiness outage",
         supervisorId: RECIPIENT,
@@ -1713,7 +1714,12 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
         }),
       },
       route: {
-        authenticator: { authenticate: () => undefined },
+        authenticator: {
+          authenticate: (request: Request) =>
+            request.headers.get("authorization") === "Bearer outage-control"
+              ? { principal: scope.principal, supervisorId: RECIPIENT }
+              : undefined,
+        },
         tenant: scope.tenantId,
       },
       supervisorId: RECIPIENT,
@@ -1810,6 +1816,17 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
       deferredDeliveries: 2,
       outageFailures: 0,
       recipientsDeferred: 1,
+    });
+    // The control principal's status names the recipient, on the service's
+    // own clock, as the count does.
+    const status = await service.assignmentRoute?.httpHandler(
+      new Request("http://local/assignment", {
+        headers: { authorization: "Bearer outage-control" },
+      })
+    );
+    expect(status?.status).toBe(200);
+    expect(await status?.json()).toMatchObject({
+      readinessOutage: [input.to],
     });
     // One recipient, one outage: logged once across both paths.
     expect(

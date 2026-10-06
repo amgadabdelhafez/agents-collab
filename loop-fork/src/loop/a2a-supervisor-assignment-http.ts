@@ -120,7 +120,10 @@ const assignmentStatus = async (
  *
  * GET on the same path is the inspection surface for the control principal:
  * the recorded bindings of this route's tenant that will never publish, and
- * the host's per-seat delivery status (ids only). */
+ * the host's per-seat delivery status (ids only). Each section is present
+ * only when the host provides it: `unpublishable` needs a ledger that can
+ * list them (the PostgreSQL ledger can), `notEnrolled` and `readinessOutage`
+ * need the delivery status. With neither, GET is 405 as before. */
 export const createSupervisorA2AAssignmentHttpHandler =
   (options: {
     authenticator: SupervisorA2AAuthenticator;

@@ -82,6 +82,14 @@ export class SupervisorMessageV2ReadinessUnavailableError extends Error {
 
 /** How long a readiness-store outage may defer one recipient's deliveries. */
 export const SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS = 900_000;
+/**
+ * An outage nothing observed for this long, with no message it failed still
+ * waiting on its retry, is over. A delivery the outage defers stays pending
+ * and every recovery sweep (at most an hour apart) checks it again, so a gap
+ * of twice that means no delivery was waiting on the store, even if one
+ * sweep was skipped while another ran long.
+ */
+const READINESS_OUTAGE_UNOBSERVED_MS = 7_200_000;
 /** The fixed, opaque delivery_failed reason once an outage is past its bound. */
 const READINESS_UNAVAILABLE_REASON = "session readiness store is unavailable";
 
@@ -117,8 +125,21 @@ export interface SupervisorMessageV2ReadinessOutageSnapshot {
    * closed message, or an already accepted delivery absorbed.
    */
   outageFailures: number;
-  /** Recipients the store has not answered since it last failed for them. */
+  /**
+   * Recipients a delivery found the store unable to answer for within the
+   * last two hours, with no answer for them since.
+   */
   recipientsDeferred: number;
+}
+
+/** One recipient's open readiness-store outage (epoch ms). */
+interface ReadinessOutage {
+  exceeded: boolean;
+  /** Until when a message this outage failed waits on its retry delay. */
+  heldUntil: number;
+  /** The last delivery that found the store unable to answer. */
+  observedAt: number;
+  since: number;
 }
 
 /**
@@ -130,20 +151,28 @@ export interface SupervisorMessageV2ReadinessOutageSnapshot {
  * normal retryable failure that consumes an attempt, so the message's own
  * retry policy ends it.
  *
- * The bound is measured from the first failure the store had for that
- * recipient, and only an answer from the store for that recipient (ready or
- * not) ends the outage. Elapsed time never does: a message that waits out a
- * long retry delay mid-outage still meets the bound measured from the
- * outage's start, rather than a fresh one. The cost of that rule: when
- * nothing asks the store about a recipient between two outages, they count
- * as one, so the later one fails attempts at once instead of deferring (each
- * still retryable under the message's policy). State is in memory: a
- * restarted process starts the bound again for an outage still in progress.
+ * The bound is measured from the first failure a delivery observed for that
+ * recipient. An outage ends when the store answers for that recipient (ready
+ * or not), or when nothing can still be waiting on it: no delivery observed
+ * it for two hours (a deferred delivery is observed by every sweep) and no
+ * message it failed is still waiting on its retry delay. So a message that
+ * waits out a long retry mid-outage meets the bound measured from the
+ * outage's start, not a fresh one, while a later, separate outage gets a
+ * bound of its own and no recipient stays reported after its outage ended.
+ * Only an answer for the recipient itself ends its outage: a failure the
+ * store keeps for one recipient while it answers others is still bounded.
+ *
+ * One window remains: when a message the outage failed is cancelled or
+ * delivered elsewhere while it waits on its retry delay, and nothing asks
+ * the store about that recipient before a new outage starts within that
+ * delay, the two count as one (each failed attempt is still retryable under
+ * the message's policy). State is in memory: a restarted process starts the
+ * bound again for an outage still in progress.
  */
 export class SupervisorMessageV2ReadinessOutageTracker {
   readonly #boundMs: number;
   readonly #log: (line: string) => void;
-  readonly #outages = new Map<string, { exceeded: boolean; since: number }>();
+  readonly #outages = new Map<string, ReadinessOutage>();
   #deferred = 0;
   #failed = 0;
 
@@ -162,13 +191,14 @@ export class SupervisorMessageV2ReadinessOutageTracker {
   unavailable(recipient: string, now: Date): "defer" | "fail" {
     const at = now.getTime();
     let outage = this.#outages.get(recipient);
-    if (!outage) {
-      outage = { exceeded: false, since: at };
+    if (!outage || this.#over(outage, at)) {
+      outage = { exceeded: false, heldUntil: at, observedAt: at, since: at };
       this.#outages.set(recipient, outage);
       this.#log(
         `V2 delivery to ${recipient} deferred: ${READINESS_UNAVAILABLE_REASON}`
       );
     }
+    outage.observedAt = at;
     if (at - outage.since < this.#boundMs) {
       this.#deferred += 1;
       return "defer";
@@ -182,9 +212,17 @@ export class SupervisorMessageV2ReadinessOutageTracker {
     return "fail";
   }
 
-  /** A "fail" verdict became a delivery_failed recorded under a lease. */
-  failedAttempt(): void {
+  /**
+   * A "fail" verdict became a delivery_failed recorded under a lease. With
+   * `retryAt`, the message waits on its retry until then: the outage stays
+   * open for it however long that is.
+   */
+  failedAttempt(recipient: string, retryAt?: Date): void {
     this.#failed += 1;
+    const outage = this.#outages.get(recipient);
+    if (outage && retryAt) {
+      outage.heldUntil = Math.max(outage.heldUntil, retryAt.getTime());
+    }
   }
 
   /** The store answered for this recipient, ready or not: its outage is over. */
@@ -199,20 +237,37 @@ export class SupervisorMessageV2ReadinessOutageTracker {
     );
   }
 
-  /** The recipients in an open outage, sorted. Detail for authenticated callers only. */
-  recipients(): string[] {
-    return [...this.#outages.keys()].sort();
+  /**
+   * The recipients a delivery found in an outage within the last two hours,
+   * sorted. Detail for authenticated callers only.
+   */
+  recipients(now: Date = new Date()): string[] {
+    const at = now.getTime();
+    return [...this.#outages]
+      .filter(([, outage]) => this.#observedRecently(outage, at))
+      .map(([recipient]) => recipient)
+      .sort();
   }
 
-  snapshot(
-    _now: Date = new Date()
-  ): SupervisorMessageV2ReadinessOutageSnapshot {
+  snapshot(now: Date = new Date()): SupervisorMessageV2ReadinessOutageSnapshot {
     return {
       boundMs: this.#boundMs,
       deferredDeliveries: this.#deferred,
       outageFailures: this.#failed,
-      recipientsDeferred: this.#outages.size,
+      recipientsDeferred: this.recipients(now).length,
     };
+  }
+
+  #observedRecently(outage: ReadinessOutage, at: number): boolean {
+    return at - outage.observedAt <= READINESS_OUTAGE_UNOBSERVED_MS;
+  }
+
+  /** Nothing observed it lately and no message it failed still waits on it. */
+  #over(outage: ReadinessOutage, at: number): boolean {
+    return (
+      at - Math.max(outage.observedAt, outage.heldUntil) >
+      READINESS_OUTAGE_UNOBSERVED_MS
+    );
   }
 }
 
@@ -1487,7 +1542,12 @@ export class SupervisorMessageV2Coordinator {
       requestId: outcomeRequestId,
       workflowId,
     });
-    this.#countBoundFailure(readiness);
+    await this.#countBoundFailure(
+      readiness,
+      trustedScope,
+      workflowId,
+      envelope.target
+    );
     if (outcome.status !== "accepted" && receipt.status !== "running") {
       // The failure ended the message. Label it from its state, as a sweep
       // would: a failed last attempt is exhausted whatever its kind.
@@ -1511,12 +1571,44 @@ export class SupervisorMessageV2Coordinator {
   /**
    * Counted only once its delivery_failed was signalled under this attempt's
    * lease, so a verdict a busy or closed claim absorbed is never counted.
+   * A message an outage failed that has a retry scheduled waits on it: the
+   * outage stays open for it until that retry is due. One the failure ended
+   * has none.
    */
-  #countBoundFailure(readiness: DeliveryReadiness): void {
+  async #countBoundFailure(
+    readiness: DeliveryReadiness,
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string,
+    recipient: string
+  ): Promise<void> {
     if (readiness === "unavailable") {
-      this.#readinessOutage.failedAttempt();
+      this.#readinessOutage.failedAttempt(
+        recipient,
+        await this.#nextRetryAt(trustedScope, workflowId)
+      );
     } else if (readiness === "not-enrolled") {
       this.#notEnrolled.failedAttempt();
+    }
+  }
+
+  /**
+   * When the message's next retry falls due. Bookkeeping only: if the engine
+   * cannot say, the outage is held by its observations alone.
+   */
+  async #nextRetryAt(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<Date | undefined> {
+    try {
+      const { value } = await this.#workflows.query({
+        args: { trustedScope },
+        name: "status",
+        workflowId,
+      });
+      const next = (value as SupervisorMessageV2Projection).nextRetryAt;
+      return next === null ? undefined : new Date(next);
+    } catch {
+      return undefined;
     }
   }
 
@@ -1540,7 +1632,10 @@ export class SupervisorMessageV2Coordinator {
       this.#readinessOutage.answered(recipient, this.#now());
       // The store says not ready. A recipient the enrollment sweep finds not
       // enrolled (its seat is down) waits within its bound; an enrolled one
-      // spends the attempt, as before.
+      // spends the attempt, as before. A seat that stops while the server
+      // runs counts as enrolled until the next enrollment pass finds it
+      // down (about one reconciliation tick): a delivery in that window
+      // spends its attempt as an ordinary unready refusal.
       const notEnrolled = this.#notEnrolled.unready(recipient, this.#now());
       if (notEnrolled === "defer") {
         return "deferred";

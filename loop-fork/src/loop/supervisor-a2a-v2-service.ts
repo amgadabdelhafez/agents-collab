@@ -624,7 +624,7 @@ const createAssignmentRoute = (
       // readiness-store outage defers. Control principal only.
       deliveryStatus: () => ({
         notEnrolled: [...(options.recipientEnrollment?.notEnrolled() ?? [])],
-        readinessOutage: readinessOutage.recipients(),
+        readinessOutage: readinessOutage.recipients(new Date(options.now())),
       }),
       // The inspection surface lists only this route's tenant.
       unpublishable: list ? (scope) => list(scope.tenantId) : undefined,
