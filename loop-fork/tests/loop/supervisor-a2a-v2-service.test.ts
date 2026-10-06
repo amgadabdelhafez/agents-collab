@@ -18,7 +18,11 @@ import {
   createSupervisorA2AV2Service,
   type SupervisorA2AV2Service,
 } from "../../src/loop/supervisor-a2a-v2-service";
-import type { SupervisorMessageV2DeliveryEnvelope } from "../../src/loop/supervisor-message-v2-contract";
+import {
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
+  deriveSupervisorMessageV2WorkflowId,
+  type SupervisorMessageV2DeliveryEnvelope,
+} from "../../src/loop/supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import {
   deriveSupervisorSessionDescriptorV2Id,
@@ -28,11 +32,8 @@ import {
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
 
-import { privateDocker } from "../support/private-docker";
+import { DisposablePostgres } from "../support/disposable-postgres";
 
-const POSTGRES_IMAGE =
-  "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73";
-const PORT = /:(\d+)$/;
 const SCOPE = {
   principal: "principal:v2-service-test",
   tenantId: "tenant:v2-service-test",
@@ -47,86 +48,6 @@ const POLICY = {
   maxDeliveryAttempts: 3,
   retryDelayMs: 1000,
 };
-
-const docker = (...args: string[]) => privateDocker({}, ...args);
-
-class DisposablePostgres {
-  readonly #containerId: string;
-  readonly #password: string;
-  readonly #port: string;
-
-  private constructor(containerId: string, password: string, port: string) {
-    this.#containerId = containerId;
-    this.#password = password;
-    this.#port = port;
-  }
-
-  static async create(): Promise<DisposablePostgres> {
-    const password = randomUUID();
-    const containerId = await privateDocker(
-      { POSTGRES_PASSWORD: password },
-      "run",
-      "--detach",
-      "--rm",
-      "--publish",
-      "127.0.0.1::5432",
-      "--env",
-      "POSTGRES_PASSWORD",
-      "--env",
-      "POSTGRES_USER=postgres",
-      "--env",
-      "POSTGRES_DB=postgres",
-      "--health-cmd",
-      "pg_isready --username postgres --dbname postgres",
-      "--health-interval",
-      "100ms",
-      "--health-retries",
-      "100",
-      "--health-start-period",
-      "100ms",
-      POSTGRES_IMAGE
-    );
-    try {
-      const port = (await docker("port", containerId, "5432/tcp")).match(
-        PORT
-      )?.[1];
-      if (!port) {
-        throw new Error("cannot parse disposable PostgreSQL port");
-      }
-      const postgres = new DisposablePostgres(containerId, password, port);
-      await postgres.#waitHealthy();
-      return postgres;
-    } catch (error) {
-      await docker("stop", "--time", "1", containerId).catch(() => "");
-      throw error;
-    }
-  }
-
-  databaseUrl(): string {
-    return `postgres://postgres:${encodeURIComponent(this.#password)}@127.0.0.1:${this.#port}/postgres`;
-  }
-
-  async close(): Promise<void> {
-    await docker("stop", "--time", "1", this.#containerId).catch(() => "");
-  }
-
-  async #waitHealthy(): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (
-        (await docker(
-          "inspect",
-          "--format",
-          "{{.State.Health.Status}}",
-          this.#containerId
-        )) === "healthy"
-      ) {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    throw new Error("disposable PostgreSQL did not become healthy");
-  }
-}
 
 test("separate PostgreSQL result publishers atomically complete concurrent accepted follow-ups", async () => {
   const postgres = await DisposablePostgres.create();
@@ -264,7 +185,8 @@ const descriptor = (): SupervisorSessionDescriptorV2 => ({
 const serviceOptions = (input: {
   databaseUrl: string;
   environment: TestWorkflowEnvironment;
-  graphWorkflowId: string;
+  /** The message-derived graph to allowlist, once the message exists. */
+  graphWorkflowId?: string;
   root: string;
   taskQueue: string;
   delivery: {
@@ -283,10 +205,11 @@ const serviceOptions = (input: {
   delivery: input.delivery,
   dispatchOwner: "v2-dispatcher:service-factory-proof",
   assignmentRoute: { pathname: "/assignment", principal: SCOPE.principal },
-  resultGraphTasks: ["result-node", "second-node"].map((graphTaskId) => ({
-    graphWorkflowId: input.graphWorkflowId,
-    graphTaskId,
-  })),
+  resultGraphTasks: ["result-node", "second-node"].flatMap((graphTaskId) =>
+    input.graphWorkflowId
+      ? [{ graphWorkflowId: input.graphWorkflowId, graphTaskId }]
+      : []
+  ),
   verifyResultArtifact: (reference: string, target: { graphTaskId: string }) =>
     Promise.resolve(
       target.graphTaskId === "result-node" &&
@@ -491,7 +414,13 @@ test("service factory closes every acquired resource after a partial migration f
   expect(closes).toEqual(["ledger", "task-store"]);
 });
 
-test("result binding refuses a graph task the host has not configured or that is another worker's, before the ledger records it", async () => {
+const BIND_MESSAGE = deriveSupervisorMessageV2WorkflowId(SCOPE, "bind");
+const BIND_GRAPH = deriveSupervisorMessageV2ResultGraphWorkflowId(
+  SCOPE,
+  BIND_MESSAGE
+);
+
+test("result binding refuses a graph not derived from the message, or a graph task the host has not configured or that is another worker's, before the ledger records it", async () => {
   const bound: unknown[] = [];
   const queried: string[] = [];
   const closed = () => Promise.resolve();
@@ -582,7 +511,7 @@ test("result binding refuses a graph task the host has not configured or that is
                 contextId: "context:bind",
                 history: [],
                 artifacts: [],
-                metadata: { [WORKFLOW_IDS_METADATA_KEY]: ["message:bind"] },
+                metadata: { [WORKFLOW_IDS_METADATA_KEY]: [BIND_MESSAGE] },
                 status: { state: TaskState.TASK_STATE_SUBMITTED },
               }),
             migrate: closed,
@@ -611,8 +540,8 @@ test("result binding refuses a graph task the host has not configured or that is
     });
   const binding = {
     a2aTaskId: "task:bind",
-    messageWorkflowId: "message:bind",
-    graphWorkflowId: "graph:bind",
+    messageWorkflowId: BIND_MESSAGE,
+    graphWorkflowId: BIND_GRAPH,
     graphTaskId: "node:mine",
     recipient: RECIPIENT,
   };
@@ -624,18 +553,35 @@ test("result binding refuses a graph task the host has not configured or that is
   } finally {
     await unconfigured.close();
   }
+  // Graphs not derived from this message, even when the host allowlists
+  // them: one the body names freely, and the one derived for the same
+  // message id under another tenant.
+  const otherTenantGraph = deriveSupervisorMessageV2ResultGraphWorkflowId(
+    { ...SCOPE, tenantId: "tenant:v2-service-other" },
+    BIND_MESSAGE
+  );
   const service = await create([
-    { graphWorkflowId: "graph:bind", graphTaskId: "node:mine" },
-    { graphWorkflowId: "graph:bind", graphTaskId: "node:theirs" },
+    { graphWorkflowId: BIND_GRAPH, graphTaskId: "node:mine" },
+    { graphWorkflowId: BIND_GRAPH, graphTaskId: "node:theirs" },
+    { graphWorkflowId: "graph:chosen-by-body", graphTaskId: "node:mine" },
+    { graphWorkflowId: otherTenantGraph, graphTaskId: "node:mine" },
   ]);
   try {
-    for (const foreign of [
-      { graphTaskId: "node:unlisted" },
-      { graphWorkflowId: "graph:other-tenant" },
-    ]) {
+    await expect(
+      service.bindResult(SCOPE, { ...binding, graphTaskId: "node:unlisted" })
+    ).rejects.toThrow("not configured");
+    for (const graphWorkflowId of ["graph:chosen-by-body", otherTenantGraph]) {
       await expect(
-        service.bindResult(SCOPE, { ...binding, ...foreign })
-      ).rejects.toThrow("not configured");
+        service.bindResult(SCOPE, { ...binding, graphWorkflowId })
+      ).rejects.toThrow("not derived from this message");
+      const body = await service.assignmentRoute?.httpHandler(
+        new Request("http://local/assignment", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...binding, graphWorkflowId }),
+        })
+      );
+      expect(body?.status).toBe(409);
     }
     expect(queried).toEqual([]);
     const refused = await service.assignmentRoute?.httpHandler(
@@ -681,8 +627,6 @@ test("standard V2 factory authenticates before task mutation and preserves scope
   const ownedWorkflowIds = new Set<string>();
   const messageId = `factory-reconnect-${randomUUID()}`;
   const taskQueue = `supervisor-a2a-v2-service-${process.pid}-${randomUUID().slice(0, 8)}`;
-  // The host allowlists this graph's tasks before any binding names them.
-  const graphWorkflowId = `task-graph:result-${randomUUID()}`;
   try {
     postgres = await DisposablePostgres.create();
     const sessionInput = {
@@ -727,7 +671,6 @@ test("standard V2 factory authenticates before task mutation and preserves scope
         databaseUrl: postgres.databaseUrl(),
         delivery,
         environment,
-        graphWorkflowId,
         root,
         taskQueue,
       })
@@ -770,6 +713,12 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     if (!(workflowId && service.governance)) {
       throw new Error("Missing composed governance or delivered workflow");
     }
+    // The only graph this message's result may bind to is derived from the
+    // message itself. The recreated host allowlists its tasks.
+    const graphWorkflowId = deriveSupervisorMessageV2ResultGraphWorkflowId(
+      SCOPE,
+      workflowId
+    );
     if (!service.recipientRoute) {
       throw new Error("Missing composed recipient route");
     }
@@ -1056,31 +1005,26 @@ test("standard V2 factory authenticates before task mutation and preserves scope
       graphTaskId: "result-node",
       recipient: PEER,
     };
-    // That graph task is another recipient's, already-credited work.
+    // The first message's graph is not the peer message's: the same tenant
+    // and principal cannot attach one message to another message's work.
     await expect(recreated.bindResult(SCOPE, peerBinding)).rejects.toThrow(
-      "unrelated"
+      "not derived from this message"
     );
     const reservation = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       postgres.databaseUrl()
     );
     try {
-      // Even past the graph check, the ledger reserves a graph task for the
-      // A2A task it was first bound to, so another task cannot reuse it.
+      // The ledger refuses it on its own and records nothing for the peer.
       await expect(reservation.bindResult(SCOPE, peerBinding)).rejects.toThrow(
-        "reserved for another A2A task"
+        "not derived from this message"
       );
-      // The refused bind left no row behind: the reservation and binding are
-      // one transaction, and an unrelated graph task stays unreserved.
       await expect(
         reservation.resultBinding(SCOPE, peerWorkflow, peerTask.id)
       ).resolves.toBeUndefined();
-      await reservation.bindResult(SCOPE, {
-        ...peerBinding,
-        graphTaskId: "second-node",
-      });
+      // The published binding still holds its reservation.
       await expect(
-        reservation.resultBinding(SCOPE, peerWorkflow, peerTask.id)
-      ).resolves.toMatchObject({ graphTaskId: "second-node" });
+        reservation.resultBinding(SCOPE, workflowId, submitted.id)
+      ).resolves.toEqual(binding);
     } finally {
       await reservation.close();
     }

@@ -727,6 +727,25 @@ export const deriveSupervisorMessageV2WorkflowId = (
     requireString(dedupeKey, "dedupeKey", STABLE_ID_RE),
   ])}`;
 
+export const SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE =
+  /^supervisor-result-graph:v2:[a-f0-9]{64}$/;
+
+/**
+ * The one task graph whose tasks may carry this message's result. A
+ * `task-graph.v1` carries no tenant or message identity, so the binding is
+ * taken from the message instead: the graph workflow id is derived from the
+ * message's scoped identity (tenant, principal, message workflow id). A graph
+ * named in a request body is accepted only when it equals this id, so no
+ * caller can attach a message to another message's or tenant's graph.
+ */
+export const deriveSupervisorMessageV2ResultGraphWorkflowId = (
+  scope: TrustedSupervisorMessageV2Scope,
+  workflowId: string
+): string =>
+  `supervisor-result-graph:v2:${scopedDigest(scope, "result-graph", [
+    requireString(workflowId, "workflowId", V2_WORKFLOW_ID_RE),
+  ])}`;
+
 export const deriveSupervisorMessageV2DeliveryId = (
   scope: TrustedSupervisorMessageV2Scope,
   workflowId: string,

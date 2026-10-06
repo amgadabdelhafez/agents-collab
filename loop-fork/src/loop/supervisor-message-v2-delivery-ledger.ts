@@ -1,6 +1,7 @@
 import { SQL } from "bun";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import {
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   parseSupervisorMessageV2DeliveryEnvelope,
   parseSupervisorMessageV2Input,
@@ -24,6 +25,57 @@ const canonical = (value: unknown): string =>
         )
       : entry
   );
+
+/** JSON columns hold what Bun SQL stores for `${text}::jsonb`: a JSON string
+ * whose content is the document. A row may also hold the object itself.
+ * Both are read the same way. */
+const storedJson = (value: unknown): unknown => {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+};
+
+const parseStoredBinding = (
+  value: unknown,
+  workflowId: string,
+  taskId: string
+): SupervisorA2AResultBinding | undefined => {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !==
+      "a2aTaskId,graphTaskId,graphWorkflowId,messageWorkflowId,recipient" ||
+    Object.values(value).some(
+      (entry) => typeof entry !== "string" || !RESULT_REFERENCE.test(entry)
+    )
+  ) {
+    return undefined;
+  }
+  const binding = value as SupervisorA2AResultBinding;
+  return binding.messageWorkflowId === workflowId &&
+    binding.a2aTaskId === taskId
+    ? binding
+    : undefined;
+};
+
+/** The message-derived result graph, or undefined for an id that is not a V2
+ * message workflow id (which then matches no binding). */
+const derivedResultGraph = (
+  scope: TrustedSupervisorMessageV2Scope,
+  workflowId: string
+): string | undefined => {
+  try {
+    return deriveSupervisorMessageV2ResultGraphWorkflowId(scope, workflowId);
+  } catch {
+    return undefined;
+  }
+};
 
 /**
  * `receivedAt` records the first accepted ingress event and is retained as
@@ -80,32 +132,84 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     // this index, which refused follow-up turns of the same A2A task.
     await this
       .#sql`DROP INDEX IF EXISTS loop_supervisor_message_v2_result_binding_graph_task`;
-    // Graphs carry no tenant. A graph task is evidence for exactly one A2A
-    // task (and all of its follow-up message workflows), across every tenant.
+    // A graph task is evidence for one A2A task at a time. The graph itself
+    // is derived from one message's scoped identity, so the only contention
+    // left is one message carried by two A2A tasks.
     await this
       .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_result_graph_task (
       graph_workflow_id TEXT NOT NULL, graph_task_id TEXT NOT NULL,
       tenant_id TEXT NOT NULL, a2a_task_id TEXT NOT NULL,
       PRIMARY KEY (graph_workflow_id, graph_task_id)
     )`;
-    // Bindings recorded before reservations existed are reserved in a stable
-    // order. A later binding that reused the graph task for another A2A task
-    // is then never returned for publication.
-    await this
-      .#sql`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
-      SELECT binding_json->>'graphWorkflowId', binding_json->>'graphTaskId', tenant_id, a2a_task_id
-      FROM loop_supervisor_message_v2_result_binding
-      ORDER BY tenant_id, a2a_task_id, workflow_id
-      ON CONFLICT DO NOTHING`;
+    await this.#backfillResultGraphTasks();
   }
 
-  /** Immutable assignment. The authenticated sender names the graph task
-   * (the HTTP assignment route forwards it); the host checks its allowlist,
-   * the message, recipient and graph task. This ledger reserves that graph
-   * task for this one A2A task, in the same transaction as the binding. */
+  /**
+   * Bindings recorded before reservations existed. A binding whose graph is
+   * the one derived from its own message is reserved, in a stable order, so
+   * the first such binding keeps it. Any other binding named a graph the
+   * request body chose: it is not reserved, `resultBinding` never returns
+   * it, and `bindResult` lets that message be re-bound to its derived graph.
+   * Malformed rows are skipped rather than stopping the host. Rows are parsed
+   * here rather than with JSON operators because bindings are stored as JSON
+   * strings (see `storedJson`).
+   */
+  async #backfillResultGraphTasks(): Promise<void> {
+    const rows = await this.#sql<
+      {
+        a2a_task_id: string;
+        binding_json: unknown;
+        principal: string;
+        tenant_id: string;
+        workflow_id: string;
+      }[]
+    >`SELECT workflow_id, a2a_task_id, tenant_id, principal, binding_json
+      FROM loop_supervisor_message_v2_result_binding
+      ORDER BY tenant_id, a2a_task_id, workflow_id`;
+    for (const row of rows) {
+      const binding = parseStoredBinding(
+        storedJson(row.binding_json),
+        row.workflow_id,
+        row.a2a_task_id
+      );
+      if (
+        !binding ||
+        binding.graphWorkflowId !==
+          derivedResultGraph(
+            { tenantId: row.tenant_id, principal: row.principal },
+            row.workflow_id
+          )
+      ) {
+        continue;
+      }
+      await this
+        .#sql`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
+        VALUES (${binding.graphWorkflowId}, ${binding.graphTaskId}, ${row.tenant_id}, ${row.a2a_task_id})
+        ON CONFLICT DO NOTHING`;
+    }
+  }
+
+  /**
+   * Immutable assignment. The graph must be the one derived from the
+   * message's own scoped identity; a body-named graph that differs is
+   * refused here as well as by the host. This ledger reserves the graph task
+   * for this one A2A task, in the same transaction as the binding, so a
+   * refused bind leaves nothing reserved.
+   *
+   * A reservation held by another A2A task passes to this one only when
+   * `releasable` confirms the holder has ended (failed, canceled or
+   * rejected: terminal states, so the answer cannot go stale). The holder's
+   * binding then no longer holds its graph task and is never published.
+   */
   async bindResult(
     scope: TrustedSupervisorMessageV2Scope,
-    binding: SupervisorA2AResultBinding
+    binding: SupervisorA2AResultBinding,
+    options: {
+      releasable?(holder: {
+        a2aTaskId: string;
+        tenantId: string;
+      }): Promise<boolean>;
+    } = {}
   ): Promise<void> {
     if (
       Object.keys(binding).sort().join(",") !==
@@ -117,6 +221,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       throw new Error("Invalid result binding");
     }
     await this.assertStartIntent(binding.messageWorkflowId, scope);
+    const derived = derivedResultGraph(scope, binding.messageWorkflowId);
+    if (binding.graphWorkflowId !== derived) {
+      throw new Error("Result graph is not derived from this message");
+    }
     const assigned = await this.recipientAssignment({
       tenantId: scope.tenantId,
       recipient: binding.recipient,
@@ -133,11 +241,27 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         { a2a_task_id: string; tenant_id: string }[]
       >`SELECT tenant_id, a2a_task_id FROM loop_supervisor_message_v2_result_graph_task
         WHERE graph_workflow_id = ${binding.graphWorkflowId} AND graph_task_id = ${binding.graphTaskId}`;
+      const holder = reserved[0];
       if (
-        reserved[0]?.tenant_id !== scope.tenantId ||
-        reserved[0]?.a2a_task_id !== binding.a2aTaskId
+        !holder ||
+        holder.tenant_id !== scope.tenantId ||
+        holder.a2a_task_id !== binding.a2aTaskId
       ) {
-        throw new Error("Result graph task is reserved for another A2A task");
+        const released =
+          holder?.tenant_id === scope.tenantId &&
+          (await options.releasable?.({
+            tenantId: holder.tenant_id,
+            a2aTaskId: holder.a2a_task_id,
+          })) === true &&
+          (
+            await sql`UPDATE loop_supervisor_message_v2_result_graph_task SET a2a_task_id = ${binding.a2aTaskId}
+              WHERE graph_workflow_id = ${binding.graphWorkflowId} AND graph_task_id = ${binding.graphTaskId}
+                AND tenant_id = ${holder.tenant_id} AND a2a_task_id = ${holder.a2a_task_id}
+              RETURNING a2a_task_id`
+          ).length === 1;
+        if (!released) {
+          throw new Error("Result graph task is reserved for another A2A task");
+        }
       }
       await sql`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
         VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb)
@@ -146,17 +270,32 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         { binding_json: unknown }[]
       >`SELECT binding_json FROM loop_supervisor_message_v2_result_binding
         WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
-      const stored =
-        typeof existing[0]?.binding_json === "string"
-          ? JSON.parse(existing[0].binding_json)
-          : existing[0]?.binding_json;
-      // Throwing here also rolls back a reservation this call just made.
-      if (!stored || canonical(stored) !== canonical(binding)) {
+      if (!existing[0]) {
         throw new Error("Result binding conflicts with prior assignment");
       }
+      const stored = parseStoredBinding(
+        storedJson(existing[0].binding_json),
+        binding.messageWorkflowId,
+        binding.a2aTaskId
+      );
+      if (stored && canonical(stored) === canonical(binding)) {
+        return;
+      }
+      // A derived binding is immutable. Throwing also rolls back a
+      // reservation this call just made.
+      if (stored?.graphWorkflowId === derived) {
+        throw new Error("Result binding conflicts with prior assignment");
+      }
+      // A binding recorded before graphs were derived from the message named
+      // a graph the request body chose. It was never publishable, so the
+      // message's derived graph replaces it.
+      await sql`UPDATE loop_supervisor_message_v2_result_binding SET binding_json = ${canonical(binding)}::jsonb
+        WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
     });
   }
 
+  /** The binding to publish, only while its graph is the one derived from
+   * the message and it still holds that graph task's reservation. */
   async resultBinding(
     scope: TrustedSupervisorMessageV2Scope,
     workflowId: string,
@@ -164,34 +303,28 @@ export class PostgresSupervisorMessageV2DeliveryLedger
   ): Promise<SupervisorA2AResultBinding | undefined> {
     const rows = await this.#sql<
       { binding_json: unknown }[]
-    >`SELECT b.binding_json FROM loop_supervisor_message_v2_result_binding b
-      JOIN loop_supervisor_message_v2_result_graph_task r
-        ON r.graph_workflow_id = b.binding_json->>'graphWorkflowId'
-        AND r.graph_task_id = b.binding_json->>'graphTaskId'
-        AND r.tenant_id = b.tenant_id AND r.a2a_task_id = b.a2a_task_id
-      WHERE b.workflow_id = ${workflowId} AND b.a2a_task_id = ${taskId} AND b.tenant_id = ${scope.tenantId} AND b.principal = ${scope.principal}`;
+    >`SELECT binding_json FROM loop_supervisor_message_v2_result_binding
+      WHERE workflow_id = ${workflowId} AND a2a_task_id = ${taskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
     if (!rows[0]) {
       return undefined;
     }
-    const value =
-      typeof rows[0].binding_json === "string"
-        ? JSON.parse(rows[0].binding_json)
-        : rows[0].binding_json;
-    if (
-      !value ||
-      typeof value !== "object" ||
-      Array.isArray(value) ||
-      Object.keys(value).sort().join(",") !==
-        "a2aTaskId,graphTaskId,graphWorkflowId,messageWorkflowId,recipient" ||
-      Object.values(value).some(
-        (entry) => typeof entry !== "string" || !RESULT_REFERENCE.test(entry)
-      ) ||
-      value.messageWorkflowId !== workflowId ||
-      value.a2aTaskId !== taskId
-    ) {
+    const value = parseStoredBinding(
+      storedJson(rows[0].binding_json),
+      workflowId,
+      taskId
+    );
+    if (!value) {
       throw new Error("Stored result binding is invalid");
     }
-    return value as SupervisorA2AResultBinding;
+    if (value.graphWorkflowId !== derivedResultGraph(scope, workflowId)) {
+      return undefined;
+    }
+    const reserved = await this.#sql<
+      { a2a_task_id: string }[]
+    >`SELECT a2a_task_id FROM loop_supervisor_message_v2_result_graph_task
+      WHERE graph_workflow_id = ${value.graphWorkflowId} AND graph_task_id = ${value.graphTaskId}
+        AND tenant_id = ${scope.tenantId} AND a2a_task_id = ${taskId}`;
+    return reserved[0] ? value : undefined;
   }
 
   async claim(
