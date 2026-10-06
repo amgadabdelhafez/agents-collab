@@ -7,6 +7,7 @@ import {
   type BridgeSource,
   type BridgeTarget,
   enqueueBridgeMessage,
+  keylessClaudeResultReplyWarning,
   markBridgeMessage,
   readBridgeEvents,
   readPendingBridgeMessages,
@@ -306,5 +307,50 @@ test("a dead-lettered ACK from Claude or Codex does not block a retry", () => {
         "duplicate"
       );
     });
+  }
+});
+
+test("a keyless Claude message reply is flagged because it shares the keyless result slot", () => {
+  // Decision 3 lint: the keyless slot is shared, so the store-level slot rule
+  // that makes this a duplicate is exactly what the warning describes.
+  withRun("keyless-lint", (root) => {
+    const progress = reply(root, "progress: tests running", {
+      replyTo: "inbound-lint",
+    });
+    const result = reply(root, "result: PASS", { replyTo: "inbound-lint" });
+    expect(progress.status).toBe("queued");
+    expect(result.status).toBe("duplicate");
+  });
+  const warning = keylessClaudeResultReplyWarning("claude", {
+    replyTo: "inbound-lint",
+  });
+  expect(warning).toBe(
+    "warning: message reply to inbound-lint has no dedupe_key, so it shares the one keyless result slot for that inbound; a later keyless message reply to inbound-lint (such as the result after a progress update) will be deduplicated. Give each interim progress reply its own dedupe_key."
+  );
+  expect(
+    keylessClaudeResultReplyWarning("claude", {
+      replyTo: "inbound-lint",
+      type: "message",
+    })
+  ).toBe(warning);
+});
+
+test("the keyless reply lint stays silent outside the Claude message result slot", () => {
+  const silent: [BridgeSource, BridgeEnqueueOptions][] = [
+    // A keyed progress reply owns its own slot.
+    ["claude", { dedupeKey: "progress-1", replyTo: "inbound-lint" }],
+    // Not a reply, so no result slot.
+    ["claude", { type: "message" }],
+    // A decision is its own slot kind; the lint covers progress messages.
+    ["claude", { replyTo: "inbound-lint", type: "decision" }],
+    // ACKs and work-opening replies are not message result slots.
+    ["claude", { replyTo: "inbound-lint", type: "ack" }],
+    ["claude", { replyTo: "inbound-lint", type: "work_request" }],
+    // Codex and oss replies keep the pending-only dedupe.
+    ["codex", { replyTo: "inbound-lint" }],
+    ["oss", { replyTo: "inbound-lint" }],
+  ];
+  for (const [source, options] of silent) {
+    expect(keylessClaudeResultReplyWarning(source, options)).toBeUndefined();
   }
 });

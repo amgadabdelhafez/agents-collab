@@ -1467,12 +1467,20 @@ test("bridge MCP send_message keeps one Claude result reply per inbound", async 
   );
 
   expect(result.code).toBe(0);
-  expect(result.stderr).toBe("");
+  // Decision 3 lint: both keyless message replies take the shared keyless
+  // slot, so the bridge flags each one on stderr and in the tool result.
+  const keylessWarning =
+    "warning: message reply to inbound-codex-1 has no dedupe_key, so it shares the one keyless result slot for that inbound; a later keyless message reply to inbound-codex-1 (such as the result after a progress update) will be deduplicated. Give each interim progress reply its own dedupe_key.";
+  expect(result.stderr).toBe(
+    `loop-bridge send_message: ${keylessWarning}\n`.repeat(2)
+  );
   const replies = parseJsonLines(result.stdout).map((entry) =>
     JSON.stringify(entry)
   );
   expect(replies[0]).toContain("queued");
   expect(replies[1]).toContain("deduplicated");
+  expect(toolText(result.stdout, 1)).toEndWith(`\n${keylessWarning}`);
+  expect(toolText(result.stdout, 2)).toEndWith(`\n${keylessWarning}`);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
@@ -1481,6 +1489,66 @@ test("bridge MCP send_message keeps one Claude result reply per inbound", async 
         event.kind === "message" ? event.message : ""
       )
   ).toEqual(["Result: PASS at abc123."]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge MCP send_message does not flag keyed Claude progress and result replies", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const keyedReply = (
+    id: number,
+    message: string,
+    extra: Record<string, unknown>
+  ) =>
+    encodeLine({
+      id,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          message,
+          reply_to: "inbound-codex-2",
+          target: "codex",
+          ...extra,
+        },
+        name: "send_message",
+      },
+    });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "claude",
+    [
+      keyedReply(1, "Progress: tests running.", {
+        dedupe_key: "inbound-codex-2:progress",
+      }),
+      keyedReply(2, "Result: PASS at def456.", {
+        dedupe_key: "inbound-codex-2:result",
+      }),
+      keyedReply(3, "Decision: accept.", { type: "decision" }),
+    ].join("")
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  for (const id of [1, 2, 3]) {
+    expect(toolText(result.stdout, id)).toStartWith("queued ");
+    expect(toolText(result.stdout, id)).not.toContain("warning:");
+  }
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event: BridgeEvent) => event.kind === "message")
+      .map((event: BridgeEvent) =>
+        event.kind === "message" ? event.message : ""
+      )
+  ).toEqual([
+    "Progress: tests running.",
+    "Result: PASS at def456.",
+    "Decision: accept.",
+  ]);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -3787,11 +3855,15 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(result.stdout).toContain(
     "Never answer the human when the inbound message came from Codex"
   );
-  expect(result.stdout).toContain("Delegation is mandatory");
+  // Delegation guidance was relaxed on 2026-10-04 (12384992,
+  // specs/utility-routing-relaxation-v1): useful delegation, not a quota.
+  expect(result.stdout).not.toContain("Delegation is mandatory");
   expect(result.stdout).toContain(
-    'call \\"route_task\\" with work_shape=separable before using'
+    'Delegate useful independent work with \\"route_task\\" and work_shape=separable'
   );
-  expect(result.stdout).toContain("one to three independent bounded packets");
+  expect(result.stdout).toContain("Delegation is not a quota");
+  expect(result.stdout).toContain("Do not manufacture packets");
+  expect(result.stdout).toContain("narrowest common ancestor");
   expect(result.stdout).toContain("Use Nanny");
   expect(result.stdout).toContain("Use Au Pair");
   expect(result.stdout).toContain("Governess chooses the tier");
@@ -3848,13 +3920,17 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
   expect(
     tools.find((tool) => tool.name === "route_task")?.description
-  ).toContain("one to three packets early");
+  ).toContain(
+    "Delegate useful independent bounded work, not a quota of packets"
+  );
   expect(
     tools.find((tool) => tool.name === "route_task")?.description
-  ).toContain("narrowest common ancestor");
+  ).toContain("Workers never widen scope");
   expect(
     tools.find((tool) => tool.name === "route_task")?.description
-  ).toContain("Every terminal outcome returns to this requester");
+  ).toContain(
+    "Terminal results return to the requester unless peer review is explicitly required"
+  );
   const routeTask = tools.find((tool) => tool.name === "route_task") as {
     inputSchema?: {
       properties?: Record<string, { description?: string }>;
@@ -4936,6 +5012,808 @@ test("bridge doorbell rings Claude when a Codex inbound is first in the queue", 
   ).toEqual(["nudged claude tmux inbox"]);
   // A doorbell is not delivery: both messages stay pending for their pulls.
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(2);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+const sendKeysPane = (args: readonly string[]): string | undefined => {
+  if (tmuxCommand(args) !== "send-keys") {
+    return undefined;
+  }
+  const targetIndex = args.indexOf("-t");
+  return targetIndex >= 0 ? args[targetIndex + 1] : undefined;
+};
+
+const writeFairnessManifest = (runDir: string): void => {
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeft: "%40",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+};
+
+const completeFairnessRun = (runDir: string): void => {
+  const manifestPath = join(runDir, "manifest.json");
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      ...readRunManifest(manifestPath),
+      state: "completed",
+      status: "completed",
+    })}\n`,
+    "utf8"
+  );
+};
+
+test("bridge worker rings Claude while Codex app-server traffic keeps arriving", async () => {
+  // Round-2 critic: every cycle that delivered a Codex message returned before
+  // the tmux doorbell pass, so a steady Codex stream starved Claude's inbox.
+  const cycles = 6;
+  let runDir = "";
+  let codexArrivals = 0;
+  const injectCodexMessage = mock(() => {
+    // Codex traffic never stops: each accepted delivery is followed by a new
+    // inbound for Codex, so the app-server path delivers on every cycle.
+    codexArrivals += 1;
+    bridge.bridgeInternals.appendBridgeEvent(runDir, {
+      at: new Date().toISOString(),
+      id: `msg-codex-stream-${codexArrivals}`,
+      kind: "message",
+      message: `Codex stream item ${codexArrivals}.`,
+      source: "claude",
+      target: "codex",
+    });
+    return Promise.resolve(true);
+  });
+  const rings: Array<{ codexDeliveries: number; pane: string; text: string }> =
+    [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 · bypass permissions on", "utf8"),
+      };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal !== undefined) {
+      rings.push({
+        codexDeliveries: injectCodexMessage.mock.calls.length,
+        pane: sendKeysPane(args) ?? "",
+        text: literal,
+      });
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  let waits = 0;
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, version: string) => {
+      waits += 1;
+      if (waits >= cycles) {
+        completeFairnessRun(runDir);
+      }
+      return Promise.resolve({ reason: "settle", version });
+    }
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:00.000Z",
+    id: "msg-codex-stream-0",
+    kind: "message",
+    message: "Codex stream item 0.",
+    source: "claude",
+    target: "codex",
+  });
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:01.000Z",
+    id: "msg-claude-starved",
+    kind: "message",
+    message: "Claude must be rung despite the Codex stream.",
+    source: "codex",
+    target: "claude",
+  });
+
+  await bridge.runBridgeWorker(runDir);
+
+  // The stream really was continuous: one Codex delivery per worker cycle.
+  expect(injectCodexMessage).toHaveBeenCalledTimes(cycles);
+  // Claude is rung in the first cycle, alongside the first Codex delivery, and
+  // exactly once: the coalesced doorbell does not repeat inside its interval.
+  expect(rings).toEqual([
+    {
+      codexDeliveries: 1,
+      pane: "%40",
+      text: "Bridge: 1 message waiting. Call receive_messages now.",
+    },
+  ]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter(
+        (event: BridgeEvent) =>
+          event.kind === "notified" && event.id === "msg-claude-starved"
+      )
+      .map((event: BridgeEvent) => ("reason" in event ? event.reason : ""))
+  ).toEqual(["nudged claude tmux inbox"]);
+  // A doorbell is not delivery: Claude's message waits for its own pull.
+  expect(
+    bridge
+      .readPendingBridgeMessages(runDir)
+      .filter((entry: { target: string }) => entry.target === "claude")
+      .map((entry: { id: string }) => entry.id)
+  ).toEqual(["msg-claude-starved"]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge worker rings Claude in the cycle that rings a refused Codex pane", async () => {
+  // When the app-server refuses a busy turn the Codex tmux doorbell rings
+  // instead. That ring must not consume the cycle's only doorbell pass.
+  let runDir = "";
+  const injectCodexMessage = mock(() => Promise.resolve(false));
+  const rings: string[] = [];
+  let codexComposer = "";
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      const pane = args[args.indexOf("-t") + 1];
+      const stdout =
+        pane === "%41"
+          ? `› ${codexComposer || "Use /skills to list available skills"}\n\n  gpt-5.6-sol xhigh · ~/repo\n`
+          : "❯\n\nOpus 5 · bypass permissions on";
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(stdout, "utf8"),
+      };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal !== undefined) {
+      const pane = sendKeysPane(args) ?? "";
+      rings.push(pane);
+      if (pane === "%41") {
+        codexComposer = literal;
+      }
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  let submissionReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(() =>
+    submissionReads++ === 0 ? "before" : "after"
+  );
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, version: string) => {
+      completeFairnessRun(runDir);
+      return Promise.resolve({ reason: "retry", version });
+    }
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:00.000Z",
+    id: "msg-codex-busy",
+    kind: "message",
+    message: "Codex is mid-turn.",
+    source: "claude",
+    target: "codex",
+  });
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:01.000Z",
+    id: "msg-claude-same-cycle",
+    kind: "message",
+    message: "Claude must hear this in the same cycle.",
+    source: "codex",
+    target: "claude",
+  });
+
+  await bridge.runBridgeWorker(runDir);
+
+  // One worker cycle: the app-server refused once, then both panes rang.
+  expect(injectCodexMessage).toHaveBeenCalledTimes(1);
+  expect(rings).toEqual(["%41", "%40"]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event: BridgeEvent) => event.kind === "notified")
+      .map((event: BridgeEvent) => [
+        event.id,
+        "reason" in event ? event.reason : "",
+      ])
+  ).toEqual([
+    ["msg-codex-busy", "nudged codex tmux inbox"],
+    ["msg-claude-same-cycle", "nudged claude tmux inbox"],
+  ]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+const CLAUDE_IDLE_PANE = "❯\n\nOpus 5 · bypass permissions on";
+const CLAUDE_DRAFT_PANE =
+  "❯ human draft in progress\n\nOpus 5 · bypass permissions on";
+
+const appendCodexStreamItem = (
+  bridge: Awaited<ReturnType<typeof loadBridge>>,
+  runDir: string,
+  item: number
+): void => {
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: new Date().toISOString(),
+    id: `msg-codex-stream-${item}`,
+    kind: "message",
+    message: `Codex stream item ${item}.`,
+    source: "claude",
+    target: "codex",
+  });
+};
+
+const seedCodexStreamAndClaude = (
+  bridge: Awaited<ReturnType<typeof loadBridge>>,
+  runDir: string,
+  claudeMessageId: string
+): void => {
+  appendCodexStreamItem(bridge, runDir, 0);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:01.000Z",
+    id: claudeMessageId,
+    kind: "message",
+    message: "Claude has unread mail while Codex traffic flows.",
+    source: "codex",
+    target: "claude",
+  });
+};
+
+const stopFairnessRunAfter = (
+  bridge: Awaited<ReturnType<typeof loadBridge>>,
+  runDirRef: () => string,
+  cycles: number,
+  onWake: () => void = () => undefined
+): void => {
+  let waits = 0;
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, version: string) => {
+      waits += 1;
+      onWake();
+      if (waits >= cycles) {
+        completeFairnessRun(runDirRef());
+      }
+      return Promise.resolve({ reason: "settle", version });
+    }
+  );
+};
+
+test("bridge worker keeps Codex app-server throughput while Claude's pane is busy", async () => {
+  // Round-3 critic: after Codex progress the fairness pass ran Claude's full
+  // readiness wait (12 polls x 250 ms) on every cycle while Claude's pane was
+  // not ready, so Codex delivery fell to about one message per 3 s. The
+  // fairness pass is now a short probe, and a target that fails it is not
+  // probed again by a fairness pass until its backoff window has passed.
+  const cycles = 6;
+  let runDir = "";
+  let arrivals = 0;
+  const injectCodexMessage = mock(() => {
+    arrivals += 1;
+    appendCodexStreamItem(bridge, runDir, arrivals);
+    return Promise.resolve(true);
+  });
+  const claudeCaptures: number[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      if (args[args.indexOf("-t") + 1] === "%40") {
+        claudeCaptures.push(injectCodexMessage.mock.calls.length);
+      }
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(CLAUDE_DRAFT_PANE, "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  stopFairnessRunAfter(bridge, () => runDir, cycles);
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  seedCodexStreamAndClaude(bridge, runDir, "msg-claude-busy");
+
+  const startedAt = Date.now();
+  await bridge.runBridgeWorker(runDir);
+  const elapsedMs = Date.now() - startedAt;
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(cycles);
+  // One short probe (two captures) in the first cycle, then backoff: Claude's
+  // pane is not polled again while Codex keeps delivering.
+  expect(claudeCaptures).toEqual([1, 1]);
+  expect(
+    spawnSync.mock.calls.filter(([args]) => tmuxLiteralText(args) !== undefined)
+  ).toEqual([]);
+  // Six Codex deliveries took about 18 s when every cycle waited out Claude's
+  // full readiness wait; the probe costs at most two 250 ms polls.
+  expect(elapsedMs).toBeLessThan(2000);
+  expect(
+    bridge
+      .readPendingBridgeMessages(runDir)
+      .filter((entry: { target: string }) => entry.target === "claude")
+      .map((entry: { id: string }) => entry.id)
+  ).toEqual(["msg-claude-busy"]);
+
+  rmSync(root, { recursive: true, force: true });
+}, 30_000);
+
+test("bridge worker rings Claude once ready and again after the retry interval under Codex traffic", async () => {
+  // The bound under continuous Codex traffic: a busy Claude is probed again
+  // once its fairness backoff has passed, rung as soon as its pane is ready,
+  // and rung again when its doorbell is next due (30 s retry interval).
+  const cycles = 8;
+  const cycleMs = 6000;
+  let runDir = "";
+  let arrivals = 0;
+  const injectCodexMessage = mock(() => {
+    arrivals += 1;
+    appendCodexStreamItem(bridge, runDir, arrivals);
+    return Promise.resolve(true);
+  });
+  let claudeBusy = true;
+  const rings: number[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          claudeBusy ? CLAUDE_DRAFT_PANE : CLAUDE_IDLE_PANE,
+          "utf8"
+        ),
+      };
+    }
+    if (tmuxLiteralText(args) !== undefined) {
+      rings.push(injectCodexMessage.mock.calls.length);
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptVersion = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    String(transcriptVersion++)
+  );
+  let clockMs = Date.now();
+  bridge.bridgeRuntimeCommandDeps.now = mock(() => clockMs);
+  // Claude finishes its turn after the first cycle. Each worker cycle is one
+  // Codex delivery, cycleMs apart on the worker's clock.
+  stopFairnessRunAfter(
+    bridge,
+    () => runDir,
+    cycles,
+    () => {
+      claudeBusy = false;
+      clockMs += cycleMs;
+    }
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  seedCodexStreamAndClaude(bridge, runDir, "msg-claude-bound");
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(cycles);
+  // Cycle 1: busy, probe refused. Cycle 2 (6 s later, past the 5 s backoff):
+  // ready, rung. Cycle 7 (30 s after that ring): due again, rung again.
+  expect(rings).toEqual([2, 7]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter(
+        (event: BridgeEvent) =>
+          event.kind === "notified" && event.id === "msg-claude-bound"
+      )
+      .map((event: BridgeEvent) => Date.parse(event.at) - clockMs)
+  ).toEqual([-7 * cycleMs, -2 * cycleMs]);
+
+  rmSync(root, { recursive: true, force: true });
+}, 30_000);
+
+test("bridge worker rings Claude's next inbound in the cycle after a ring under Codex traffic", async () => {
+  // Only a target that was not rung backs off. After a successful ring,
+  // Claude drains its inbox and new mail arrives: the very next fairness pass
+  // rings it, with no backoff delay.
+  const cycles = 2;
+  let runDir = "";
+  let arrivals = 0;
+  const injectCodexMessage = mock(() => {
+    arrivals += 1;
+    appendCodexStreamItem(bridge, runDir, arrivals);
+    return Promise.resolve(true);
+  });
+  const rings: number[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(CLAUDE_IDLE_PANE, "utf8"),
+      };
+    }
+    if (tmuxLiteralText(args) !== undefined) {
+      rings.push(injectCodexMessage.mock.calls.length);
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptVersion = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    String(transcriptVersion++)
+  );
+  stopFairnessRunAfter(
+    bridge,
+    () => runDir,
+    cycles,
+    () => {
+      for (const entry of bridge
+        .readPendingBridgeMessages(runDir)
+        .filter((message: { target: string }) => message.target === "claude")) {
+        bridge.markBridgeMessage(runDir, entry, "delivered", "pulled");
+      }
+      bridge.bridgeInternals.appendBridgeEvent(runDir, {
+        at: new Date().toISOString(),
+        id: `msg-claude-next-${rings.length}`,
+        kind: "message",
+        message: "Fresh Claude mail after the drain.",
+        source: "codex",
+        target: "claude",
+      });
+    }
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  seedCodexStreamAndClaude(bridge, runDir, "msg-claude-first");
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(cycles);
+  expect(rings).toEqual([1, 2]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge worker fairness pass rings another due pane without re-probing a backed-off Claude", async () => {
+  // Two pane targets beside app-server Codex. Claude is busy and backs off
+  // after its first probe; the oss pane keeps getting fresh mail. Each
+  // fairness pass rings only the targets that are due and out of backoff, so
+  // oss is rung every cycle while Claude's pane is not polled again.
+  const cycles = 3;
+  let runDir = "";
+  let arrivals = 0;
+  const injectCodexMessage = mock(() => {
+    arrivals += 1;
+    appendCodexStreamItem(bridge, runDir, arrivals);
+    return Promise.resolve(true);
+  });
+  const claudeCaptures: number[] = [];
+  const ossRings: number[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      const pane = args[args.indexOf("-t") + 1];
+      if (pane === "%40") {
+        claudeCaptures.push(injectCodexMessage.mock.calls.length);
+      }
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          pane === "%40" ? CLAUDE_DRAFT_PANE : "standing by for review",
+          "utf8"
+        ),
+      };
+    }
+    if (tmuxLiteralText(args) !== undefined && sendKeysPane(args) === "%41") {
+      ossRings.push(injectCodexMessage.mock.calls.length);
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let ossMail = 0;
+  const sendOssMail = () => {
+    ossMail += 1;
+    bridge.bridgeInternals.appendBridgeEvent(runDir, {
+      at: new Date().toISOString(),
+      id: `msg-oss-${ossMail}`,
+      kind: "message",
+      message: "Fresh oss mail.",
+      source: "codex",
+      target: "oss",
+    });
+  };
+  stopFairnessRunAfter(
+    bridge,
+    () => runDir,
+    cycles,
+    () => {
+      // oss drains its inbox and new oss mail arrives before the next cycle.
+      for (const entry of bridge
+        .readPendingBridgeMessages(runDir)
+        .filter((message: { target: string }) => message.target === "oss")) {
+        bridge.markBridgeMessage(runDir, entry, "delivered", "pulled");
+      }
+      sendOssMail();
+    }
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeft: "%40",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "oss",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  seedCodexStreamAndClaude(bridge, runDir, "msg-claude-busy-beside-oss");
+  sendOssMail();
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(cycles);
+  expect(ossRings).toEqual([1, 2, 3]);
+  expect(claudeCaptures).toEqual([1, 1]);
+
+  rmSync(root, { recursive: true, force: true });
+}, 30_000);
+
+test("bridge worker does not probe tmux for a Claude doorbell that is not due", async () => {
+  // Round-3 critic: with Claude's doorbell rung moments ago, every Codex
+  // delivery still ran the pane pass and its tmux has-session probe. The
+  // fairness gate reads only the ledger and skips targets that are not due.
+  const cycles = 6;
+  let runDir = "";
+  let arrivals = 0;
+  const injectCodexMessage = mock(() => {
+    arrivals += 1;
+    appendCodexStreamItem(bridge, runDir, arrivals);
+    return Promise.resolve(true);
+  });
+  const spawnSync = mock(() => ({
+    exitCode: 0,
+    stderr: Buffer.alloc(0),
+    stdout: Buffer.from(CLAUDE_IDLE_PANE, "utf8"),
+  }));
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  stopFairnessRunAfter(bridge, () => runDir, cycles);
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  seedCodexStreamAndClaude(bridge, runDir, "msg-claude-recently-rung");
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: new Date().toISOString(),
+    id: "msg-claude-recently-rung",
+    kind: "notified",
+    reason: "nudged claude tmux inbox",
+    source: "codex",
+    target: "claude",
+  });
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(cycles);
+  expect(spawnSync).not.toHaveBeenCalled();
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+const recordWorkerWaits = (
+  bridge: Awaited<ReturnType<typeof loadBridge>>,
+  runDirRef: () => string
+): Array<{ reason: string; timeoutMs: number }> => {
+  const waits: Array<{ reason: string; timeoutMs: number }> = [];
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, version: string, timeoutMs: number, reason: string) => {
+      waits.push({ reason, timeoutMs });
+      completeFairnessRun(runDirRef());
+      return Promise.resolve({ reason, version });
+    }
+  );
+  return waits;
+};
+
+test("bridge worker settles after a cycle whose only progress is a Claude ring", async () => {
+  // The cycle result must include the pane pass: a Claude ring is progress,
+  // so the worker settles instead of re-running an immediate second cycle.
+  let runDir = "";
+  const injectCodexMessage = mock(() => Promise.resolve(true));
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 · bypass permissions on", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  const waits = recordWorkerWaits(bridge, () => runDir);
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:01.000Z",
+    id: "msg-claude-only",
+    kind: "message",
+    message: "Only Claude has mail.",
+    source: "codex",
+    target: "claude",
+  });
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(waits).toEqual([{ reason: "settle", timeoutMs: 100 }]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge worker settles after ringing a refused Codex pane without a second pane pass", async () => {
+  // A Codex tmux ring is Codex progress: the cycle settles, and with no other
+  // pane target pending it does not run the general pane pass (no extra
+  // tmux probe).
+  let runDir = "";
+  let codexComposer = "";
+  const injectCodexMessage = mock(() => Promise.resolve(false));
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          `› ${codexComposer || "Use /skills to list available skills"}\n\n  gpt-5.6-sol xhigh · ~/repo\n`,
+          "utf8"
+        ),
+      };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal !== undefined) {
+      codexComposer = literal;
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let submissionReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(() =>
+    submissionReads++ === 0 ? "before" : "after"
+  );
+  const waits = recordWorkerWaits(bridge, () => runDir);
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:00:00.000Z",
+    id: "msg-codex-only-busy",
+    kind: "message",
+    message: "Codex is mid-turn and alone in the queue.",
+    source: "claude",
+    target: "codex",
+  });
+  const hasSessionProbes = () =>
+    spawnSync.mock.calls.filter(([args]) => tmuxCommand(args) === "has-session")
+      .length;
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(1);
+  expect(waits).toEqual([{ reason: "settle", timeoutMs: 100 }]);
+  expect(hasSessionProbes()).toBe(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge worker keeps the tmux pass on a cycle without Codex progress", async () => {
+  // The fairness gate only adds pane passes after Codex progress. A cycle in
+  // which Codex made no progress keeps the earlier behaviour: the tmux pass
+  // runs even with nothing pending, so a run that ended while the worker was
+  // probing still has its dead tmux state reconciled.
+  let runDir = "";
+  const injectCodexMessage = mock(() => Promise.resolve(true));
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      completeFairnessRun(runDir);
+      return {
+        exitCode: 1,
+        stderr: Buffer.from("can't find session"),
+        stdout: Buffer.alloc(0),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, version: string) => {
+      completeFairnessRun(runDir);
+      return Promise.resolve({ reason: "heartbeat", version });
+    }
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFairnessManifest(runDir);
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(
+    spawnSync.mock.calls.filter(([args]) => tmuxCommand(args) === "has-session")
+  ).toHaveLength(1);
+  expect(
+    readRunManifest(join(runDir, "manifest.json"))?.tmuxSession
+  ).toBeUndefined();
 
   rmSync(root, { recursive: true, force: true });
 });

@@ -117,6 +117,14 @@ test("Claude channel guidance explains when a result reply is one effect", () =>
   );
 });
 
+test("Claude channel guidance documents the keyless progress reply warning", () => {
+  // Decision 3: a keyless message reply shares one result slot per inbound,
+  // and send_message warns about it.
+  expect(claudeChannelInstructions()).toContain(
+    "A message reply with reply_to and no dedupe_key takes the one keyless slot for that inbound, so send_message flags it with a warning: never send a keyless progress reply."
+  );
+});
+
 test("quotedBridgeTool wraps the resolved bridge tool name", () => {
   expect(quotedBridgeTool("codex", "send_message")).toBe(
     '"mcp__loop_bridge__send_message"'

@@ -735,6 +735,25 @@ const replyDigest = (value: string): string =>
 // result slots: repeating one is a new request, not a duplicate result.
 const RESULT_REPLY_TYPES = new Set<BridgeMessageType>(["message", "decision"]);
 
+// Lint for the Claude result slot (owner decision 3, 2026-10-05). The slot key
+// is reply_to + type + dedupe_key, so a Claude "message" reply without a
+// dedupe_key takes the one keyless slot for that inbound: a progress update
+// sent that way makes every later keyless message reply to the same inbound,
+// usually the real result, a duplicate. The send is still accepted; the
+// caller is warned so it can key interim replies.
+export const keylessClaudeResultReplyWarning = (
+  source: BridgeSource,
+  options: Pick<BridgeEnqueueOptions, "dedupeKey" | "replyTo" | "type">
+): string | undefined => {
+  if (source !== "claude" || !options.replyTo || options.dedupeKey) {
+    return undefined;
+  }
+  if ((options.type ?? "message") !== "message") {
+    return undefined;
+  }
+  return `warning: message reply to ${options.replyTo} has no dedupe_key, so it shares the one keyless result slot for that inbound; a later keyless message reply to ${options.replyTo} (such as the result after a progress update) will be deduplicated. Give each interim progress reply its own dedupe_key.`;
+};
+
 // Resolutions after which a message never reached its recipient, so it does
 // not hold its reply slot.
 const NO_EFFECT_RESOLUTIONS = new Set<BridgeEvent["kind"]>([
