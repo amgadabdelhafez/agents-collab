@@ -43,6 +43,15 @@ path. The blob's own content asserts "Source truth: Git", "Transactional state:
 PostgreSQL" and "Workflow owner: Temporal" without a SHA or evidence. Those
 lines are unproven claims, not audit evidence. The file is not at this base
 (53511614). Run48 evidence from the integration input binds to neither e4efbae2
-nor 53511614: its launcher candidate 28bf864b has no recorded source, and its
-dedicated service candidate 9904f280 was built from 99e61b54 plus an
-uncommitted overlay. See status.md's October 5 correction.
+nor 53511614: its launcher candidate 28bf864b has no recorded source, and the
+only service hash recorded for Run48, 9904f280, is bound to the 08:38 UTC
+service start alone, not to the later restart under which the result was
+published. No commit or recorded overlay identifies 9904f280's source. See
+status.md's October 5 correction.
+
+Revised 2026-10-05: an earlier wording of the sentence above said 9904f280 "was
+built from 99e61b54 plus an uncommitted overlay". That is the predecessor
+record's description (e4efbae2 release-attribution.md:8-11), not evidence: the
+overlay bytes were never recorded, so no source is identified. The evidence for
+this revision is listed in status.md's October 5 correction, under "Run48
+service identity".
