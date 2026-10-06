@@ -20,6 +20,7 @@ import {
   WorkflowError,
   type WorkflowInspection,
   type WorkflowPort,
+  type WorkflowPresence,
   type WorkflowQueryCommand,
   type WorkflowQueryResult,
   type WorkflowSignalCommand,
@@ -66,13 +67,18 @@ export class TemporalWorkflowPort implements WorkflowPort {
   }
 
   async isClosed(workflowId: string): Promise<boolean> {
+    return (await this.presence(workflowId)) === "closed";
+  }
+
+  async presence(workflowId: string): Promise<WorkflowPresence> {
     try {
-      return (
-        (await this.#handle(workflowId).describe()).status.name !== "RUNNING"
-      );
+      return (await this.#handle(workflowId).describe()).status.name ===
+        "RUNNING"
+        ? "running"
+        : "closed";
     } catch (error) {
       if (error instanceof WorkflowNotFoundError) {
-        return false;
+        return "missing";
       }
       throw error;
     }
@@ -120,6 +126,15 @@ export class TemporalWorkflowPort implements WorkflowPort {
       }
       created = false;
       handle = this.#handle(command.workflowId);
+      // A workflow ID is unique per namespace, not per deployment. Another
+      // deployment sharing the namespace under its own task queue can hold the
+      // same ID; adopting its execution would read and signal foreign state.
+      if ((await handle.describe()).taskQueue !== this.#taskQueue) {
+        throw new WorkflowError(
+          "conflict",
+          `workflow ${command.workflowId} belongs to another task queue`
+        );
+      }
     }
     const snapshot = await handle.query(temporalStartSnapshotQuery);
     if (snapshot.inspection.workflowType !== command.workflowType) {

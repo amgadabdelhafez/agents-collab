@@ -17,6 +17,8 @@ import { WorkflowError } from "./workflow-port";
 export const SUPERVISOR_MESSAGE_V2_SCHEMA = "supervisor-message.v2" as const;
 export const SUPERVISOR_MESSAGE_V2_REPLAY_FIXTURE_SCHEMA =
   "supervisor-message-replay-fixture.v2" as const;
+/** Upper bound of a delivery attempt, and so of the delivery IDs per workflow. */
+export const SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS = 20;
 
 export interface TrustedSupervisorMessageV2Scope extends JsonObject {
   principal: string;
@@ -468,7 +470,7 @@ const requirePolicy = (value: unknown): SupervisorMessagePolicy => {
     maxDeliveryAttempts: requireBoundedPositiveInteger(
       value.maxDeliveryAttempts,
       "policy maxDeliveryAttempts",
-      20
+      SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS
     ),
     retryDelayMs: requireBoundedPositiveInteger(
       value.retryDelayMs,
@@ -735,7 +737,11 @@ export const deriveSupervisorMessageV2DeliveryId = (
   `supervisor-message-delivery:v2:${scopedDigest(scope, "delivery", [
     requireString(workflowId, "workflowId", V2_WORKFLOW_ID_RE),
     String(
-      requireBoundedPositiveInteger(deliveryAttempt, "deliveryAttempt", 20)
+      requireBoundedPositiveInteger(
+        deliveryAttempt,
+        "deliveryAttempt",
+        SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS
+      )
     ),
   ])}`;
 
@@ -1116,7 +1122,7 @@ export const parseSupervisorMessageV2DeliveryEnvelope = (
   const deliveryAttempt = requireBoundedPositiveInteger(
     value.deliveryAttempt,
     "deliveryAttempt",
-    20
+    SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS
   );
   const deliveryId = requireString(
     value.deliveryId,

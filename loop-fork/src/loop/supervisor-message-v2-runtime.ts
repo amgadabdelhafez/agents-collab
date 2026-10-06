@@ -14,11 +14,13 @@ import {
   type SupervisorMessageInput,
   supervisorMessageWorkflowDefinition,
 } from "./supervisor-message-workflow";
-import type {
-  JsonObject,
-  WorkflowDefinition,
-  WorkflowPort,
-  WorkflowTransitionResult,
+import {
+  type JsonObject,
+  type WorkflowDefinition,
+  WorkflowError,
+  type WorkflowPort,
+  type WorkflowPresence,
+  type WorkflowTransitionResult,
 } from "./workflow-port";
 
 export const SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE = "supervisor-message.v2";
@@ -205,6 +207,11 @@ export interface SupervisorMessageV2DeliveryLedger {
     owner: string,
     fence: number
   ): Promise<void>;
+  /** Whether any delivery of this scoped workflow was externally completed. */
+  hasCompletedDelivery(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<boolean>;
   prepare(
     envelope: SupervisorMessageV2DeliveryEnvelope,
     trustedScope: TrustedSupervisorMessageV2Scope
@@ -522,6 +529,18 @@ export class SupervisorMessageV2Coordinator {
       trustedScope,
       parsed
     );
+    if (
+      (await this.#presence(workflowId)) === "missing" &&
+      (await this.#ledger.hasCompletedDelivery(workflowId, trustedScope))
+    ) {
+      // A sender retry after retention purged the finished execution. The
+      // dedupe key was already delivered; starting it again would deliver
+      // the message a second time through an attempt that never completed.
+      throw new WorkflowError(
+        "conflict",
+        `workflow ${workflowId} already delivered and its execution was purged`
+      );
+    }
     const started = await this.#workflows.start({
       input: { input: durableInput, trustedScope },
       requestId,
@@ -545,17 +564,28 @@ export class SupervisorMessageV2Coordinator {
    */
   async recoverPending(): Promise<number> {
     let recovered = 0;
+    let conflict: WorkflowError | undefined;
     for (const record of await this.#ledger.recoverableStarts()) {
       const { input, trustedScope, workflowId } = record;
-      if (await this.#workflows.isClosed?.(workflowId)) {
+      if (await this.#settled(trustedScope, workflowId)) {
         continue;
       }
-      await this.#workflows.start({
-        input: { input, trustedScope },
-        requestId: `recovery-start:${workflowId}`,
-        workflowId,
-        workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
-      });
+      try {
+        await this.#workflows.start({
+          input: { input, trustedScope },
+          requestId: `recovery-start:${workflowId}`,
+          workflowId,
+          workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
+        });
+      } catch (error) {
+        // The ID is held by an execution this host does not own. Leave it
+        // alone, recover the remaining intents, and still fail the sweep.
+        if (!(error instanceof WorkflowError && error.code === "conflict")) {
+          throw error;
+        }
+        conflict ??= error;
+        continue;
+      }
       const projection = await this.status(trustedScope, workflowId);
       if (
         projection.phase === "retry-scheduled" &&
@@ -574,6 +604,9 @@ export class SupervisorMessageV2Coordinator {
       }
       await this.#deliver(trustedScope, workflowId, `recovery:${workflowId}`);
       recovered += 1;
+    }
+    if (conflict) {
+      throw conflict;
     }
     return recovered;
   }
@@ -738,6 +771,37 @@ export class SupervisorMessageV2Coordinator {
       requestId: outcomeRequestId,
       workflowId,
     });
+  }
+
+  /**
+   * A closed execution needs no recovery. A missing one is ambiguous: the
+   * process stopped between recording the start intent and starting the
+   * workflow, or the engine purged a closed execution after retention. Only
+   * the first may be started. A completed delivery proves the workflow ran, so
+   * starting it again would resurrect a finished message. A port that cannot
+   * tell missing from running keeps the earlier start-and-converge behavior.
+   */
+  async #settled(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<boolean> {
+    let presence = await this.#presence(workflowId);
+    if (
+      presence === undefined &&
+      (await this.#workflows.isClosed?.(workflowId))
+    ) {
+      presence = "closed";
+    }
+    if (presence === "missing") {
+      return this.#ledger.hasCompletedDelivery(workflowId, trustedScope);
+    }
+    return presence === "closed";
+  }
+
+  async #presence(workflowId: string): Promise<WorkflowPresence | undefined> {
+    return this.#workflows.presence
+      ? await this.#workflows.presence(workflowId)
+      : undefined;
   }
 
   async #deliveryPending(

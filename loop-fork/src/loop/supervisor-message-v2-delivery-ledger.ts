@@ -1,9 +1,11 @@
 import { SQL } from "bun";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import {
+  deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2WorkflowId,
   parseSupervisorMessageV2DeliveryEnvelope,
   parseSupervisorMessageV2Input,
+  SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
   type TrustedSupervisorMessageV2Scope,
@@ -377,6 +379,28 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         "V2 delivery completion lacks the prepared bound envelope"
       );
     }
+  }
+
+  /**
+   * Looks a workflow's deliveries up by primary key. Every delivery ID is a
+   * scoped digest of (scope, workflow, attempt) and attempts are bounded, so
+   * the candidates are enumerable and a foreign scope derives none of them.
+   * It never reads `envelope_json`: this client binds `${text}::jsonb` as a
+   * JSON string scalar, where a JSON path such as `->>'workflowId'` is NULL.
+   */
+  async hasCompletedDelivery(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<boolean> {
+    const deliveryIds = Array.from(
+      { length: SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS },
+      (_, index) =>
+        deriveSupervisorMessageV2DeliveryId(trustedScope, workflowId, index + 1)
+    ).join(",");
+    const rows = await this.#sql<
+      { completed: boolean }[]
+    >`SELECT EXISTS (SELECT 1 FROM loop_supervisor_message_v2_delivery_ledger WHERE delivery_id = ANY(string_to_array(${deliveryIds}::text, ',')) AND completed_at IS NOT NULL) AS completed`;
+    return rows[0]?.completed === true;
   }
 
   async completeClaim(

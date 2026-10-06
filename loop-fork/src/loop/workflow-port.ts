@@ -79,12 +79,20 @@ export interface WorkflowInspection {
 
 export type WorkflowResult<T> = Promise<T> | T;
 
+/**
+ * Whether the engine still holds an execution. `missing` is distinct from
+ * `closed`: an engine may purge a closed execution after its retention period,
+ * and an execution whose start never happened is missing too.
+ */
+export type WorkflowPresence = "closed" | "missing" | "running";
+
 export interface WorkflowPort {
   cancel(
     command: WorkflowCancelCommand
   ): WorkflowResult<WorkflowCommandReceipt>;
   inspect(workflowId: string): WorkflowResult<WorkflowInspection>;
   isClosed?(workflowId: string): WorkflowResult<boolean>;
+  presence?(workflowId: string): WorkflowResult<WorkflowPresence>;
   query(command: WorkflowQueryCommand): WorkflowResult<WorkflowQueryResult>;
   signal(
     command: WorkflowSignalCommand

@@ -643,6 +643,23 @@ test("standard V2 factory authenticates before task mutation and preserves scope
           workflowId,
         })
       ).resolves.toBeUndefined();
+      // Recovery's retention boundary: an accepted delivery is durable proof
+      // the workflow ran, visible only inside its own trusted scope.
+      await expect(
+        assignmentLedger.hasCompletedDelivery(workflowId, SCOPE)
+      ).resolves.toBe(true);
+      await expect(
+        assignmentLedger.hasCompletedDelivery(workflowId, {
+          ...SCOPE,
+          tenantId: "tenant:foreign",
+        })
+      ).resolves.toBe(false);
+      await expect(
+        assignmentLedger.hasCompletedDelivery(
+          `supervisor-message-workflow:v2:${"0".repeat(64)}`,
+          SCOPE
+        )
+      ).resolves.toBe(false);
     } finally {
       await assignmentLedger.close();
     }
