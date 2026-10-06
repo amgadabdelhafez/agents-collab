@@ -133,3 +133,392 @@ retired sources are still present, still marked, and still unwired.
 One beat workflow per run is a single long-running execution, so its Temporal
 history grows without bound over a long run. Event-count limits and a
 `ContinueAsNew` boundary need a decision in the cutover slice.
+
+## A2A V2 control plane (r4 integration)
+
+Written 2026-10-06 against claude/fix-integration-r4-2026-10-05 at
+00094c661fe6c1923737318d5e39d885d993b11c ("r4"). r4 is not merged into main
+and is not installed anywhere. Every `file:line` below is a path under
+`loop-fork/` at that commit. The owner decisions this section refers to are in
+`specs/harness-control-plane-vertical-release-v1/decisions.md` (repository
+root). Earlier lines it names: 40097564 ("r2", the last line before the
+keyed graph id and the deployment discriminator) and ef570282 ("r3").
+
+Not on r4, so not described here as available: result graph key rotation with
+previous keys (claude/fix4-key-rotation, 226e40c2 and a54a21f4) and the
+recovery quarantine CLI (claude/fix4-recovery-escape-path-r4, 4d3668fd to
+26f91ac5). Neither branch is merged into r4.
+
+### Configuration keys added in rounds 3 and 4
+
+All are optional fields of the `a2aV2` object of the orchestration config.
+`a2aV2` keys are checked exactly, so a build that does not know a key refuses
+to start with "orchestration a2aV2 has invalid fields"
+(src/loop/loop-orchestration-server.ts:412-434).
+
+| Key | Added | Value | Default when omitted | Source |
+| --- | --- | --- | --- | --- |
+| `resultGraphKeyEnv` | r3 (3cf366e8) | Name of the environment variable holding the result graph HMAC key, never the key itself. The variable must hold at least 32 bytes. | No key: the result-graph route, binding and the CLI refuse. Required when `resultArtifacts` has entries. | loop-orchestration-server.ts:154-160, 509-525, 628-648; supervisor-message-v2-contract.ts:790, 805-813 |
+| `readinessOutageBoundMs` | r3 (11b71513) | Whole ms, 1000..86400000. How long a session readiness-store outage may defer a recipient's deliveries before each one fails as a normal retryable attempt. | 900000 (15 min) | loop-orchestration-server.ts:147-152, 560-568; supervisor-message-v2-runtime.ts:84 |
+| `workflowIdFormat` | r4 (ae877039) | `"legacy"` or `"deployment"`. The V2 workflow id format new messages are written in. | The format the ledger database records, or `"legacy"` when none is recorded. `"deployment"` is always an explicit opt-in. | loop-orchestration-server.ts:162-175, 578-597; supervisor-message-v2-delivery-ledger.ts:513-562 |
+| `notEnrolledBoundMs` | r4 (f3f8c2e1) | Whole ms, 1000..86400000. How long a recipient that is not enrolled may defer its deliveries, measured from when enrollment first failed. | 900000 (15 min) | loop-orchestration-server.ts:132-139, 550-559; supervisor-message-v2-runtime.ts:275 |
+
+Changed in r3: a non-empty `resultArtifacts` without `resultGraphKeyEnv`
+refuses startup with "orchestration a2aV2 resultArtifacts requires
+resultGraphKeyEnv: ..." (loop-orchestration-server.ts:519-525). An entry in
+the retired shape {artifactRef, commit, path, repositoryRoot} refuses startup
+with the migration text, and a `graphWorkflowId` that is neither a keyed v3 id
+nor an unkeyed v2 id refuses startup (loop-orchestration-server.ts:376-401).
+The shape check is a pattern only: a v3 id derived under another key passes
+config parsing but can never bind.
+
+A missing key variable refuses startup with "missing orchestration A2A V2
+result graph key environment <VAR>"; a short one with "orchestration A2A V2
+result graph key environment <VAR> must hold at least 32 bytes"
+(loop-orchestration-server.ts:635-647). Both name the variable only.
+
+Retention: session receipt retention (decision 9, c41b459d and 00845464) is
+not an orchestration config key. The server always uses the default: per seat,
+keep the latest 16 receipts plus every receipt newer than 7 days, pruned in
+the seat's next rebind (src/loop/supervisor-session-v2.ts:35-60). `a2aV2`
+offers no field for it (loop-orchestration-server.ts:412-434).
+
+Secrets: set the key in the variable named by `resultGraphKeyEnv` through the
+host's secret store or protected service environment. Do not put it in the
+config file, in a command line or in a log. Generate it with at least 32 bytes
+of entropy.
+
+### Workflow id formats
+
+- Legacy: `supervisor-message-workflow:v2:<sha256>`, byte for byte the id the
+  pre-discriminator build (40097564) derives (supervisor-message-v2-contract.ts:773-780).
+  Rows carry `deployment` NULL.
+- Deployment: `supervisor-message-workflow:v2:deployment:<sha256>`, scoped to
+  the deployment, which is the host's Temporal task queue
+  (supervisor-message-v2-contract.ts:751-763; supervisor-a2a-v2-service.ts:728-733).
+
+In either mode a host reads, recovers and deduplicates both formats: a dedupe
+key already recorded under one id keeps it (supervisor-message-v2-delivery-ledger.ts:406-430).
+
+The database records the format in `loop_supervisor_message_v2_schema_marker`,
+row `workflow-id-format.v1`, columns `value` and `build_id`. A BEFORE INSERT
+trigger, `loop_supervisor_message_v2_start_intent_format_guard_v1`, refuses for
+every writer (older builds included) a start intent in any other format, and a
+legacy intent for a message already held under a deployment id
+(supervisor-message-v2-delivery-ledger.ts:77-101, 513-562).
+
+Every V2 workflow port call checks that the execution runs on this host's
+task queue and refuses one on another queue as `WorkflowError (conflict)`
+(src/loop/temporal-workflow-port.ts:199-221). That check works in both
+formats. In legacy format it cannot refuse a start whose execution does not
+exist yet, so hosts on different task queues that share one ledger database
+are not isolated (decision 6 is off) until every one of them writes
+`"deployment"`.
+
+Start log lines, one per start (supervisor-a2a-v2-service.ts:613-626):
+
+- `A2A V2 workflow ids: legacy format. The deployment discriminator is off: every host sharing this ledger database recovers and deduplicates the others' messages. Set a2aV2.workflowIdFormat "deployment" on every such host once all of them run a build that supports it`
+- `A2A V2 workflow ids: deployment format, scoped to this host's task queue`
+
+Startup refusals over the format (supervisor-message-v2-delivery-ledger.ts:526,
+540). The service prints them verbatim after "Supervisor A2A V2 service
+initialization failed at delivery-ledger: " (supervisor-a2a-v2-service.ts:934-937):
+
+- `V2 delivery ledger records workflow id format "<format>" (written by build <build>), which this build does not support; it supports "legacy" and "deployment". Run a build that supports the recorded format`
+- `V2 delivery ledger cannot return to legacy workflow ids: <n> deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle`
+
+A write refused by the trigger raises: `V2 delivery ledger writes "<recorded>"
+workflow ids (recorded by build <build>); a "<written>" start intent is
+refused. Every host sharing this ledger database must run a build that
+supports the recorded format, with the same a2aV2.workflowIdFormat`
+(supervisor-message-v2-delivery-ledger.ts:86-89).
+
+### Result graph ids, the result-graph route and the CLI
+
+A message's result graph id is `supervisor-result-graph:v3:<hmac-sha256>`:
+HMAC-SHA256 under the host key over ("supervisor-result-graph", "v3", tenant,
+principal, messageWorkflowId), each field length-prefixed and NUL-terminated
+(supervisor-message-v2-contract.ts:782-856). The retired unkeyed id
+`supervisor-result-graph:v2:<sha256>` is still recognised for bindings
+recorded before the key; no new binding may name one
+(supervisor-message-v2-delivery-ledger.ts:361-371, 741-768).
+
+Compute an id offline, for a `resultArtifacts` entry:
+
+```
+loop orchestration result-graph-id <config-path> <message-workflow-id>
+```
+
+It reads the config's `a2aV2` tenant, control principal and key variable,
+prints only the id, and never starts the server
+(src/loop/orchestration-command.ts:5-7, 36-48, 79-89;
+loop-orchestration-server.ts:1544-1566). It fails with "orchestration config
+has no a2aV2 route" or "orchestration a2aV2 has no resultGraphKeyEnv" when
+those are missing.
+
+Start a message's result graph over HTTP, as the control principal (a2aV2
+`principal`):
+
+```
+POST <a2aV2.routePath>/result-graph
+{"input": <task-graph.v1 input>, "messageWorkflowId": "...", "requestId": "..."}
+```
+
+The host checks that the message's start intent is recorded in the route's
+scope, derives the graph id under its key and starts `task-graph.v1` under it
+(supervisor-a2a-v2-service.ts:492-516). Success is 200 with
+`{"schema": "supervisor-result-graph-start-receipt.v1", "messageWorkflowId", "graphWorkflowId", "created"}`;
+a refused start is 409 `{"code": "result-graph-start-refused"}` with no cause
+(src/loop/a2a-supervisor-assignment-http.ts:204-268). The route is mounted at
+`<routePath>/result-graph` (loop-orchestration-server.ts:1389-1392).
+
+The old route refuses these ids. `POST /api/v1/task-graphs/start` with a
+`workflowId` starting `supervisor-result-graph:` returns 403 with
+`error.code` `"result-graph-id-reserved"`, unchanged since r3, and since r4
+also `error.message` and `error.replacement`:
+`{"method": "POST", "route": "<routePath>/result-graph" or null when the server mounts no A2A V2 route, "body": ["input", "messageWorkflowId", "requestId"], "resultGraphIdCommand": "loop orchestration result-graph-id <config-path> <message-workflow-id>"}`
+(src/loop/supervisor-orchestration-http.ts:62-86, 256-261). Ids outside the
+prefix start as before. Operator scripts that started result graphs through
+task-graphs/start must move to the result-graph route.
+`TemporalSupervisorRuntimeHost.httpHandler(authenticator, options?)` takes an
+optional `{resultGraphRoutePath?: string}`; one-argument callers are unchanged
+(src/loop/temporal-supervisor-runtime.ts:325-334).
+
+Bind a result (unchanged route, keyed check since r3): `POST
+<routePath>/assignment` with {a2aTaskId, graphTaskId, graphWorkflowId,
+messageWorkflowId, recipient}. The graph must equal the keyed id of the
+message and be listed in `resultArtifacts`. Any refusal is 409
+`{"code": "assignment-refused"}` (a2a-supervisor-assignment-http.ts:127-195;
+supervisor-a2a-v2-service.ts:419-490).
+
+### Health and status surfaces
+
+Unauthenticated `GET /healthz` carries counts and aggregate state only, no
+seat or recipient id (loop-orchestration-server.ts:255-282):
+
+```
+{
+  "schema": "loop-orchestration-health.v1",
+  "state": "ready" | "unavailable",
+  "notEnrolledCount": <n>,
+  "a2aV2NotEnrolledDeferral": {"boundMs", "deferredDeliveries", "notEnrolledFailures", "recipientsDeferred"},
+  "a2aV2ReadinessOutage": {"boundMs", "deferredDeliveries", "outageFailures", "recipientsDeferred"}
+}
+```
+
+The two `a2aV2*` blocks appear only when an A2A V2 service is mounted.
+`notEnrolledCount` is always supplied by the server (loop-orchestration-server.ts:1725-1731).
+`state` ignores both deferrals. Counters are cumulative since process start;
+each `recipientsDeferred` is a current count
+(supervisor-message-v2-runtime.ts:114-131, 244-259, 310-321, 408-420). On r3
+the body carried `notEnrolled` with seat ids instead of `notEnrolledCount`; a
+consumer reading `notEnrolled` must read `notEnrolledCount` or the
+authenticated status below.
+
+Authenticated `GET <routePath>/assignment`, control principal only, returns
+`{"schema": "supervisor-result-assignment-status.v1", "notEnrolled": [seat ids], "readinessOutage": [recipient ids], "unpublishable": [...]}`
+(a2a-supervisor-assignment-http.ts:66-108; supervisor-a2a-v2-service.ts:628-664).
+`unpublishable` lists this tenant's bindings recorded before graphs were
+derived (`body-chosen-graph`) or unreadable (`malformed`). It does not list a
+binding stranded by a key change (see rotation below).
+
+Readiness outage semantics (d6392ce9, supervisor-message-v2-runtime.ts:145-171):
+the bound is measured from the first failure a delivery observed for that
+recipient. An outage ends when the store answers for that recipient, or when
+no delivery observed it for 2 hours and no message it failed still waits on
+its retry. `recipientsDeferred` and the `readinessOutage` list include only
+recipients observed in an outage within the last 2 hours. A later, separate
+outage gets its own bound. State is in memory, so a restart starts the bound
+again. Log lines: `V2 delivery to <recipient> deferred: session readiness store is unavailable`,
+`... still deferred after <bound>ms: the readiness store outage now fails delivery attempts`,
+`... resumed after <ms>ms: session readiness store answered`
+(supervisor-message-v2-runtime.ts:196-237).
+
+Not-enrolled deferral (f3f8c2e1): a peer seat that is not running or not
+reachable degrades that seat alone at start; the configured recipient's own
+failure, or any other peer failure, still refuses start
+(loop-orchestration-server.ts:936-978, 1053-1077). Log lines:
+`orchestration A2A V2 session enrollment failed for <seat>: <cause>` and
+`orchestration A2A V2 session enrollment recovered for <seat>`
+(loop-orchestration-server.ts:1228-1247); `V2 delivery to <recipient> deferred: recipient session is not enrolled`,
+`... still deferred after <bound>ms not enrolled: delivery attempts now fail`,
+`... resumed after <ms>ms: recipient session is enrolled and ready`
+(supervisor-message-v2-runtime.ts:365-406).
+
+### Recovery at start (decision 7)
+
+Service-start recovery skips only a record whose id is held by an execution
+this deployment does not own, logging `V2 recovery skipped workflow <id> for <recipient>: WorkflowError (conflict): ...`.
+Any other per-record failure, or a failure of the whole sweep, refuses
+startup after every other record was recovered
+(supervisor-message-v2-runtime.ts:543-556, 640-662, 735-740). The periodic
+sweep retries a failing record with backoff min(interval x 2^(n-1), 10 min)
+and logs each transition (supervisor-message-v2-runtime.ts:697-733).
+
+Two limits on r4:
+
+- The refusal reaches the operator only as `Supervisor A2A V2 service initialization failed at runtime-host (unclassified)`.
+  `SupervisorMessageV2RecoveryStartupError` names every failing record, but it
+  is not on the service's list of reportable error names and the runner does
+  not log it (supervisor-a2a-v2-service.ts:316-327, 939-942;
+  supervisor-message-v2-runtime.ts:652-661). r4 has no way to start past such
+  a record; the quarantine on claude/fix4-recovery-escape-path-r4 is not
+  merged. Find the record by its own symptom (database or Temporal error)
+  and repair it before restarting.
+- A conflict at start counts as foreign whatever its cause. That includes an
+  execution of another workflow type on this host's own task queue: the port
+  raises `WorkflowError (conflict): workflow <id> already exists as <type>`
+  (temporal-workflow-port.ts:150-156), and recovery skips it. The test "the
+  orchestration server starts when a recorded V2 workflow ID is held by a
+  foreign execution" (tests/loop/loop-orchestration-server-postgres.test.ts)
+  pins that skip for a running `supervisor-message.v1` execution on the same
+  queue.
+
+### What existing rows and bindings do on upgrade
+
+All migrations run in `migrate()` on the first start and are additive
+(supervisor-message-v2-delivery-ledger.ts:432-496):
+
+- Start intents written before the discriminator keep their legacy id with
+  `deployment` NULL. Nothing is rewritten or backfilled.
+- `terminal_outcome` is not backfilled (decision 5). Existing rows read NULL,
+  meaning no outcome observed. A closed execution Temporal still holds gets
+  its marker on the next recovery sweep. An execution purged before the
+  marker existed, with no completed delivery, cannot be told from a lost
+  start and is restarted.
+- A database migrated by the 3f7a70f2 build: inside one transaction holding
+  ACCESS EXCLUSIVE on `loop_supervisor_message_v2_start_intent`, any
+  `terminal_outcome` CHECK that is not the current list is dropped, stored
+  `'completed'` is rewritten to `'acknowledged'`, and the CHECK
+  `loop_supervisor_message_v2_start_intent_terminal_outcome_check` over
+  ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated') is
+  added. On a current database it takes the lock briefly and changes nothing.
+  If a stored value is outside the current list (for example a hand-widened
+  CHECK), adding the CHECK fails and migrate fails
+  (supervisor-message-v2-delivery-ledger.ts:590-632).
+- Result bindings recorded under the unkeyed v2 graph of their own message
+  are reserved once (marker `result-graph-task-backfill.v1`), keep publishing
+  and stay immutable. Bindings that named a body-chosen graph, or cannot be
+  read, are recorded once in `loop_supervisor_message_v2_unpublishable_result_binding`,
+  logged at every start as `A2A V2 result binding will never publish (<reason>): tenant <T> message <M> A2A task <A>; re-bind it to its message-derived result graph`,
+  and listed by the authenticated assignment GET. Re-binding the message to
+  its keyed graph clears the entry
+  (supervisor-message-v2-delivery-ledger.ts:634-699, 836-846;
+  supervisor-a2a-v2-service.ts:590-604).
+- Temporal graphs already started under a v2 id keep running; nothing is
+  renamed.
+- A database written by the r3 build has deployment-format rows and no
+  format marker. It defaults to `"legacy"`, so start is refused with the
+  "cannot return to legacy" message until `"deployment"` is set or its rows
+  settle.
+- Session receipts are not rewritten. Each seat's backlog is pruned at that
+  seat's first rebind. The first migrate builds two seat indexes with plain
+  CREATE INDEX, which blocks receipt writes while each index builds
+  (supervisor-session-v2.ts:634-647).
+
+### Upgrade procedure
+
+Conservative path: rolling back stays possible until an explicit flip.
+
+1. Before: back up the ledger database. Stop every host that shares it, or
+   plan one host at a time knowing that a host whose format another host
+   changed refuses to record until it restarts.
+2. Config, on every host: if `resultArtifacts` has entries, add
+   `resultGraphKeyEnv` and provide the key through the secret store.
+   Recompute each entry's `graphWorkflowId` with `loop orchestration
+   result-graph-id`. An entry for a binding recorded under its unkeyed v2 id
+   may keep that id. Leave `workflowIdFormat` unset (legacy write).
+   Optionally set `readinessOutageBoundMs` and `notEnrolledBoundMs`.
+   Exception: from an r3-written database, set `workflowIdFormat`
+   `"deployment"` now, or start is refused while its deployment rows are
+   unsettled.
+3. Start every host on r4.
+4. Verify on each host: the legacy-format start line; `GET /healthz` reports
+   `state` "ready" and `notEnrolledCount`; the authenticated `GET
+   <routePath>/assignment` answers; any "will never publish" lines are
+   expected and listed. In the database:
+   `SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`
+   returns `legacy` and this build's id.
+5. Flip, optional and pending owner question Q1: only after every host that
+   shares the database runs r4, set `workflowIdFormat` `"deployment"` on every
+   one of them and restart each. Verify the deployment-format start line and
+   the marker value `deployment`. From then on 40097564 can record nothing
+   on this database and its recovery refuses deployment-format rows.
+
+### Rollback procedure
+
+- Before the flip (marker `legacy`, and the database never held a
+  deployment-format row), to 40097564: stop the r4 hosts. Restore the 40097564
+  config: remove `resultGraphKeyEnv`, `readinessOutageBoundMs`,
+  `workflowIdFormat` and `notEnrolledBoundMs`, and any `resultArtifacts`
+  entry naming a v3 id (40097564 refuses all of them). Start 40097564.
+  This is safe for the workflow id path (ledger test "rollback: the real
+  base-era ledger migrates, recovers, deduplicates and records over default
+  legacy-write rows, and this build reads its rows back"). Limits: results
+  bound under keyed v3 graphs are not published by 40097564, which lets the
+  message be re-bound to its unkeyed v2 graph (ledger test "rollback limit:
+  ..."); 40097564 refuses start when any configured seat cannot be enrolled;
+  its /healthz carries only `schema` and `state`. Rolling back with V2
+  executions still running is unverified, so drain them first.
+- After the flip: set `workflowIdFormat` `"legacy"` on r4 and restart.
+  Start is refused while any deployment-format start intent has no terminal
+  outcome. If rows never settle (for example rows of a task queue that no
+  longer runs), run a host on that task queue in `"deployment"` mode until
+  its recovery settles them; otherwise stay on `"deployment"`. No override
+  exists. After a flip, 40097564 is not a rollback target.
+- To ef570282 (r3): not recommended. By code reading, untested: r3 always
+  writes deployment-format intents (ef570282
+  supervisor-message-v2-delivery-ledger.ts:636-664), so with the marker at
+  `legacy` the trigger refuses every new message r3 receives. r3 also puts
+  seat ids back on unauthenticated /healthz (`notEnrolled`). Its config must
+  drop `workflowIdFormat` and `notEnrolledBoundMs`.
+
+### Result graph key rotation on r4
+
+r4 holds one key and has no previous-key support. Rotating the key changes
+every v3 id. Verified at the ledger level on 2026-10-06 with a throwaway test
+(not committed) on real PostgreSQL, and by the committed test "no new binding
+may name an unkeyed v2 graph, and a ledger without the key binds nothing":
+
+- A binding recorded under the old key stops publishing under the new key.
+  Nothing reports it: it is not in the unpublishable table, the start log or
+  the assignment GET.
+- Re-binding the same A2A task to its new-key graph replaces the old binding,
+  and it publishes again. A host still holding the old key then no longer
+  publishes it.
+
+Procedure, if a rotation cannot wait for claude/fix4-key-rotation:
+
+1. Drain: wait until every bound result has been published, so no binding is
+   pending under the old key. r4 offers no listing of keyed bindings; check
+   the A2A tasks you bound.
+2. Put the new key in the secret store (a new variable name, or the same
+   one), update `resultGraphKeyEnv` if the name changed, and recompute every
+   `resultArtifacts` `graphWorkflowId` with `loop orchestration
+   result-graph-id`. Old v3 ids still pass config parsing, so startup does not
+   catch a stale entry.
+3. Restart. For any message still pending under the old key, start its graph
+   again with `POST <routePath>/result-graph`, add the returned
+   `graphWorkflowId` to `resultArtifacts`, restart, and re-POST the
+   assignment with it. The old graph's Temporal execution keeps running.
+
+### Proof by test file
+
+On 2026-10-06 at 00094c66 with task-owned PostgreSQL and Temporal
+(`bun run test:file`): orchestration-command 4, supervisor-orchestration-http
+10, a2a-supervisor-assignment-http 8, loop-orchestration-server 33,
+bridge-result-reply-dedupe 16, supervisor-message-v2-runtime 32,
+supervisor-message-v2-recovery 34, supervisor-session-v2 7,
+supervisor-session-v2-postgres 13, supervisor-a2a-result-binding 11,
+supervisor-message-v2-delivery-ledger 42,
+supervisor-message-v2-temporal-retention 12,
+loop-orchestration-server-postgres 15, temporal-orchestration-e2e 2,
+temporal-workflow-port 12 and temporal-supervisor-runtime 8 tests, all pass.
+supervisor-a2a-v2-service: 12 pass, 1 fail on both runs: "every V2 delivery
+path of one service defers a not-enrolled recipient under one shared bound,
+log line, and counters". Its fixture passes `host: {taskQueue}` with no
+`buildId`, which the ledger requires since ae877039, so the service fails at
+"delivery-ledger (unclassified)". The test came from f3f8c2e1 and the
+requirement from ae877039; they first meet on r4. It is a test-fixture
+defect: the server always passes the config's required `buildId`
+(loop-orchestration-server.ts:1321).

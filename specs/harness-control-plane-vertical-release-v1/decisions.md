@@ -259,3 +259,191 @@ on the same branch, which is still not merged or installed.
   legacy mode is not a way back to the pre-discriminator build. This build
   offers no override. Whether an operator may record such an outcome by hand
   is an open question for the owner.
+
+## 2026-10-06: status of the nine decisions on r4
+
+This is a status entry, not an owner decision. It supersedes the "Assigned"
+and "Not implemented" statuses in the 2026-10-05 entry above. Those statuses
+were true of 40097564 when written. The decisions themselves are unchanged.
+
+Line: claude/fix-integration-r4-2026-10-05 at
+00094c661fe6c1923737318d5e39d885d993b11c ("r4"). r4 contains r3
+(claude/fix-integration-r3-2026-10-05, ef570282, with the seven
+claude/fix3-* branches merged) plus three round-4 branches:
+claude/fix4-deployment-rollback-safety (ae877039, f50edf18; merge 6be93679),
+claude/fix4-peer-degrade-healthz (f3f8c2e1, d6392ce9; merge 5f147810) and
+claude/fix4-compat-and-migrations (903dfe1b; merge 00094c66). Not merged into
+r4: claude/fix4-key-rotation (226e40c2, a54a21f4) and
+claude/fix4-recovery-escape-path-r4 (4d3668fd to 26f91ac5).
+claude/fix4-recovery-escape-path points at ef570282 with no commits of its
+own. r4 is not merged into main and is not installed.
+
+Test evidence: run on 2026-10-06 at 00094c66 with `bun run test:file`,
+task-owned PostgreSQL and a local Temporal dev server. Every test named below
+passed. The one failing test on r4 is listed under decision 9.
+
+1. **Result graph ID, keyed: implemented on r4**, with one limit.
+   - 3cf366e8 (merge cec4d671): HMAC-SHA256 id
+     `supervisor-result-graph:v3:...` under the key named by
+     a2aV2.resultGraphKeyEnv, the CLI `loop orchestration result-graph-id`,
+     and POST `<routePath>/result-graph`. Existing bindings under the unkeyed
+     v2 id keep publishing. 903dfe1b: the 403 `result-graph-id-reserved`
+     refusal on task-graphs/start now names the replacement route and the
+     CLI.
+   - Tests: supervisor-a2a-result-binding "no new binding may name an unkeyed
+     v2 graph, and a ledger without the key binds nothing" and "a
+     body-supplied graph that is not derived from the message is refused,
+     even when the host allowlists it"; orchestration-command
+     "result-graph-id prints the id the server derives from the config's key
+     environment, never the key, and never starts the server";
+     loop-orchestration-server-postgres "the orchestration server starts a
+     message's result graph under its keyed id and binds it only through the
+     configured graph tasks"; supervisor-orchestration-http "a reserved
+     result graph id refusal names the replacement route and the
+     result-graph-id CLI".
+   - Limit: r4 holds one key. Rotation strands every binding recorded under
+     the old key: it stops publishing, and nothing reports it. Re-binding the
+     A2A task to its new-key graph restores it. A throwaway test on real
+     PostgreSQL showed this on 2026-10-06 (not committed). The procedure is in
+     loop-fork/docs/RUNBOOK-LOOP.md. Previous-key support is on the unmerged
+     claude/fix4-key-rotation.
+2. **Retired resultArtifacts shape fails startup: implemented** (2b1b1893;
+   since 3cf366e8 the message names the v3 id and the CLI). The refusal is now
+   at loop-fork/src/loop/loop-orchestration-server.ts:384-388, not :302.
+   Test: loop-orchestration-server "orchestration config refuses a result
+   artifact in the retired shape with the exact migration".
+3. **Claude result dedupe slot: implemented, lint included.** The store slot
+   is b42a326c. The keyless-reply warning is d6dbd978 (merge 545334de):
+   `keylessClaudeResultReplyWarning` in loop-fork/src/loop/bridge-store.ts,
+   appended to the send_message result and written to stderr. The 2026-10-05
+   entry said no claude/fix3-* branch whose name covers it was observed; it
+   landed on claude/fix3-doorbell-starvation. Tests:
+   bridge-result-reply-dedupe "a duplicate Claude result reply for one
+   inbound produces one effect", "a keyless Claude message reply is flagged
+   because it shares the keyless result slot" and "the keyless reply lint
+   stays silent outside the Claude message result slot". A keyless progress
+   reply still takes the slot; the warning tells the sender, it does not
+   change delivery.
+4. **ACK retry for every sender: implemented** (b42a326c; re-verified on r3
+   by 903dfe1b with no fix needed). Tests: bridge-result-reply-dedupe "every
+   sender's ACK retries after a dead-lettered, expired or superseded ACK, and
+   holds once delivered" and "a delivered ACK holds its slot for every
+   sender, even with supersede".
+5. **terminal_outcome with 'acknowledged': implemented** (3f7a70f2,
+   4d98d97d). The edge case in the 2026-10-05 entry (a database migrated by
+   3f7a70f2 keeps a CHECK that refuses 'acknowledged') is fixed by 903dfe1b:
+   migrate replaces a non-current CHECK and rewrites stored 'completed' to
+   'acknowledged'. Rows with NULL are still not backfilled. Tests:
+   supervisor-message-v2-delivery-ledger "migrates a ledger left by the
+   3f7a70f2 build: its 'completed' CHECK is replaced and stored 'completed'
+   becomes 'acknowledged'", "replaces any terminal_outcome CHECK that is not
+   the current list, including hand-edited ones", "hosts replacing one
+   database's retired CHECK at the same time all start", "leaves a current
+   terminal_outcome CHECK in place on every migrate" and "records
+   acknowledgement, not completion, when the recipient acknowledges".
+6. **Deployment discriminator: implemented, off by default.** 4db6b118 (merge
+   4fdc681b) adds the deployment-scoped id and the task-queue ownership check
+   on every workflow port call. ae877039 and f50edf18 make the format an
+   operator switch, a2aV2.workflowIdFormat, defaulting to legacy writes.
+   Decision 6's isolation between deployments that share a ledger database
+   applies only after every such host sets "deployment". Tests:
+   supervisor-message-v2-delivery-ledger "defaults to legacy-write mode:
+   mints the base-era workflow id byte for byte and records the format with
+   its build", "flips to deployment ids only on explicit opt-in; afterwards
+   the base-era build's writes are refused with an exact message", "refuses
+   to return to legacy ids while deployment-format intents are unsettled,
+   then returns once they settle", "default legacy-write mode does not
+   isolate deployments that share a database: each recovers and resolves the
+   other's messages until the flip" and "rollback: the real base-era ledger
+   migrates, recovers, deduplicates and records over default legacy-write
+   rows, and this build reads its rows back"; temporal-workflow-port
+   "refuses to signal a same-ID execution owned by another task queue and
+   leaves it unchanged"; loop-orchestration-server-postgres "the
+   orchestration server writes its configured V2 workflow id format and
+   refuses a return to legacy over unsettled intents, verbatim".
+7. **Recovery skip narrowed to conflicts: implemented** (4ab9bc3d, merge
+   d1724a54), with two limits. Tests: supervisor-message-v2-recovery
+   "refuses startup when any recorded start fails for another reason, after
+   trying every record", "starts past an ID another deployment holds, logs
+   which ID and recipient, and keeps sweeping" and "a periodic sweep retries
+   a failing record with bounded backoff and logs every failure transition";
+   supervisor-message-v2-delivery-ledger "service start refuses a PostgreSQL
+   failure for one record after recovering the others".
+   - Limit: the operator sees only "Supervisor A2A V2 service initialization
+     failed at runtime-host (unclassified)". No log line names the failing
+     record, and r4 has no way to start past it (code reading:
+     loop-fork/src/loop/supervisor-a2a-v2-service.ts:316-327 and 939-942,
+     loop-fork/src/loop/supervisor-message-v2-runtime.ts:652-661). The
+     quarantine on claude/fix4-recovery-escape-path-r4 is not merged.
+   - Limit: any conflict at start counts as foreign, including an execution
+     of another workflow type on this host's own task queue. Pinned for a
+     running execution by loop-orchestration-server-postgres "the
+     orchestration server starts when a recorded V2 workflow ID is held by a
+     foreign execution", whose expected log line ends "already exists as
+     supervisor-message.v1" for an execution on the host's own task queue.
+8. **Readiness-outage deferral with log, counter and bound: implemented**
+   (11b71513, merge 7074bc37; d6392ce9 ends a stale outage). Optional
+   a2aV2.readinessOutageBoundMs, default 15 minutes; counts on /healthz,
+   recipient ids only on the authenticated assignment GET. Tests:
+   supervisor-message-v2-runtime "an outage that outlasts its bound becomes
+   a retryable delivery failure that consumes attempts up to the policy
+   bound", "an outage nothing observed for over two hours, with no message
+   waiting on it, is over: the next failure starts a new bound", "an outage
+   is measured from its start, however long a message waits on its retry
+   delay" and "a store answer for one recipient does not end another
+   recipient's outage"; loop-orchestration-server "/healthz reports the V2
+   readiness-outage counters as counts only, without changing its state".
+   Limit: state is in memory; a restart starts the bound again.
+9. **Session leftovers: implemented**, with one failing test on r4.
+   c41b459d and 00845464 (merge de2ae866): receipt retention (default keep 16
+   and 7 days; not an orchestration config key), readiness carried across a
+   renewal, and a stopped peer degraded alone. f3f8c2e1 and d6392ce9: only a
+   peer that is not running or not reachable degrades, a not-enrolled
+   recipient's deliveries wait without spending attempts up to
+   a2aV2.notEnrolledBoundMs, and /healthz carries a count, not seat ids.
+   Tests: supervisor-session-v2-postgres "PostgreSQL: a renewal prunes a
+   seat's receipts older than the window beyond its latest N" and
+   "PostgreSQL: renewing an unchanged seat keeps the DAG gate ready without a
+   new probe or a longer freshness"; loop-orchestration-server-postgres "the
+   orchestration server starts with a stopped peer seat, reports it not
+   enrolled, and enrolls it from the sweep", "the orchestration server
+   starts with a peer seat that is not running (no route), counts it without
+   naming it, and enrolls it once its pane starts", "the orchestration
+   server refuses to start when a running peer seat is refused by the
+   governed rebind authority" and "a V2 delivery pending for a stopped peer
+   at start neither refuses start nor reaches the provider, and waits
+   without spending an attempt".
+   - Failing on r4, on both runs: supervisor-a2a-v2-service "every V2
+     delivery path of one service defers a not-enrolled recipient under one
+     shared bound, log line, and counters". The test (f3f8c2e1) builds the
+     service with `host: {taskQueue}` and no `buildId`. Since ae877039 the
+     ledger refuses a missing build id, so creation fails at
+     "delivery-ledger (unclassified)". The two commits first meet in r4. The
+     server always passes the config's required buildId, so this is a
+     test-fixture defect. It is new against ef570282, where the test does
+     not exist.
+
+The doorbell fairness work (d6dbd978, c581fb9b; merge 545334de) is not one of
+the nine decisions.
+
+## 2026-10-06: conservative choices pending owner confirmation
+
+Not owner decisions. Two owner questions are unanswered. r4 takes, for each,
+the option that needs no answer. Each stays pending until the owner confirms
+or replaces it.
+
+- Q1, is a one-way upgrade acceptable for the deployment ID? r4 avoids a
+  one-way step by default. A host with a2aV2.workflowIdFormat unset writes
+  legacy IDs, and the database marker records "legacy", so 40097564 can
+  still be rolled back to for the workflow ID path (ae877039, f50edf18;
+  tests listed under decision 6 above). The flip to "deployment" is an
+  explicit operator step. After it, 40097564 can no longer use the database.
+  Cost: decision 6's isolation is off until the flip.
+- Q2, should unauthenticated /healthz list seat IDs? r4 lists none. /healthz
+  carries `notEnrolledCount` and counter blocks only. Seat and recipient IDs
+  are on the authenticated GET `<routePath>/assignment` (f3f8c2e1, merge
+  5f147810). Test: loop-orchestration-server "unauthenticated /healthz names
+  no seat or recipient while seats are not enrolled and deliveries wait".
+  This supersedes the 2026-10-05 corrections entry's statement that the
+  exposure "stands until that branch lands": on r4 it has landed. ef570282
+  still exposes the IDs, so rolling back to r3 would expose them again.

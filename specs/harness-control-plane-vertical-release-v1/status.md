@@ -151,6 +151,9 @@ whose files do not exist on this line.
 
 ### Open review defects at r2 (added 2026-10-05)
 
+(Superseded 2026-10-06 for current state by "Open defects at r4" below. This
+list stays as the record of 40097564.)
+
 021c39d3 listed four review defects as open in e4efbae2. This list gives their
 state on claude/fix-integration-r2-2026-10-05 at 40097564. r2 is an
 integration branch. It is not merged into main (0f69b9a9) and is not
@@ -214,3 +217,96 @@ yet changed:
 claude/fix3-doorbell-starvation also exists with no commits. Its scope is not
 recorded here. None of the fix3 branches is merged into r2. Nothing in this
 list claims a fix3 change.
+
+### Open defects at r4 (added 2026-10-06)
+
+State on claude/fix-integration-r4-2026-10-05 at
+00094c661fe6c1923737318d5e39d885d993b11c ("r4"), observed 2026-10-06. r4 is
+not merged into main and is not installed; nothing here has runtime evidence
+on a live host. Decision status with commits and tests is in decisions.md,
+"2026-10-06: status of the nine decisions on r4". Operator procedures are in
+loop-fork/docs/RUNBOOK-LOOP.md, "A2A V2 control plane (r4 integration)".
+
+Tests run at 00094c66 with `bun run test:file` against task-owned PostgreSQL
+and a local Temporal dev server: orchestration-command 4,
+supervisor-orchestration-http 10, a2a-supervisor-assignment-http 8,
+loop-orchestration-server 33, bridge-result-reply-dedupe 16,
+supervisor-message-v2-runtime 32, supervisor-message-v2-recovery 34,
+supervisor-session-v2 7, supervisor-session-v2-postgres 13,
+supervisor-a2a-result-binding 11, supervisor-message-v2-delivery-ledger 42,
+supervisor-message-v2-temporal-retention 12,
+loop-orchestration-server-postgres 15, temporal-orchestration-e2e 2,
+temporal-workflow-port 12, temporal-supervisor-runtime 8: all pass.
+supervisor-a2a-v2-service: 12 pass, 1 fail (item 1). `bun run
+typecheck:a2a` passes. `bun run check` reports the 10 known errors in
+loop-fork/scripts/vertical-cleanup-health.ts and vertical-cleanup-launch.ts.
+
+The four r2 review defects:
+
+- Completion binding to the message: closed. Decision 1's keyed id and tool
+  are on r4 (3cf366e8, 903dfe1b). Key rotation is item 2.
+- Duplicate Claude result: closed. The keyless-reply warning is on r4
+  (d6dbd978).
+- Purge re-run: closed for executions that end after the marker exists. The
+  3f7a70f2 CHECK edge case is fixed (903dfe1b). The deployment discriminator
+  exists but is off by default (item 4).
+- Session re-enrollment: closed. Per-seat degrade, receipt retention and
+  readiness across renewal are on r4 (c41b459d, 00845464, f3f8c2e1,
+  d6392ce9). Item 1 is a failing test in this area.
+
+Still open on r4:
+
+1. Failing test, new against ef570282: supervisor-a2a-v2-service "every V2
+   delivery path of one service defers a not-enrolled recipient under one
+   shared bound, log line, and counters" fails on two runs with
+   "Supervisor A2A V2 service initialization failed at delivery-ledger
+   (unclassified)". Its fixture (f3f8c2e1) passes no `host.buildId`, which
+   the ledger requires since ae877039. Merging the two branches into r4 put
+   them together. The server always passes the config's buildId
+   (loop-fork/src/loop/loop-orchestration-server.ts:1321), so production
+   wiring is not implicated. The test's not-enrolled claims are unproven on
+   r4 at the service level until the fixture is fixed.
+2. Result graph key rotation: r4 holds one key. Bindings recorded under an
+   old key stop publishing and nothing reports them; re-binding to the
+   new-key graph restores them (throwaway PostgreSQL test, 2026-10-06, not
+   committed). Fix branch claude/fix4-key-rotation (226e40c2, a54a21f4) is
+   not merged.
+3. Recovery refusal has no escape and no named record: a non-foreign recovery
+   failure at start reports only "Supervisor A2A V2 service initialization
+   failed at runtime-host (unclassified)", logs no workflow id, and r4 has no
+   way to start past it (code reading:
+   loop-fork/src/loop/supervisor-a2a-v2-service.ts:316-327 and 939-942,
+   loop-fork/src/loop/supervisor-message-v2-runtime.ts:652-661). Fix branch
+   claude/fix4-recovery-escape-path-r4 is not merged.
+4. Same-queue workflow-type conflict counted as foreign: a running execution
+   of another workflow type on this host's own task queue is skipped at start
+   as foreign (pinned by loop-orchestration-server-postgres "the
+   orchestration server starts when a recorded V2 workflow ID is held by a
+   foreign execution"). The fix4-recovery-escape-path-r4 branch reports that
+   a closed one is recorded as `terminated`; that claim is not verified here.
+5. Decision 6 off by default: hosts on different task queues that share one
+   ledger database are not isolated until every one sets
+   a2aV2.workflowIdFormat "deployment". This is the conservative answer to
+   owner question Q1, pending confirmation.
+6. Returning to legacy when deployment rows never settle: refused for good,
+   with no override. Whether an operator may record an outcome by hand is an
+   open owner question (decisions.md, 2026-10-05 corrections entry).
+7. Rollback limits: to 40097564, only before the flip; results bound under
+   keyed v3 graphs are not published by it; config rolls back with the
+   binary; rollback with V2 executions in flight is unverified (Temporal
+   replay across the bundle change). Rolling back to ef570282 is not
+   recommended: by code reading its new deployment-format intents are
+   refused by the format trigger under a "legacy" marker, and it exposes
+   seat ids on /healthz again. Not tested.
+8. Purged-before-marker executions: an execution purged before
+   terminal_outcome existed, with no completed delivery, is still restarted
+   (decision 5, not backfilled).
+9. Deferral state in memory: readiness-outage and not-enrolled bounds restart
+   with the process. A message the outage failed that is cancelled or
+   delivered elsewhere during its retry delay can make two outages count as
+   one (documented in SupervisorMessageV2ReadinessOutageTracker).
+10. Receipt retention is not operator-configurable: the server uses the
+    store default (16 latest, 7 days).
+11. Body-chosen and malformed bindings recorded before 2b1b1893 stay
+    unpublishable until an operator re-binds each message; they are logged
+    at every start and listed by the authenticated assignment GET.
