@@ -381,6 +381,7 @@ const waitFor = async <T>(
 
 const compositionFixture = (input: {
   address: string;
+  readinessOutageBoundMs?: number;
   tenant: string;
   thread: string;
 }) => {
@@ -426,6 +427,9 @@ const compositionFixture = (input: {
           retryDelayMs: 1000,
         },
         principal: "principal:harness",
+        ...(input.readinessOutageBoundMs === undefined
+          ? {}
+          : { readinessOutageBoundMs: input.readinessOutageBoundMs }),
         recipient: "supervisor:harness",
         routePath: "/a2a/v2",
         sessionTtlMs: 60_000,
@@ -688,6 +692,41 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
       .terminate()
       .catch(() => undefined);
     await ledger.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server reports its configured readiness-outage bound and counters on /healthz", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const fixture = compositionFixture({
+    address: environment.address,
+    readinessOutageBoundMs: 120_000,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    const body = await (
+      await fetch(`http://127.0.0.1:${fixture.port}/healthz`)
+    ).json();
+    expect(body).toEqual({
+      a2aV2ReadinessOutage: {
+        boundMs: 120_000,
+        deferredDeliveries: 0,
+        outageFailures: 0,
+        recipientsDeferred: 0,
+      },
+      schema: "loop-orchestration-health.v1",
+      state: "ready",
+    });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
     fixture.remove();
   }
 }, 120_000);

@@ -127,6 +127,12 @@ export interface A2AV2Config {
     retryDelayMs: number;
   };
   principal: string;
+  /**
+   * How long a session readiness-store outage may defer a recipient's V2
+   * deliveries (1000..86400000 ms) before each delivery fails as a normal
+   * retryable attempt. Omitted, the runtime default of 15 minutes.
+   */
+  readinessOutageBoundMs?: number;
   recipient: string;
   resultArtifacts?: GitResultArtifactBinding[];
   routePath: string;
@@ -190,6 +196,7 @@ export interface LoopOrchestrationFetchHandlerOptions {
     | "httpHandler"
     | "pathname"
     | "pathnames"
+    | "readinessOutage"
     | "recipientRoute"
     | "assignmentRoute"
   >;
@@ -218,6 +225,14 @@ export const createLoopOrchestrationFetchHandler = (
             options.reconciliationHealthy()
               ? "ready"
               : "unavailable",
+          // Additive and counts only: no recipient, session, or store detail
+          // reaches this unauthenticated route. A readiness-store outage
+          // defers deliveries without changing `state`.
+          ...(options.a2aV2Service
+            ? {
+                a2aV2ReadinessOutage: options.a2aV2Service.readinessOutage(),
+              }
+            : {}),
         })
       );
     }
@@ -336,6 +351,9 @@ const parseA2AV2 = (
       "sessionTtlMs",
       "tenant",
       ...(value.resultArtifacts === undefined ? [] : ["resultArtifacts"]),
+      ...(value.readinessOutageBoundMs === undefined
+        ? []
+        : ["readinessOutageBoundMs"]),
     ],
     "orchestration a2aV2"
   );
@@ -438,6 +456,14 @@ const parseA2AV2 = (
     ),
     policy,
     principal,
+    ...(value.readinessOutageBoundMs === undefined
+      ? {}
+      : {
+          readinessOutageBoundMs: positiveDuration(
+            value.readinessOutageBoundMs,
+            "orchestration a2aV2 readinessOutageBoundMs"
+          ),
+        }),
     recipient,
     routePath: requireRoutePath(
       value.routePath,
@@ -1154,6 +1180,7 @@ const createDefaultRuntimeHost = async (input: {
       : undefined,
     delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
     dispatchOwner: `v2-dispatcher:${input.config.identity}`,
+    readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
     // Enroll before the host's first recovery sweep checks readiness for
     // pending deliveries: a descriptor that expired, or a seat that restarted,
     // while the server was down is renewed or rebound first instead of

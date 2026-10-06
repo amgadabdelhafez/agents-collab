@@ -5,6 +5,7 @@ import {
   type A2AV2EnrollmentOutcome,
   ConfiguredA2AV2SessionEnrollment,
   configuredA2AV2RebindAuthority,
+  createLoopOrchestrationFetchHandler,
   createOrchestrationSweep,
   enrollConfiguredA2AV2Session,
   parseLoopOrchestrationConfig,
@@ -125,6 +126,77 @@ test("orchestration config accepts a result artifact bound to a message-derived 
       a2aV2([{ ...artifact, graphTaskId: "result-node", graphWorkflowId }])
     ).a2aV2?.resultArtifacts
   ).toEqual([{ ...artifact, graphTaskId: "result-node", graphWorkflowId }]);
+});
+
+test("orchestration config takes an optional readiness outage bound within one second to one day", () => {
+  const withBound = (readinessOutageBoundMs: unknown) => {
+    const value = a2aV2([]);
+    return {
+      ...value,
+      a2aV2: { ...value.a2aV2, readinessOutageBoundMs },
+    };
+  };
+  expect(
+    parseLoopOrchestrationConfig(withBound(120_000)).a2aV2
+      ?.readinessOutageBoundMs
+  ).toBe(120_000);
+  expect(
+    parseLoopOrchestrationConfig(withBound(1000)).a2aV2?.readinessOutageBoundMs
+  ).toBe(1000);
+  expect(
+    parseLoopOrchestrationConfig(withBound(86_400_000)).a2aV2
+      ?.readinessOutageBoundMs
+  ).toBe(86_400_000);
+  // Absent, the key stays absent and the runtime default applies.
+  expect(
+    Object.keys(parseLoopOrchestrationConfig(a2aV2([])).a2aV2 ?? {})
+  ).not.toContain("readinessOutageBoundMs");
+  for (const invalid of [999, 86_400_001, 1500.5, "120000", null]) {
+    expect(() => parseLoopOrchestrationConfig(withBound(invalid))).toThrow(
+      "orchestration a2aV2 readinessOutageBoundMs is invalid"
+    );
+  }
+});
+
+test("/healthz reports the V2 readiness-outage counters as counts only, without changing its state", async () => {
+  const snapshot = {
+    boundMs: 60_000,
+    deferredDeliveries: 7,
+    outageFailures: 2,
+    recipientsDeferred: 1,
+  };
+  const health = async (
+    a2aV2Service?: Parameters<
+      typeof createLoopOrchestrationFetchHandler
+    >[0]["a2aV2Service"]
+  ) => {
+    const handler = createLoopOrchestrationFetchHandler({
+      a2aV2Service,
+      authenticator: { authenticate: () => undefined } as never,
+      host: {
+        httpHandler: () => () => Promise.resolve(new Response(null)),
+        workerState: () => "RUNNING",
+      } as never,
+      reconciliationHealthy: () => true,
+    });
+    return (await handler(new Request("http://127.0.0.1/healthz"))).json();
+  };
+  expect(
+    await health({
+      httpHandler: () => Promise.resolve(new Response(null)),
+      pathname: "/a2a",
+      readinessOutage: () => snapshot,
+    })
+  ).toEqual({
+    a2aV2ReadinessOutage: snapshot,
+    schema: "loop-orchestration-health.v1",
+    state: "ready",
+  });
+  // Without V2 the body is exactly what it was.
+  expect(await health()).toEqual({
+    schema: "loop-orchestration-health.v1",
+    state: "ready",
+  });
 });
 
 const a2aConfig = (): A2AV2Config => ({

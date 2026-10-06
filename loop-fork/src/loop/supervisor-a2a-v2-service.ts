@@ -32,11 +32,13 @@ import {
 } from "./supervisor-message-v2-governance";
 import { createSupervisorMessageV2RecipientHttpHandler } from "./supervisor-message-v2-http";
 import { createSupervisorMessageV2RecipientAssignmentResolver } from "./supervisor-message-v2-recipient-assignment";
-import type {
-  SupervisorMessageV2DeliveryLedger,
-  SupervisorMessageV2DeliveryPort,
+import {
+  SupervisorMessageV2Coordinator,
+  type SupervisorMessageV2DeliveryLedger,
+  type SupervisorMessageV2DeliveryPort,
+  type SupervisorMessageV2ReadinessOutageSnapshot,
+  SupervisorMessageV2ReadinessOutageTracker,
 } from "./supervisor-message-v2-runtime";
-import { SupervisorMessageV2Coordinator } from "./supervisor-message-v2-runtime";
 import {
   PostgresSupervisorSessionV2Store,
   type SupervisorSessionDescriptorV2,
@@ -157,6 +159,12 @@ export interface SupervisorA2AV2ServiceOptions {
   peerRoutes?: readonly { pathname: string; supervisorId: string }[];
   policy: SupervisorA2AV2IngressOptions["policy"];
   providerReadiness: SupervisorSessionProviderReadinessPort;
+  /**
+   * How long a session readiness-store outage may defer a recipient's
+   * deliveries before each one fails as a normal retryable attempt. Omitted,
+   * SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS.
+   */
+  readinessOutageBoundMs?: number;
   rebindAuthority: SupervisorSessionRebindAuthorityPort;
   recipientRoute?: {
     authenticator: SupervisorA2AAuthenticator;
@@ -212,6 +220,8 @@ export interface SupervisorA2AV2Service {
     scope: TrustedSupervisorMessageV2Scope,
     input: { workflowId: string; taskId: string; recipient: string }
   ): Promise<void>;
+  /** Readiness-outage deferral counters of every V2 delivery path. */
+  readinessOutage(): SupervisorMessageV2ReadinessOutageSnapshot;
   rebindSession(
     scope: TrustedSupervisorMessageV2Scope,
     descriptor: SupervisorSessionDescriptorV2
@@ -267,6 +277,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly pathname: string;
   readonly pathnames: readonly string[];
   readonly #ledger: LedgerResource;
+  readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
   readonly #sessions: SessionResource;
   readonly #taskStore: TaskStoreResource;
   #closing: Promise<void> | undefined;
@@ -285,6 +296,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     ledger: LedgerResource;
     pathname: string;
     pathnames?: readonly string[];
+    readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
     sessions: SessionResource;
     taskStore: TaskStoreResource;
   }) {
@@ -304,8 +316,13 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.pathname = input.pathname;
     this.pathnames = input.pathnames ?? [input.pathname];
     this.#ledger = input.ledger;
+    this.#readinessOutage = input.readinessOutage;
     this.#sessions = input.sessions;
     this.#taskStore = input.taskStore;
+  }
+
+  readinessOutage(): SupervisorMessageV2ReadinessOutageSnapshot {
+    return this.#readinessOutage.snapshot(new Date(this.#now()));
   }
 
   close(): Promise<void> {
@@ -466,6 +483,11 @@ export const createSupervisorA2AV2Service = async (
   options: SupervisorA2AV2ServiceOptions
 ): Promise<SupervisorA2AV2Service> => {
   const dependencies = options.dependencies ?? defaultDependencies;
+  // One tracker for every delivery path of this service, so a recipient's
+  // outage is logged, bounded, and counted once, whichever path delivers.
+  const readinessOutage = new SupervisorMessageV2ReadinessOutageTracker({
+    boundMs: options.readinessOutageBoundMs,
+  });
   let taskStore: TaskStoreResource | undefined;
   let ledger: LedgerResource | undefined;
   let sessions: SessionResource | undefined;
@@ -519,24 +541,31 @@ export const createSupervisorA2AV2Service = async (
           ledger,
           options.dispatchOwner,
           () => new Date(options.now()),
-          sessions
+          sessions,
+          readinessOutage
         ),
         now: options.now,
         receipts,
       });
     }
-    ingress = new SupervisorA2AV2Ingress({
-      card: options.card,
+    // Every ingress (primary and peer) shares these, the outage tracker
+    // among them.
+    const shared = {
       delivery: options.delivery,
       dispatchOwner: options.dispatchOwner,
       ledger,
       now: options.now,
       policy: options.policy,
-      recoveryIntervalMs: options.recoveryIntervalMs,
+      readinessOutage,
       sessionReadiness: sessions,
-      supervisorId: options.supervisorId,
       taskStore,
       workflows,
+    };
+    ingress = new SupervisorA2AV2Ingress({
+      ...shared,
+      card: options.card,
+      recoveryIntervalMs: options.recoveryIntervalMs,
+      supervisorId: options.supervisorId,
     });
     const gates = new SupervisorSessionV2DagAdapter(sessions);
     stage = "runtime-host";
@@ -564,20 +593,13 @@ export const createSupervisorA2AV2Service = async (
         options.assignmentRoute?.pathname,
       ]);
       const peerIngress = new SupervisorA2AV2Ingress({
+        ...shared,
         card: {
           ...options.card,
           supervisorId: peer.supervisorId,
           url: new URL(peer.pathname, options.card.url).toString(),
         },
-        delivery: options.delivery,
-        dispatchOwner: options.dispatchOwner,
-        ledger,
-        now: options.now,
-        policy: options.policy,
-        sessionReadiness: sessions,
         supervisorId: peer.supervisorId,
-        taskStore,
-        workflows,
       });
       // Only its SDK handler is used. The primary ingress owns the sole
       // recovery lifecycle for the shared ledger and Temporal worker.
@@ -663,6 +685,7 @@ export const createSupervisorA2AV2Service = async (
       ledger,
       pathname: options.route.pathname ?? "/a2a",
       pathnames: [...routes.keys()],
+      readinessOutage,
       sessions,
       taskStore,
     });
