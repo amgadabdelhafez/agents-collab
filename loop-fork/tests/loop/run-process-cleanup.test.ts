@@ -1156,6 +1156,12 @@ test("cross-repo sweep proves spaced run directories against the exact storage r
     ],
     // A dot segment would resolve outside the storage root.
     [6508, `${executable} __bridge-mcp ${storageRoot}/../escaped claude`],
+    // A valid source followed by more arguments is not the bridge argv,
+    // even though its first two words alone would name a stale run.
+    [6509, `${executable} __bridge-mcp ${absentDir} claude codex`],
+    [6510, `${executable} __bridge-mcp ${terminalDir} supervisor claude`],
+    // A deeper path is not a run directory, even under a terminal run.
+    [6511, `${executable} __bridge-mcp ${join(terminalDir, "nested")} claude`],
   ]);
   const signals: number[] = [];
   try {
@@ -1174,7 +1180,7 @@ test("cross-repo sweep proves spaced run directories against the exact storage r
     expect(result).toEqual({
       candidates: 3,
       killed: [6501, 6502],
-      scanned: 8,
+      scanned: 11,
       skipped: [{ pid: 6503, reason: "run-state-unknown-or-active" }],
     });
     expect(signals).toEqual([6501, 6502]);
