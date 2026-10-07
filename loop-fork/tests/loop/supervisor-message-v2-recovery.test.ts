@@ -9,12 +9,15 @@ import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
   type SupervisorMessageV2RecoveryPort,
+  type SupervisorMessageV2RecoveryQuarantine,
+  SupervisorMessageV2RecoveryRecordError,
   SupervisorMessageV2RecoveryRunner,
   SupervisorMessageV2RecoveryStartupError,
   type SupervisorMessageV2TerminalOutcome,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import {
   WorkflowError,
+  WorkflowForeignExecutionError,
   type WorkflowPort,
   type WorkflowPresence,
   type WorkflowQueryCommand,
@@ -57,6 +60,7 @@ const workflowsWith = (
     presenceOf?: (workflowId: string, call: number) => WorkflowPresence;
     /** An error `start` throws for this ID instead of starting it. */
     startError?: (workflowId: string) => Error | undefined;
+    /** The status answer; a V2 execution's always carries its schema. */
     status?: (workflowId: string) => Record<string, unknown>;
     withoutPresence?: boolean;
   } = {}
@@ -87,12 +91,17 @@ const workflowsWith = (
       value:
         command.name === "delivery_pending"
           ? false
-          : ((options.status?.(command.workflowId) ?? {
-              deliveredAt: null,
-              deliveryAttempts: 0,
-              nextRetryAt: null,
-              phase: "routed",
-            }) as never),
+          : ({
+              // What every V2 execution answers with; a status override may
+              // replace it to model another workflow type under the ID.
+              schema: "supervisor-message-status.v2",
+              ...(options.status?.(command.workflowId) ?? {
+                deliveredAt: null,
+                deliveryAttempts: 0,
+                nextRetryAt: null,
+                phase: "routed",
+              }),
+            } as never),
       workflowId: command.workflowId,
     }),
     signal: (command) => {
@@ -110,8 +119,7 @@ const workflowsWith = (
         throw failure;
       }
       if (command.workflowId === options.foreign) {
-        throw new WorkflowError(
-          "conflict",
+        throw new WorkflowForeignExecutionError(
           `workflow ${command.workflowId} belongs to another task queue`
         );
       }
@@ -265,8 +273,7 @@ describe("SupervisorMessage V2 recovery against workflow retention", () => {
     const workflows = workflowsWith("closed", {
       presenceOf: (workflowId) => {
         if (workflowId === WORKFLOW_ID) {
-          throw new WorkflowError(
-            "conflict",
+          throw new WorkflowForeignExecutionError(
             `workflow ${workflowId} belongs to another task queue`
           );
         }
@@ -303,8 +310,7 @@ describe("SupervisorMessage V2 recovery against workflow retention", () => {
     const workflows = workflowsWith("closed", {
       presenceOf: (workflowId, call) => {
         if (call > 1) {
-          throw new WorkflowError(
-            "conflict",
+          throw new WorkflowForeignExecutionError(
             `workflow ${workflowId} belongs to another task queue`
           );
         }
@@ -545,8 +551,7 @@ describe("SupervisorMessage V2 recovery failure classification", () => {
     return reports;
   };
   const heldBy = (workflowId: string) =>
-    new WorkflowError(
-      "conflict",
+    new WorkflowForeignExecutionError(
       `workflow ${workflowId} belongs to another task queue`
     );
 
@@ -706,14 +711,174 @@ describe("SupervisorMessage V2 recovery failure classification", () => {
       },
     ]);
   });
+
+  test("another workflow type under the ID on this deployment's own queue is failed, not foreign", async () => {
+    // The port adopted the ID on its own task queue and found another
+    // workflow type there: no other deployment holds it, so skipping it
+    // would silently leave this deployment's own message unrecovered.
+    const workflows = workflowsWith("running", {
+      startError: (workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? new WorkflowError(
+              "conflict",
+              `workflow ${workflowId} already exists as task-graph.v1`
+            )
+          : undefined,
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "failed",
+        message: `workflow ${WORKFLOW_ID} already exists as task-graph.v1`,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+  });
+
+  test("a CLOSED execution of another workflow type on this deployment's own queue is failed, and records no outcome", async () => {
+    // Presence only proves the execution is on this deployment's queue. A
+    // closed one of another type answers "status" with its own state, which
+    // must never be recorded as this message's terminal outcome.
+    const workflows = workflowsWith("closed", {
+      status: (workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? { graphId: "graph", schema: "task-graph-status.v1" }
+          : {
+              deliveredAt: null,
+              deliveryAttempts: 1,
+              nextRetryAt: null,
+              phase: "acknowledged",
+            },
+    });
+    const { ledger, terminal } = twoRecords();
+    const reports: { kind: string; message: string; workflowId: string }[] = [];
+    await coordinator(workflows.port, ledger).recoverPending((failure) => {
+      reports.push({
+        kind: failure.kind,
+        message: (failure.error as Error).message,
+        workflowId: failure.workflowId,
+      });
+    });
+    expect(reports).toEqual([
+      {
+        kind: "failed",
+        message: `workflow ${WORKFLOW_ID} is not a supervisor-message.v2 execution`,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+    expect([...terminal]).toEqual([[OTHER_WORKFLOW_ID, "acknowledged"]]);
+    expect(workflows.starts).toEqual([]);
+  });
+
+  test("a conflict at the presence check that names no other task queue is failed, not foreign", async () => {
+    const workflows = workflowsWith("missing", {
+      presenceOf: (workflowId) => {
+        if (workflowId === WORKFLOW_ID) {
+          throw new WorkflowError("conflict", "presence conflicted");
+        }
+        return "missing";
+      },
+    });
+    expect(await reportedBy(workflows.port)).toEqual([
+      {
+        kind: "failed",
+        message: "presence conflicted",
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+  });
+});
+
+describe("SupervisorMessage V2 recovery quarantine", () => {
+  const QUARANTINE: SupervisorMessageV2RecoveryQuarantine = {
+    at: "2026-10-05T01:02:03.000Z",
+    by: "operator-a",
+    reason: "start snapshot unreadable; investigating",
+  };
+  const quarantinedRecords = () => {
+    const made = ledgerWith(false);
+    // A quarantined row carries no parsed input: recovery never reads it.
+    made.ledger.recoverableStarts = () =>
+      Promise.resolve([
+        {
+          quarantine: QUARANTINE,
+          recipient: fixture.input.to,
+          workflowId: WORKFLOW_ID,
+        },
+        {
+          input: structuredClone(OTHER_INPUT),
+          trustedScope: SCOPE,
+          workflowId: OTHER_WORKFLOW_ID,
+        },
+      ]);
+    return made;
+  };
+
+  test("leaves a quarantined record untouched, reports who, when and why, and recovers the others", async () => {
+    const workflows = workflowsWith("missing", {
+      startError: (workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? new Error("this record would refuse startup")
+          : undefined,
+    });
+    const { completionChecks, ledger } = quarantinedRecords();
+    const reports: unknown[] = [];
+    const asked: string[] = [];
+    const recovered = await coordinator(workflows.port, ledger).recoverPending(
+      (failure) => {
+        reports.push({
+          kind: failure.kind,
+          quarantine: failure.quarantine,
+          recipient: failure.recipient,
+          workflowId: failure.workflowId,
+        });
+      },
+      (workflowId) => {
+        asked.push(workflowId);
+        return true;
+      }
+    );
+    expect(reports).toEqual([
+      {
+        kind: "quarantined",
+        quarantine: QUARANTINE,
+        recipient: fixture.input.to,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+    // Started, with no delivery pending: nothing counted as delivered.
+    expect(recovered).toBe(0);
+    // Neither the engine nor the ledger is asked anything about it.
+    expect(workflows.presenceChecks).toEqual([OTHER_WORKFLOW_ID]);
+    expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+      OTHER_WORKFLOW_ID,
+    ]);
+    expect(completionChecks).toEqual([OTHER_WORKFLOW_ID]);
+    expect(asked).toEqual([OTHER_WORKFLOW_ID]);
+  });
+
+  test("without a reporter, a quarantined record is skipped, not thrown", async () => {
+    const workflows = workflowsWith("missing", {
+      startError: (workflowId) =>
+        workflowId === WORKFLOW_ID ? new Error("would fail") : undefined,
+    });
+    const { ledger } = quarantinedRecords();
+    expect(await coordinator(workflows.port, ledger).recoverPending()).toBe(0);
+    expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+      OTHER_WORKFLOW_ID,
+    ]);
+  });
 });
 
 describe("SupervisorMessage V2 recovery runner", () => {
   const T0 = Date.parse("2026-10-05T00:00:00.000Z");
 
+  /** The quarantine command a refusal names when the host gave no config path. */
+  const hint = (workflowId: string) =>
+    ` [to start without it: loop orchestration v2-quarantine <config-path> ${workflowId} --reason '<why>']`;
+
   const runnerOver = (
     recoveryPort: SupervisorMessageV2RecoveryPort,
-    options: { maxBackoffMs?: number } = {}
+    options: { maxBackoffMs?: number; operatorConfigPath?: string } = {}
   ) => {
     let clock = T0;
     const lines: string[] = [];
@@ -770,8 +935,7 @@ describe("SupervisorMessage V2 recovery runner", () => {
   test("starts past an ID another deployment holds, logs which ID and recipient, and keeps sweeping", async () => {
     const { recovery, workflows } = twoRecordsWith((workflowId) =>
       workflowId === WORKFLOW_ID
-        ? new WorkflowError(
-            "conflict",
+        ? new WorkflowForeignExecutionError(
             `workflow ${workflowId} belongs to another task queue`
           )
         : undefined
@@ -805,7 +969,7 @@ describe("SupervisorMessage V2 recovery runner", () => {
         "SupervisorMessageV2RecoveryStartupError"
       );
       expect((refused as Error).message).toBe(
-        `V2 initial recovery failed for 1 recorded start: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: Temporal frontend unavailable`
+        `V2 initial recovery failed for 1 recorded start: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: Temporal frontend unavailable${hint(WORKFLOW_ID)}`
       );
       expect(
         (refused as SupervisorMessageV2RecoveryStartupError).failures.map(
@@ -813,7 +977,9 @@ describe("SupervisorMessage V2 recovery runner", () => {
         )
       ).toEqual([[WORKFLOW_ID, "failed"]]);
       expect(intervals).toEqual([]);
-      expect(lines).toEqual([]);
+      // Logged as well: a host that wraps the error still shows the operator
+      // which record refused startup and how to quarantine it.
+      expect(lines).toEqual([(refused as Error).message]);
       // The healthy record was still recovered before startup was refused.
       expect(workflows.starts.map((start) => start.workflowId)).toEqual([
         OTHER_WORKFLOW_ID,
@@ -826,8 +992,7 @@ describe("SupervisorMessage V2 recovery runner", () => {
   test("refuses startup on a non-conflict failure even when another record is foreign-held", async () => {
     const { recovery } = twoRecordsWith((workflowId) =>
       workflowId === WORKFLOW_ID
-        ? new WorkflowError(
-            "conflict",
+        ? new WorkflowForeignExecutionError(
             `workflow ${workflowId} belongs to another task queue`
           )
         : new WorkflowError("invalid-state", "start snapshot unreadable")
@@ -836,10 +1001,11 @@ describe("SupervisorMessage V2 recovery runner", () => {
     try {
       const refused = await refusalOf(runner);
       expect((refused as Error).message).toBe(
-        `V2 initial recovery failed for 1 recorded start: workflow ${OTHER_WORKFLOW_ID} for ${OTHER_INPUT.to}: WorkflowError (invalid-state): start snapshot unreadable`
+        `V2 initial recovery failed for 1 recorded start: workflow ${OTHER_WORKFLOW_ID} for ${OTHER_INPUT.to}: WorkflowError (invalid-state): start snapshot unreadable${hint(OTHER_WORKFLOW_ID)}`
       );
       expect(lines).toEqual([
         `V2 recovery skipped workflow ${WORKFLOW_ID} for ${fixture.input.to}: WorkflowError (conflict): workflow ${WORKFLOW_ID} belongs to another task queue`,
+        (refused as Error).message,
       ]);
       expect(intervals).toEqual([]);
     } finally {
@@ -854,8 +1020,179 @@ describe("SupervisorMessage V2 recovery runner", () => {
     const { runner } = runnerOver(recovery);
     try {
       expect(((await refusalOf(runner)) as Error).message).toBe(
-        `V2 initial recovery failed for 2 recorded starts: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: start of ${WORKFLOW_ID} failed; workflow ${OTHER_WORKFLOW_ID} for ${OTHER_INPUT.to}: Error: start of ${OTHER_WORKFLOW_ID} failed`
+        `V2 initial recovery failed for 2 recorded starts: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: start of ${WORKFLOW_ID} failed${hint(WORKFLOW_ID)}; workflow ${OTHER_WORKFLOW_ID} for ${OTHER_INPUT.to}: Error: start of ${OTHER_WORKFLOW_ID} failed${hint(OTHER_WORKFLOW_ID)}`
       );
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("names the exact quarantine command for the host's config path, quoted for a shell", async () => {
+    const { recovery } = twoRecordsWith((workflowId) =>
+      workflowId === WORKFLOW_ID ? new Error("start failed") : undefined
+    );
+    const { lines, runner } = runnerOver(recovery, {
+      operatorConfigPath: "/srv/loop/it's orchestration.json",
+    });
+    try {
+      const refused = (await refusalOf(runner)) as Error;
+      expect(refused.message).toBe(
+        `V2 initial recovery failed for 1 recorded start: workflow ${WORKFLOW_ID} for ${fixture.input.to}: Error: start failed [to start without it: loop orchestration v2-quarantine '/srv/loop/it'\\''s orchestration.json' ${WORKFLOW_ID} --reason '<why>']`
+      );
+      expect(lines).toEqual([refused.message]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("a ledger row that fails the whole initial sweep refuses startup naming its workflow and quarantine command", async () => {
+    const rowError = new SupervisorMessageV2RecoveryRecordError(
+      WORKFLOW_ID,
+      `V2 recovery ledger row ${WORKFLOW_ID} has an invalid workflow binding`
+    );
+    const { intervals, lines, runner } = runnerOver({
+      recoverPending: () => Promise.reject(rowError),
+    });
+    try {
+      const refused = await refusalOf(runner);
+      expect(refused).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+      expect((refused as Error).message).toBe(
+        `V2 initial recovery failed for 1 recorded start: workflow ${WORKFLOW_ID} for an unreadable recipient: SupervisorMessageV2RecoveryRecordError: V2 recovery ledger row ${WORKFLOW_ID} has an invalid workflow binding${hint(WORKFLOW_ID)}`
+      );
+      expect(
+        (refused as SupervisorMessageV2RecoveryStartupError).failures
+      ).toEqual([
+        {
+          error: rowError,
+          kind: "failed",
+          recipient: "an unreadable recipient",
+          workflowId: WORKFLOW_ID,
+        },
+      ]);
+      expect(lines).toEqual([(refused as Error).message]);
+      expect(intervals).toEqual([]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  const QUARANTINE: SupervisorMessageV2RecoveryQuarantine = {
+    at: "2026-10-05T01:02:03.000Z",
+    by: "operator-a",
+    reason: "start snapshot unreadable; investigating",
+  };
+  const quarantinedLine = (config = "<config-path>") =>
+    `V2 recovery QUARANTINED workflow ${WORKFLOW_ID} for ${fixture.input.to}: skipped until released (quarantined by ${QUARANTINE.by} at ${QUARANTINE.at}: ${QUARANTINE.reason}); release it with: loop orchestration v2-quarantine-release ${config} ${WORKFLOW_ID} --reason '<why>'`;
+
+  /** Two records; the first fails to start unless the operator quarantined it. */
+  const quarantinable = () => {
+    let quarantine: SupervisorMessageV2RecoveryQuarantine | undefined;
+    let failing = true;
+    let attempts = 0;
+    const workflows = workflowsWith("running", {
+      startError: (workflowId) => {
+        if (workflowId !== WORKFLOW_ID) {
+          return undefined;
+        }
+        attempts += 1;
+        return failing ? new Error("Temporal frontend unavailable") : undefined;
+      },
+    });
+    const records = () => [
+      quarantine
+        ? { quarantine, recipient: fixture.input.to, workflowId: WORKFLOW_ID }
+        : {
+            input: structuredClone(fixture.input),
+            trustedScope: SCOPE,
+            workflowId: WORKFLOW_ID,
+          },
+      {
+        input: structuredClone(OTHER_INPUT),
+        trustedScope: SCOPE,
+        workflowId: OTHER_WORKFLOW_ID,
+      },
+    ];
+    const { ledger } = ledgerWith(false, []);
+    ledger.recoverableStarts = () => Promise.resolve(records());
+    return {
+      /** Start attempts of the first record, failed or not. */
+      attempts: () => attempts,
+      fail: () => {
+        failing = true;
+      },
+      heal: () => {
+        failing = false;
+      },
+      quarantine: (
+        value: SupervisorMessageV2RecoveryQuarantine | undefined
+      ) => {
+        quarantine = value;
+      },
+      recovery: coordinator(workflows.port, ledger),
+      workflows,
+    };
+  };
+
+  test("starts past a quarantined record and logs it loudly on every start", async () => {
+    const q = quarantinable();
+    q.quarantine(QUARANTINE);
+    for (const restart of [1, 2]) {
+      const { intervals, lines, runner } = runnerOver(q.recovery, {
+        operatorConfigPath: "/srv/loop/orchestration.json",
+      });
+      try {
+        expect(await refusalOf(runner)).toBeUndefined();
+        expect(intervals).toHaveLength(1);
+        expect(lines).toEqual([
+          quarantinedLine("/srv/loop/orchestration.json"),
+        ]);
+        // A periodic sweep does not repeat an unchanged quarantine.
+        await runner.sweep();
+        expect(lines).toHaveLength(1);
+      } finally {
+        await runner.close();
+      }
+      expect(restart).toBeOneOf([1, 2]);
+    }
+    expect(q.workflows.starts.map((start) => start.workflowId)).toEqual([
+      OTHER_WORKFLOW_ID,
+      OTHER_WORKFLOW_ID,
+      OTHER_WORKFLOW_ID,
+      OTHER_WORKFLOW_ID,
+    ]);
+  });
+
+  test("a periodic sweep logs a new quarantine once, stops retrying the record, and logs its release", async () => {
+    const q = quarantinable();
+    q.heal();
+    const { advance, lines, runner } = runnerOver(q.recovery);
+    try {
+      await runner.start();
+      expect(lines).toEqual([]);
+      // The record starts failing: retried with backoff.
+      q.fail();
+      await runner.sweep();
+      expect(lines).toEqual([
+        `V2 recovery of workflow ${WORKFLOW_ID} for ${fixture.input.to} failed (attempt 1); retrying in 1000 ms: Error: Temporal frontend unavailable`,
+      ]);
+      // The operator quarantines it: one line, no more attempts.
+      q.quarantine(QUARANTINE);
+      advance(60_000);
+      const attemptsBefore = q.attempts();
+      await runner.sweep();
+      await runner.sweep();
+      expect(lines.slice(1)).toEqual([quarantinedLine()]);
+      expect(q.attempts()).toBe(attemptsBefore);
+      // Released: logged once, and recovered from a fresh attempt count.
+      q.quarantine(undefined);
+      await runner.sweep();
+      expect(lines.slice(2)).toEqual([
+        `V2 recovery quarantine of workflow ${WORKFLOW_ID} for ${fixture.input.to} was released; recovering it again`,
+        `V2 recovery of workflow ${WORKFLOW_ID} for ${fixture.input.to} failed (attempt 1); retrying in 1000 ms: Error: Temporal frontend unavailable`,
+      ]);
+      // The release is said once; the record is in backoff, not yet due.
+      await runner.sweep();
+      expect(lines).toHaveLength(4);
     } finally {
       await runner.close();
     }

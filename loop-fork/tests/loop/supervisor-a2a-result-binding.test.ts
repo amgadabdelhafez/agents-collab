@@ -1004,6 +1004,8 @@ test("service start logs each binding that will never publish once, with ids onl
       // The host's per-seat delivery status (none configured here).
       notEnrolled: [],
       readinessOutage: [],
+      // No record of this tenant is quarantined from recovery.
+      recoveryQuarantine: [],
       schema: "supervisor-result-assignment-status.v1",
       unpublishable: [
         {

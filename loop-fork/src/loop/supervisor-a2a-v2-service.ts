@@ -101,6 +101,7 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   resultBinding?: PostgresSupervisorMessageV2DeliveryLedger["resultBinding"];
   recipientAssignment?: PostgresSupervisorMessageV2DeliveryLedger["recipientAssignment"];
   unpublishableResultBindings?: PostgresSupervisorMessageV2DeliveryLedger["unpublishableResultBindings"];
+  recoveryQuarantines?: PostgresSupervisorMessageV2DeliveryLedger["recoveryQuarantines"];
   /** The format `migrate` resolved new messages to be written in. */
   readonly workflowIdFormat?: PostgresSupervisorMessageV2DeliveryLedger["workflowIdFormat"];
   close(): Promise<void>;
@@ -192,6 +193,9 @@ export interface SupervisorA2AV2ServiceOptions {
    */
   notEnrolledBoundMs?: number;
   now: () => string;
+  /** The host's config file, named in the recovery quarantine commands an
+   * operator is told to run. */
+  operatorConfigPath?: string;
   peerRoutes?: readonly { pathname: string; supervisorId: string }[];
   policy: SupervisorA2AV2IngressOptions["policy"];
   providerReadiness: SupervisorSessionProviderReadinessPort;
@@ -321,6 +325,7 @@ const safeFailureCategory = (error: unknown): string =>
     "WorkflowNotFoundError",
     "QueryRejectedError",
     "SupervisorSessionV2Error",
+    "SupervisorMessageV2RecoveryStartupError",
     "WorkflowError",
   ].includes(error.name)
     ? error.name
@@ -644,6 +649,7 @@ const createAssignmentRoute = (
     throw new Error("Assignment route path collides");
   }
   const list = ledger.unpublishableResultBindings?.bind(ledger);
+  const quarantined = ledger.recoveryQuarantines?.bind(ledger);
   return {
     pathname: options.assignmentRoute.pathname,
     httpHandler: createSupervisorA2AAssignmentHttpHandler({
@@ -658,7 +664,11 @@ const createAssignmentRoute = (
         notEnrolled: [...(options.recipientEnrollment?.notEnrolled() ?? [])],
         readinessOutage: readinessOutage.recipients(new Date(options.now())),
       }),
-      // The inspection surface lists only this route's tenant.
+      // The inspection surface lists only this route's tenant. Quarantined
+      // recovery records are reported here, never on /healthz.
+      recoveryQuarantine: quarantined
+        ? (scope) => quarantined(scope.tenantId)
+        : undefined,
       unpublishable: list ? (scope) => list(scope.tenantId) : undefined,
     }),
   };
@@ -802,6 +812,7 @@ export const createSupervisorA2AV2Service = async (
     ingress = new SupervisorA2AV2Ingress({
       ...shared,
       card: options.card,
+      operatorConfigPath: options.operatorConfigPath,
       recoveryIntervalMs: options.recoveryIntervalMs,
       supervisorId: options.supervisorId,
     });

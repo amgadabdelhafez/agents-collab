@@ -18,6 +18,7 @@ import {
   type WorkflowCancelCommand,
   type WorkflowCommandReceipt,
   WorkflowError,
+  WorkflowForeignExecutionError,
   type WorkflowInspection,
   type WorkflowPort,
   type WorkflowPresence,
@@ -149,6 +150,9 @@ export class TemporalWorkflowPort implements WorkflowPort {
       ({ handle } = await this.#owned(command.workflowId));
     }
     const snapshot = await handle.query(temporalStartSnapshotQuery);
+    // The execution runs on this port's own queue (a foreign one was refused
+    // above), so another type here is this deployment's own conflict, not a
+    // foreign execution: a plain conflict, never one recovery may skip.
     if (snapshot.inspection.workflowType !== command.workflowType) {
       throw new WorkflowError(
         "conflict",
@@ -215,8 +219,7 @@ export class TemporalWorkflowPort implements WorkflowPort {
    */
   #requireOwnTaskQueue(workflowId: string, taskQueue: string): void {
     if (taskQueue !== this.#taskQueue) {
-      throw new WorkflowError(
-        "conflict",
+      throw new WorkflowForeignExecutionError(
         `workflow ${workflowId} belongs to another task queue`
       );
     }

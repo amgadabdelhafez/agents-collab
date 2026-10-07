@@ -48,8 +48,11 @@ import {
   SupervisorResultGraphKey,
 } from "./supervisor-message-v2-contract";
 import {
+  PostgresSupervisorMessageV2DeliveryLedger,
   SUPERVISOR_MESSAGE_V2_WORKFLOW_ID_FORMATS,
+  type SupervisorMessageV2RecoveryQuarantineEntry,
   type SupervisorMessageV2WorkflowIdFormat,
+  SupervisorMessageV2WorkflowIdFormatError,
 } from "./supervisor-message-v2-delivery-ledger";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
@@ -1299,6 +1302,7 @@ export const createOrchestrationSweep = (input: {
 
 const createDefaultRuntimeHost = async (input: {
   config: ServerConfig;
+  configPath: string;
   connection: Connection;
   directory: LoopSupervisorDirectory;
   env: NodeJS.ProcessEnv;
@@ -1465,6 +1469,9 @@ const createDefaultRuntimeHost = async (input: {
       },
     },
     now: () => new Date().toISOString(),
+    // Named in the quarantine commands a refused or quarantined recovery
+    // record prints, so the operator can run them as shown.
+    operatorConfigPath: input.configPath,
     policy: a2aConfig.policy,
     providerReadiness: new LoopCodexSessionV2ProviderReadiness({
       directory: input.directory,
@@ -1561,6 +1568,101 @@ export const resultGraphWorkflowIdForConfig = (
   );
 };
 
+/** One operator request against the configured deployment's recovery. */
+export type RecoveryQuarantineRequest =
+  | {
+      by: string;
+      command: "v2-quarantine" | "v2-quarantine-release";
+      reason: string;
+      workflowId: string;
+    }
+  | { command: "v2-quarantine-list" };
+
+const quarantineText = (entry: SupervisorMessageV2RecoveryQuarantineEntry) =>
+  `${entry.workflowId} for ${entry.recipient} by ${entry.by} at ${entry.at}: ${entry.reason}`;
+
+/**
+ * The operator tool behind `loop orchestration v2-quarantine`,
+ * `v2-quarantine-release` and `v2-quarantine-list`: the explicit, durable
+ * escape from a recorded start that refuses every service start. It opens
+ * the ledger of this config's deployment (its task queue) with the database
+ * URL from the configured environment variable, applies the server's own
+ * additive migrations, and returns the lines to print: workflow ids,
+ * recipient, who, when and why, never the database URL.
+ */
+export const recoveryQuarantineForConfig = async (
+  configPath: string,
+  request: RecoveryQuarantineRequest,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string[]> => {
+  const config = parseLoopOrchestrationConfig(readConfigFile(configPath));
+  if (!config.a2aV2) {
+    throw new Error("orchestration config has no a2aV2 route");
+  }
+  const databaseUrl = env[config.a2aV2.databaseUrlEnv];
+  if (!databaseUrl) {
+    throw new Error(
+      `missing orchestration A2A V2 database environment ${config.a2aV2.databaseUrlEnv}`
+    );
+  }
+  let ledger: PostgresSupervisorMessageV2DeliveryLedger | undefined;
+  try {
+    // Opened as the server opens it: the same build, deployment and
+    // workflow id format, so its migration records and enforces exactly
+    // what the server's next start would.
+    ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      databaseUrl,
+      {
+        buildId: config.buildId,
+        deployment: config.taskQueue,
+        ...(config.a2aV2.workflowIdFormat
+          ? { workflowIdFormat: config.a2aV2.workflowIdFormat }
+          : {}),
+      }
+    );
+    await ledger.migrate();
+  } catch (error) {
+    await ledger?.close().catch(() => undefined);
+    // A refusal over the ledger's workflow id format is the operator's to
+    // act on, and its message names formats, builds and counts only.
+    if (error instanceof SupervisorMessageV2WorkflowIdFormatError) {
+      throw new Error(`orchestration A2A V2 ledger refused: ${error.message}`);
+    }
+    // A driver error may carry connection details; report none of them.
+    throw new Error("orchestration A2A V2 ledger is unavailable");
+  }
+  try {
+    if (request.command === "v2-quarantine-list") {
+      const entries = await ledger.recoveryQuarantines();
+      return entries.length === 0
+        ? ["no quarantined V2 recovery records"]
+        : entries.map(
+            (entry) =>
+              `${entry.workflowId} for ${entry.recipient} quarantined by ${entry.by} at ${entry.at}: ${entry.reason}`
+          );
+    }
+    const note = { by: request.by, reason: request.reason };
+    if (request.command === "v2-quarantine-release") {
+      const released = await ledger.releaseRecoveryQuarantine(
+        request.workflowId,
+        note
+      );
+      return [
+        `released ${released.workflowId} for ${released.recipient} (quarantined by ${released.by} at ${released.at}: ${released.reason})`,
+      ];
+    }
+    const { created, quarantine } = await ledger.quarantineRecovery(
+      request.workflowId,
+      note
+    );
+    return [
+      `${created ? "quarantined" : "already quarantined"} ${quarantineText(quarantine)}`,
+    ];
+  } finally {
+    await ledger.close();
+  }
+};
+
 export const runLoopOrchestrationServer = async (
   configPath: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -1596,6 +1698,7 @@ export const runLoopOrchestrationServer = async (
       });
       const created = await createDefaultRuntimeHost({
         config,
+        configPath,
         connection,
         directory,
         env,

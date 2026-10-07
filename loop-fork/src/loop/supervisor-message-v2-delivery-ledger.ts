@@ -17,7 +17,12 @@ import {
 } from "./supervisor-message-v2-contract";
 import {
   SUPERVISOR_MESSAGE_V2_TERMINAL_OUTCOMES,
+  SUPERVISOR_MESSAGE_V2_UNREADABLE_RECIPIENT,
   type SupervisorMessageV2DeliveryLedger,
+  type SupervisorMessageV2QuarantinedStart,
+  type SupervisorMessageV2RecoverableStart,
+  type SupervisorMessageV2RecoveryQuarantine,
+  SupervisorMessageV2RecoveryRecordError,
   type SupervisorMessageV2TerminalOutcome,
 } from "./supervisor-message-v2-runtime";
 
@@ -94,6 +99,72 @@ BEGIN
   RETURN NEW;
 END
 $guard$`;
+
+/** An active recovery quarantine of one of this deployment's start intents. */
+export interface SupervisorMessageV2RecoveryQuarantineEntry
+  extends SupervisorMessageV2RecoveryQuarantine {
+  recipient: string;
+  tenantId: string;
+  workflowId: string;
+}
+
+/** Who quarantines or releases a record, and why. */
+export interface SupervisorMessageV2OperatorNote {
+  by: string;
+  reason: string;
+}
+
+const CONTROL_CHARACTER = /\p{Cc}/u;
+
+const operatorText = (value: unknown, max: number): value is string =>
+  typeof value === "string" &&
+  value.trim().length > 0 &&
+  value.length <= max &&
+  !CONTROL_CHARACTER.test(value);
+
+const parseOperatorNote = (
+  note: SupervisorMessageV2OperatorNote
+): SupervisorMessageV2OperatorNote => {
+  if (!(operatorText(note?.by, 200) && operatorText(note?.reason, 1000))) {
+    throw new Error(
+      "V2 recovery quarantine needs an operator (1-200 characters) and a reason (1-1000 characters) without control characters"
+    );
+  }
+  return { by: note.by, reason: note.reason };
+};
+
+/** An active quarantine joined to its start intent. */
+interface QuarantineRow {
+  input_json: unknown;
+  quarantined_at: Date;
+  quarantined_by: string;
+  reason: string;
+  tenant_id: string;
+  workflow_id: string;
+}
+
+/** A start intent's recipient, read without trusting the row otherwise. */
+const recipientOf = (inputJson: unknown): string => {
+  const input = storedJson(inputJson);
+  const to =
+    input && typeof input === "object" && !Array.isArray(input)
+      ? (input as Record<string, unknown>).to
+      : undefined;
+  return typeof to === "string" && RESULT_REFERENCE.test(to)
+    ? to
+    : SUPERVISOR_MESSAGE_V2_UNREADABLE_RECIPIENT;
+};
+
+const quarantineOf = (
+  row: QuarantineRow
+): SupervisorMessageV2RecoveryQuarantineEntry => ({
+  at: new Date(row.quarantined_at).toISOString(),
+  by: row.quarantined_by,
+  reason: row.reason,
+  recipient: recipientOf(row.input_json),
+  tenantId: row.tenant_id,
+  workflowId: row.workflow_id,
+});
 
 /** A recorded binding that will never publish, by ids only. */
 export interface SupervisorMessageV2UnpublishableResultBinding {
@@ -492,6 +563,25 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS legacy_workflow_id TEXT`;
     await this
       .#sql`CREATE INDEX IF NOT EXISTS loop_supervisor_message_v2_start_intent_legacy_workflow_id ON loop_supervisor_message_v2_start_intent (legacy_workflow_id)`;
+    // Operator quarantines of recorded starts, one active row per record and
+    // deployment; a release keeps the row as history. Additive: a build
+    // without it ignores the table and refuses startup on a failing record
+    // exactly as before, so a rollback or a mixed-version pair stays safe
+    // and only loses the escape.
+    await this
+      .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_recovery_quarantine (
+      id BIGSERIAL PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES loop_supervisor_message_v2_start_intent(workflow_id),
+      deployment TEXT NOT NULL,
+      quarantined_by TEXT NOT NULL,
+      quarantined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      reason TEXT NOT NULL,
+      released_by TEXT, released_at TIMESTAMPTZ, release_reason TEXT,
+      CHECK ((released_at IS NULL) = (released_by IS NULL) AND (released_at IS NULL) = (release_reason IS NULL))
+    )`;
+    await this
+      .#sql`CREATE UNIQUE INDEX IF NOT EXISTS loop_supervisor_message_v2_recovery_quarantine_active
+      ON loop_supervisor_message_v2_recovery_quarantine (workflow_id, deployment) WHERE released_at IS NULL`;
     this.#format = await this.#resolveWorkflowIdFormat();
   }
 
@@ -921,6 +1011,103 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     await this.#sql.close({ timeout: 0 });
   }
 
+  /**
+   * The operator's explicit escape from a recorded start that refuses every
+   * service start (`loop orchestration v2-quarantine`). Recovery then leaves
+   * it alone, and logs it on every start, until it is released. Only an
+   * open start intent of this deployment (its own or a pre-discriminator
+   * one) can be quarantined, read or not: an unreadable row is exactly what
+   * may need it. Quarantining an already quarantined record changes nothing
+   * and returns the standing quarantine with `created` false.
+   */
+  async quarantineRecovery(
+    workflowId: string,
+    note: SupervisorMessageV2OperatorNote
+  ): Promise<{
+    created: boolean;
+    quarantine: SupervisorMessageV2RecoveryQuarantineEntry;
+  }> {
+    const { by, reason } = parseOperatorNote(note);
+    return await this.#sql.begin(async (sql) => {
+      const intents = await sql<
+        {
+          input_json: unknown;
+          tenant_id: string;
+          terminal_outcome: string | null;
+        }[]
+      >`SELECT input_json, tenant_id, terminal_outcome FROM loop_supervisor_message_v2_start_intent
+        WHERE workflow_id = ${workflowId} AND (deployment = ${this.#deployment} OR deployment IS NULL)
+        FOR UPDATE`;
+      const intent = intents[0];
+      if (!intent) {
+        throw new Error(
+          `V2 workflow ${workflowId} has no start intent recorded by this deployment`
+        );
+      }
+      if (intent.terminal_outcome !== null) {
+        throw new Error(
+          `V2 workflow ${workflowId} already has a terminal outcome; recovery leaves it alone`
+        );
+      }
+      const inserted =
+        await sql`INSERT INTO loop_supervisor_message_v2_recovery_quarantine (workflow_id, deployment, quarantined_by, reason)
+        VALUES (${workflowId}, ${this.#deployment}, ${by}, ${reason})
+        ON CONFLICT (workflow_id, deployment) WHERE released_at IS NULL DO NOTHING
+        RETURNING id`;
+      const active = await sql<
+        QuarantineRow[]
+      >`SELECT q.workflow_id, q.quarantined_by, q.quarantined_at, q.reason, s.tenant_id, s.input_json
+        FROM loop_supervisor_message_v2_recovery_quarantine q
+        JOIN loop_supervisor_message_v2_start_intent s ON s.workflow_id = q.workflow_id
+        WHERE q.workflow_id = ${workflowId} AND q.deployment = ${this.#deployment} AND q.released_at IS NULL`;
+      const row = active[0];
+      if (!row) {
+        throw new Error(`V2 workflow ${workflowId} is not quarantined`);
+      }
+      return { created: inserted.length === 1, quarantine: quarantineOf(row) };
+    });
+  }
+
+  /**
+   * Ends a quarantine: recovery handles the record normally again from the
+   * next sweep. The quarantine row is kept, with who released it, when and
+   * why, as history.
+   */
+  async releaseRecoveryQuarantine(
+    workflowId: string,
+    note: SupervisorMessageV2OperatorNote
+  ): Promise<SupervisorMessageV2RecoveryQuarantineEntry> {
+    const { by, reason } = parseOperatorNote(note);
+    const released = await this.#sql<
+      QuarantineRow[]
+    >`UPDATE loop_supervisor_message_v2_recovery_quarantine q
+      SET released_by = ${by}, released_at = now(), release_reason = ${reason}
+      FROM loop_supervisor_message_v2_start_intent s
+      WHERE s.workflow_id = q.workflow_id AND q.workflow_id = ${workflowId}
+        AND q.deployment = ${this.#deployment} AND q.released_at IS NULL
+      RETURNING q.workflow_id, q.quarantined_by, q.quarantined_at, q.reason, s.tenant_id, s.input_json`;
+    const row = released[0];
+    if (!row) {
+      throw new Error(`V2 workflow ${workflowId} is not quarantined`);
+    }
+    return quarantineOf(row);
+  }
+
+  /** This deployment's active quarantines; with a tenant, only its own. */
+  async recoveryQuarantines(
+    tenantId?: string
+  ): Promise<SupervisorMessageV2RecoveryQuarantineEntry[]> {
+    const rows = await this.#sql<
+      QuarantineRow[]
+    >`SELECT q.workflow_id, q.quarantined_by, q.quarantined_at, q.reason, s.tenant_id, s.input_json
+      FROM loop_supervisor_message_v2_recovery_quarantine q
+      JOIN loop_supervisor_message_v2_start_intent s ON s.workflow_id = q.workflow_id
+      WHERE q.deployment = ${this.#deployment} AND q.released_at IS NULL
+        AND (${tenantId ?? null}::text IS NULL OR s.tenant_id = ${tenantId ?? null})
+      ORDER BY q.workflow_id`;
+    return rows.map(quarantineOf);
+  }
+
   async recordStartIntent(
     workflowId: string,
     trustedScope: TrustedSupervisorMessageV2Scope,
@@ -1085,11 +1272,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
   }
 
   async recoverableStarts(): Promise<
-    readonly {
-      input: SupervisorMessageV2Input;
-      trustedScope: TrustedSupervisorMessageV2Scope;
-      workflowId: string;
-    }[]
+    readonly (
+      | SupervisorMessageV2RecoverableStart
+      | SupervisorMessageV2QuarantinedStart
+    )[]
   > {
     // This deployment's intents and every legacy one; another deployment's
     // deployment-format intents in a shared database are not recovered here.
@@ -1098,25 +1284,56 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       (StartIntentBinding & {
         input_json: unknown;
         principal: string;
+        quarantine_reason: string | null;
+        quarantined_at: Date | null;
+        quarantined_by: string | null;
         tenant_id: string;
       })[]
-    >`SELECT input_json, principal, tenant_id, workflow_id, deployment FROM loop_supervisor_message_v2_start_intent WHERE deployment = ${this.#deployment} OR deployment IS NULL ORDER BY workflow_id`;
+    >`SELECT s.input_json, s.principal, s.tenant_id, s.workflow_id, s.deployment,
+        q.quarantined_by, q.quarantined_at, q.reason AS quarantine_reason
+      FROM loop_supervisor_message_v2_start_intent s
+      LEFT JOIN loop_supervisor_message_v2_recovery_quarantine q
+        ON q.workflow_id = s.workflow_id AND q.deployment = ${this.#deployment} AND q.released_at IS NULL
+      WHERE s.deployment = ${this.#deployment} OR s.deployment IS NULL
+      ORDER BY s.workflow_id`;
     return rows.map((row) => {
-      const input =
-        typeof row.input_json === "string"
-          ? JSON.parse(row.input_json)
-          : row.input_json;
+      if (row.quarantined_by !== null) {
+        // Quarantined: not read any further, so an unreadable row cannot
+        // fail the sweep either.
+        return {
+          quarantine: {
+            at: new Date(row.quarantined_at ?? 0).toISOString(),
+            by: row.quarantined_by,
+            reason: row.quarantine_reason ?? "",
+          },
+          recipient: recipientOf(row.input_json),
+          workflowId: row.workflow_id,
+        };
+      }
+      const input = storedJson(row.input_json);
       const trustedScope = {
         principal: row.principal,
         tenantId: row.tenant_id,
       };
       if (!(input && typeof input === "object")) {
-        throw new Error("V2 recovery ledger row has no start input");
+        throw new SupervisorMessageV2RecoveryRecordError(
+          row.workflow_id,
+          `V2 recovery ledger row ${row.workflow_id} has no start input`
+        );
       }
-      const parsed = parseSupervisorMessageV2Input(input, trustedScope);
+      let parsed: SupervisorMessageV2Input;
+      try {
+        parsed = parseSupervisorMessageV2Input(input, trustedScope);
+      } catch {
+        throw new SupervisorMessageV2RecoveryRecordError(
+          row.workflow_id,
+          `V2 recovery ledger row ${row.workflow_id} has an unreadable start input`
+        );
+      }
       if (!this.#isBound(row, trustedScope, parsed.dedupeKey)) {
-        throw new Error(
-          "V2 recovery ledger row has an invalid workflow binding"
+        throw new SupervisorMessageV2RecoveryRecordError(
+          row.workflow_id,
+          `V2 recovery ledger row ${row.workflow_id} has an invalid workflow binding`
         );
       }
       return {

@@ -26,6 +26,7 @@ import {
   type JsonObject,
   type WorkflowCommandReceipt,
   WorkflowError,
+  WorkflowForeignExecutionError,
   type WorkflowPort,
   type WorkflowSignalCommand,
 } from "../../src/loop/workflow-port";
@@ -1187,10 +1188,12 @@ describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
 
 describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => {
   // A V2 workflow ID is unique per Temporal namespace, not per deployment.
-  // When another deployment (or another workflow type) already holds an ID
-  // this ledger recorded a start intent for, the Temporal port refuses with
-  // a conflict. That one record must not refuse the whole service start.
-  const FOREIGN_TYPE = "supervisor-message.v1";
+  // When another deployment (its execution on another task queue) already
+  // holds an ID this ledger recorded a start intent for, the Temporal port
+  // refuses with its foreign-execution conflict. That one record must not
+  // refuse the whole service start. (Another workflow type on this
+  // deployment's own queue is a plain conflict and does refuse it.)
+  const FOREIGN = "belongs to another task queue";
   const foreignPort = (
     inner: InMemoryWorkflowPort,
     foreign: ReadonlySet<string>
@@ -1202,9 +1205,8 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
     start: (command) =>
       foreign.has(command.workflowId)
         ? Promise.reject(
-            new WorkflowError(
-              "conflict",
-              `workflow ${command.workflowId} already exists as ${FOREIGN_TYPE}`
+            new WorkflowForeignExecutionError(
+              `workflow ${command.workflowId} ${FOREIGN}`
             )
           )
         : inner.start(command),
@@ -1282,7 +1284,7 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
     await s.runner.start();
 
     expect(s.delivered).toEqual(["supervisor:z-ready"]);
-    const skipped = `V2 recovery skipped workflow ${s.foreignId} for supervisor:a-foreign: WorkflowError (conflict): workflow ${s.foreignId} already exists as ${FOREIGN_TYPE}`;
+    const skipped = `V2 recovery skipped workflow ${s.foreignId} for supervisor:a-foreign: WorkflowError (conflict): workflow ${s.foreignId} ${FOREIGN}`;
     expect(s.logs).toEqual([skipped]);
     // The next sweep still skips it, without repeating the same line.
     expect(await s.runner.sweep()).toBe(0);
@@ -1301,7 +1303,7 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
     s.providerDown.clear();
     s.advance(500);
     await expect(s.coordinator.recoverPending()).rejects.toThrow(
-      `workflow ${s.foreignId} already exists as ${FOREIGN_TYPE}`
+      `workflow ${s.foreignId} ${FOREIGN}`
     );
     expect(s.delivered).toEqual(["supervisor:z-ready"]);
   });

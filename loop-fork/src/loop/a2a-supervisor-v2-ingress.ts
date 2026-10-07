@@ -38,6 +38,8 @@ export interface SupervisorA2AV2IngressOptions {
    */
   notEnrolled?: SupervisorMessageV2NotEnrolledDeferral;
   now: () => string;
+  /** The host's config file, for the quarantine commands recovery prints. */
+  operatorConfigPath?: string;
   policy: SupervisorMessagePolicy;
   /**
    * Shared readiness-outage bound, log, and counters. Every coordinator of
@@ -106,6 +108,7 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
       coordinator,
       intervalMs: options.recoveryIntervalMs ?? 30_000,
       log: options.log,
+      operatorConfigPath: options.operatorConfigPath,
     });
   }
 

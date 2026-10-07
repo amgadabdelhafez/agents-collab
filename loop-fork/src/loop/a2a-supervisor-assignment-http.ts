@@ -2,7 +2,10 @@ import type { SupervisorA2AAuthenticator } from "./a2a-supervisor-http";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import { readBoundedRequestText } from "./bounded-request-body";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
-import type { SupervisorMessageV2UnpublishableResultBinding } from "./supervisor-message-v2-delivery-ledger";
+import type {
+  SupervisorMessageV2RecoveryQuarantineEntry,
+  SupervisorMessageV2UnpublishableResultBinding,
+} from "./supervisor-message-v2-delivery-ledger";
 import type { JsonObject, WorkflowStartReceipt } from "./workflow-port";
 
 const reference = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
@@ -73,18 +76,26 @@ export interface SupervisorA2AAssignmentDeliveryStatus {
   readinessOutage: readonly string[];
 }
 
-const assignmentStatus = async (
+interface AssignmentStatusLists {
+  deliveryStatus?(): SupervisorA2AAssignmentDeliveryStatus;
+  recoveryQuarantine?(
+    scope: TrustedSupervisorMessageV2Scope
+  ): Promise<readonly SupervisorMessageV2RecoveryQuarantineEntry[]>;
+  unpublishable?(
+    scope: TrustedSupervisorMessageV2Scope
+  ): Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>;
+}
+
+/** The authenticated status body: each section the route has, ids only, for
+ * the route's tenant (whose id is not repeated). */
+const listStatus = async (
   scope: TrustedSupervisorMessageV2Scope,
-  list:
-    | ((
-        scope: TrustedSupervisorMessageV2Scope
-      ) => Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>)
-    | undefined,
-  deliveryStatus: (() => SupervisorA2AAssignmentDeliveryStatus) | undefined
+  lists: AssignmentStatusLists
 ): Promise<Response> => {
   try {
-    const entries = list ? await list(scope) : undefined;
-    const delivery = deliveryStatus?.();
+    const unpublishable = await lists.unpublishable?.(scope);
+    const quarantined = await lists.recoveryQuarantine?.(scope);
+    const delivery = lists.deliveryStatus?.();
     return Response.json(
       {
         ...(delivery
@@ -93,10 +104,17 @@ const assignmentStatus = async (
               readinessOutage: [...delivery.readinessOutage],
             }
           : {}),
-        schema: "supervisor-result-assignment-status.v1",
-        ...(entries
+        ...(quarantined
           ? {
-              unpublishable: entries.map(
+              recoveryQuarantine: quarantined.map(
+                ({ tenantId: _tenantId, ...entry }) => entry
+              ),
+            }
+          : {}),
+        schema: "supervisor-result-assignment-status.v1",
+        ...(unpublishable
+          ? {
+              unpublishable: unpublishable.map(
                 ({ tenantId: _tenantId, ...entry }) => entry
               ),
             }
@@ -118,33 +136,35 @@ const assignmentStatus = async (
  * host allowlist, task/message/recipient and the graph, and reserves for
  * this A2A task before recording it.
  *
- * GET on the same path is the inspection surface for the control principal:
- * the recorded bindings of this route's tenant that will never publish, and
- * the host's per-seat delivery status (ids only). Each section is present
- * only when the host provides it: `unpublishable` needs a ledger that can
- * list them (the PostgreSQL ledger can), `notEnrolled` and `readinessOutage`
- * need the delivery status. With neither, GET is 405 as before. */
+ * GET on the same path is the inspection surface, for the authenticated
+ * control principal only: the recorded bindings of this route's tenant that
+ * will never publish, its recorded starts an operator quarantined from
+ * recovery (ids, recipient, who, when and why), and the host's per-seat
+ * delivery status (ids only). Each section is present only when the host
+ * provides it: `unpublishable` and `recoveryQuarantine` need a ledger that
+ * can list them (the PostgreSQL ledger can), `notEnrolled` and
+ * `readinessOutage` need the delivery status. With none, GET is 405. */
 export const createSupervisorA2AAssignmentHttpHandler =
-  (options: {
-    authenticator: SupervisorA2AAuthenticator;
-    pathname: string;
-    principal: string;
-    tenant: string;
-    bind(
-      scope: TrustedSupervisorMessageV2Scope,
-      binding: SupervisorA2AResultBinding
-    ): Promise<void>;
-    deliveryStatus?(): SupervisorA2AAssignmentDeliveryStatus;
-    unpublishable?(
-      scope: TrustedSupervisorMessageV2Scope
-    ): Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>;
-  }) =>
+  (
+    options: AssignmentStatusLists & {
+      authenticator: SupervisorA2AAuthenticator;
+      pathname: string;
+      principal: string;
+      tenant: string;
+      bind(
+        scope: TrustedSupervisorMessageV2Scope,
+        binding: SupervisorA2AResultBinding
+      ): Promise<void>;
+    }
+  ) =>
   async (request: Request): Promise<Response> => {
     if (new URL(request.url).pathname !== options.pathname) {
       return reply(404, "not-found");
     }
     const inspectable = Boolean(
-      options.unpublishable || options.deliveryStatus
+      options.unpublishable ||
+        options.recoveryQuarantine ||
+        options.deliveryStatus
     );
     if (
       request.method !== "POST" &&
@@ -156,12 +176,8 @@ export const createSupervisorA2AAssignmentHttpHandler =
     if (scope instanceof Response) {
       return scope;
     }
-    if (request.method === "GET") {
-      return assignmentStatus(
-        scope,
-        options.unpublishable?.bind(options),
-        options.deliveryStatus?.bind(options)
-      );
+    if (request.method === "GET" && inspectable) {
+      return listStatus(scope, options);
     }
     const body = await readJsonBody(request, 8192, "invalid-binding");
     if (body instanceof Response) {

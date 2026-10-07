@@ -260,6 +260,52 @@ on the same branch, which is still not merged or installed.
   offers no override. Whether an operator may record such an outcome by hand
   is an open question for the owner.
 
+## 2026-10-05: decision 7 follow-up, operator quarantine (not an owner decision)
+
+This entry records an implementation choice on
+claude/fix4-recovery-escape-path (from claude/fix-integration-r3-2026-10-05,
+ef570282). It keeps decision 7 and does not supersede it. The owner has not
+reviewed it.
+
+- Problem: after the narrowing (4ab9bc3d), a recorded start that keeps
+  failing for a reason other than a foreign-held ID refuses every service
+  start, and nothing short of editing the database let the host start.
+- Choice: recovery still never skips such a record by itself. An operator
+  can quarantine it explicitly and durably:
+  `loop orchestration v2-quarantine <config-path> <workflow-id> --reason <text> [--by <operator>]`,
+  with `v2-quarantine-release` (same arguments) and
+  `v2-quarantine-list <config-path>`. The ledger keeps who, when and why, and
+  a release keeps the row as history
+  (`loop_supervisor_message_v2_recovery_quarantine`). Recovery leaves a
+  quarantined record alone and logs it on every start. The quarantined record
+  is listed on the authenticated GET of the assignment route, never on
+  /healthz. A startup refusal names each failing workflow ID and the exact
+  quarantine command, and it is logged, because the service wraps the error.
+- Refinement: a conflict with another workflow type under the ID on the
+  host's own task queue is no longer treated as a foreign execution. Only an
+  execution on another task queue (`WorkflowForeignExecutionError`) is
+  skipped. A same-queue type conflict refuses startup like any other failure,
+  whether that execution is running (the port's start refuses the type) or
+  closed (the coordinator's status read refuses any answer that is not a
+  `supervisor-message-status.v2` projection, so the other type's state is
+  never recorded as this message's terminal outcome). It can be quarantined.
+- Status surface limits: quarantined records are listed only where an
+  authenticated V2 inspection surface exists, the assignment route's GET,
+  and only for that route's tenant (one tenant's control principal never
+  sees another tenant's message ids). A deployment without an assignment
+  route has the start-time log lines and `v2-quarantine-list` (which needs
+  the database credential) and nothing on HTTP. Nothing is added to /healthz,
+  not even a count, while owner question Q2 is open.
+- Rollback and mixed versions: the table is additive. A build without it
+  ignores the table and refuses startup on a failing record, as 4ab9bc3d
+  does, so a rollback fails closed and loses the escape. It also restores
+  the r3 handling of a same-queue workflow-type conflict: a running one is
+  skipped as foreign again, and a closed one is durably recorded as
+  `terminated` from the other type's status. That record is not undone by
+  upgrading again, and a quarantine does not prevent it, because an older
+  build ignores quarantines. Before rolling back, resolve each same-queue
+  conflict this build reported.
+
 ## 2026-10-06: status of the nine decisions on r4
 
 This is a status entry, not an owner decision. It supersedes the "Assigned"

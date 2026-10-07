@@ -125,6 +125,19 @@ export class WorkflowError extends Error {
   }
 }
 
+/**
+ * The conflict an engine-backed port raises when a workflow ID is held by an
+ * execution on another task queue: another deployment's. It is still a
+ * `conflict` to every caller. Only V2 recovery tells it apart from any other
+ * conflict, such as another workflow type under the ID on this deployment's
+ * own queue, which is this deployment's problem and is never skipped.
+ */
+export class WorkflowForeignExecutionError extends WorkflowError {
+  constructor(message: string) {
+    super("conflict", message);
+  }
+}
+
 export interface WorkflowTransitionContext {
   at: string;
   nextRevision: number;
