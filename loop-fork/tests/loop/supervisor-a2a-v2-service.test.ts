@@ -2059,7 +2059,12 @@ test("every V2 delivery path of one service defers a not-enrolled recipient unde
         deliver: () => Promise.reject(new Error("not enrolled: no delivery")),
       },
       dispatchOwner: "v2-dispatcher:shared-not-enrolled",
-      host: { taskQueue: "shared-not-enrolled-queue" } as never,
+      // Only the build and the deployment (task queue) are read before
+      // createHost: the ledger records the build with its id format.
+      host: {
+        buildId: "shared-not-enrolled.v1",
+        taskQueue: "shared-not-enrolled-queue",
+      } as never,
       messageAuthority: {
         decide: () => ({
           allowed: true,
@@ -2072,6 +2077,9 @@ test("every V2 delivery path of one service defers a not-enrolled recipient unde
       peerRoutes: [{ pathname: "/a2a/seats/peer", supervisorId: PEER }],
       policy: POLICY,
       providerReadiness: { ready: () => ({}) as never },
+      // The message below runs under its deployment-scoped id: the host has
+      // opted in.
+      workflowIdFormat: "deployment",
       rebindAuthority: {
         decide: () => ({
           allowed: false,
