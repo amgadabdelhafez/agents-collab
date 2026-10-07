@@ -1,0 +1,2288 @@
+{
+  "recordedWith": {
+    "sdk": "@temporalio/worker 1.23.0, TestWorkflowEnvironment.createLocal",
+    "script": "scripts/record-temporal-replay-histories.ts"
+  },
+  "schema": "temporal-replay-fixtures.v1",
+  "sources": [
+    {
+      "bundleSha256": "7b63a1bea1493eb020c3102b908f9853dd9ec78849282e19d8f9051b5037f3b2",
+      "committedBundleDiffersFromSourceIn": [
+        "./src/loop/supervisor-message-v2-contract.ts",
+        "./src/loop/supervisor-message-v2-runtime.ts"
+      ],
+      "histories": [
+        {
+          "commands": ["signal:claim:pending:1"],
+          "description": "started; delivery deferred (recipient not enrolled), a premature claim refused",
+          "file": "r2-40097564/v2-delivery-pending.history.json",
+          "inFlight": {
+            "phase": "routed",
+            "status": "running"
+          },
+          "scenario": "v2-delivery-pending",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r2-40097564.v2-delivery-pending",
+                  "revision": 1,
+                  "sequence": 1
+                }
+              ],
+              "revision": 1,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:00.000Z",
+              "workflowId": "supervisor-message-workflow:v2:7244a8aa4574eb02922929a88faea29960f830084089b95b80ed078111047db2",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:claim:pending:1": {
+                "error": {
+                  "code": "invalid-state",
+                  "message": "SupervisorMessage cannot be claimed before delivery is accepted"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "claim",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": null,
+              "deliveredAt": null,
+              "deliveryAttempts": 0,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r2-40097564.v2-delivery-pending",
+              "nextRetryAt": null,
+              "phase": "routed",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r2-40097564.v2-delivery-pending",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:7244a8aa4574eb02922929a88faea29960f830084089b95b80ed078111047db2",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": ["signal:receive:backoff:delivery:1"],
+          "description": "first delivery failed transiently; waiting out the retry delay",
+          "file": "r2-40097564/v2-retry-backoff.history.json",
+          "inFlight": {
+            "phase": "retry-scheduled",
+            "status": "running"
+          },
+          "scenario": "v2-retry-backoff",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r2-40097564.v2-retry-backoff",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_failed",
+                  "requestId": "receive:backoff:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                }
+              ],
+              "revision": 2,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:01.000Z",
+              "workflowId": "supervisor-message-workflow:v2:d0e0d631ab5555ce3f3f9234267a3b812b1a4e0f3b266aa86560e0d20a66f490",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:backoff:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:d0e0d631ab5555ce3f3f9234267a3b812b1a4e0f3b266aa86560e0d20a66f490"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "retry",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": null,
+              "deliveredAt": null,
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r2-40097564.v2-retry-backoff",
+              "nextRetryAt": "2026-10-05T12:01:01.000Z",
+              "phase": "retry-scheduled",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r2-40097564.v2-retry-backoff",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:d0e0d631ab5555ce3f3f9234267a3b812b1a4e0f3b266aa86560e0d20a66f490",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [
+            "signal:receive:awaiting:delivery:1",
+            "signal:recovery-retry:awaiting:2026-10-05T12:01:01.000Z",
+            "signal:recovery:awaiting:2"
+          ],
+          "description": "delivered after one retry; waiting for the recipient's claim",
+          "file": "r2-40097564/v2-awaiting-claim.history.json",
+          "inFlight": {
+            "phase": "routed",
+            "status": "running"
+          },
+          "scenario": "v2-awaiting-claim",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r2-40097564.v2-awaiting-claim",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_failed",
+                  "requestId": "receive:awaiting:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:01:01.000Z",
+                  "kind": "signaled",
+                  "name": "retry_due",
+                  "requestId": "recovery-retry:awaiting:2026-10-05T12:01:01.000Z",
+                  "revision": 3,
+                  "sequence": 3
+                },
+                {
+                  "at": "2026-10-05T12:01:02.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_succeeded",
+                  "requestId": "recovery:awaiting:2",
+                  "revision": 4,
+                  "sequence": 4
+                }
+              ],
+              "revision": 4,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:01:02.000Z",
+              "workflowId": "supervisor-message-workflow:v2:5b414e09e68733c64c460682a0cc0e916c6d7acf64d6b89a39a5eea55483fabd",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:awaiting:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:5b414e09e68733c64c460682a0cc0e916c6d7acf64d6b89a39a5eea55483fabd"
+                }
+              },
+              "signal:recovery-retry:awaiting:2026-10-05T12:01:01.000Z": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:5b414e09e68733c64c460682a0cc0e916c6d7acf64d6b89a39a5eea55483fabd"
+                }
+              },
+              "signal:recovery:awaiting:2": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 4,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:5b414e09e68733c64c460682a0cc0e916c6d7acf64d6b89a39a5eea55483fabd"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "claim",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": null,
+              "deliveredAt": "2026-10-05T12:01:02.000Z",
+              "deliveryAttempts": 2,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r2-40097564.v2-awaiting-claim",
+              "nextRetryAt": null,
+              "phase": "routed",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r2-40097564.v2-awaiting-claim",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:5b414e09e68733c64c460682a0cc0e916c6d7acf64d6b89a39a5eea55483fabd",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [
+            "signal:receive:claimed:delivery:1",
+            "signal:claim:claimed"
+          ],
+          "description": "claimed; waiting for the recipient's result and acknowledgement",
+          "file": "r2-40097564/v2-claimed-awaiting-ack.history.json",
+          "inFlight": {
+            "phase": "claimed",
+            "status": "running"
+          },
+          "scenario": "v2-claimed-awaiting-ack",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r2-40097564.v2-claimed-awaiting-ack",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_succeeded",
+                  "requestId": "receive:claimed:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:claimed",
+                  "revision": 3,
+                  "sequence": 3
+                }
+              ],
+              "revision": 3,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:02.000Z",
+              "workflowId": "supervisor-message-workflow:v2:4a1b55afc3a90c2f1ce3852dcbedb071840e1991a71b3123db566f6dbda29c31",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:claimed:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:4a1b55afc3a90c2f1ce3852dcbedb071840e1991a71b3123db566f6dbda29c31"
+                }
+              },
+              "signal:claim:claimed": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:4a1b55afc3a90c2f1ce3852dcbedb071840e1991a71b3123db566f6dbda29c31"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "acknowledge",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": "2026-10-05T12:00:02.000Z",
+              "claimedBy": "supervisor:replay-target",
+              "deadLetteredAt": null,
+              "deliveredAt": "2026-10-05T12:00:01.000Z",
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r2-40097564.v2-claimed-awaiting-ack",
+              "nextRetryAt": null,
+              "phase": "claimed",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r2-40097564.v2-claimed-awaiting-ack",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:4a1b55afc3a90c2f1ce3852dcbedb071840e1991a71b3123db566f6dbda29c31",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [
+            "signal:receive:open:delivery:1",
+            "signal:claim:open",
+            "signal:ack:open"
+          ],
+          "description": "acknowledged: ended for the message, still a running Temporal execution",
+          "file": "r2-40097564/v2-acknowledged-open.history.json",
+          "inFlight": {
+            "phase": "acknowledged",
+            "status": "completed"
+          },
+          "scenario": "v2-acknowledged-open",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r2-40097564.v2-acknowledged-open",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_succeeded",
+                  "requestId": "receive:open:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:open",
+                  "revision": 3,
+                  "sequence": 3
+                },
+                {
+                  "at": "2026-10-05T12:00:03.000Z",
+                  "kind": "signaled",
+                  "name": "acknowledge",
+                  "requestId": "ack:open",
+                  "revision": 4,
+                  "sequence": 4
+                }
+              ],
+              "revision": 4,
+              "status": "completed",
+              "updatedAt": "2026-10-05T12:00:03.000Z",
+              "workflowId": "supervisor-message-workflow:v2:928b1d29c9232b317a2f3d932980672bf94d9f3b5c4213d8660090327d494843",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:open:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:928b1d29c9232b317a2f3d932980672bf94d9f3b5c4213d8660090327d494843"
+                }
+              },
+              "signal:claim:open": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:928b1d29c9232b317a2f3d932980672bf94d9f3b5c4213d8660090327d494843"
+                }
+              },
+              "signal:ack:open": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 4,
+                  "status": "completed",
+                  "workflowId": "supervisor-message-workflow:v2:928b1d29c9232b317a2f3d932980672bf94d9f3b5c4213d8660090327d494843"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": "2026-10-05T12:00:03.000Z",
+              "actionRequired": "none",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": "2026-10-05T12:00:02.000Z",
+              "claimedBy": "supervisor:replay-target",
+              "deadLetteredAt": null,
+              "deliveredAt": "2026-10-05T12:00:01.000Z",
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r2-40097564.v2-acknowledged-open",
+              "nextRetryAt": null,
+              "phase": "acknowledged",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r2-40097564.v2-acknowledged-open",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:928b1d29c9232b317a2f3d932980672bf94d9f3b5c4213d8660090327d494843",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": ["signal:receive:dead:delivery:1"],
+          "description": "permanently failed: dead-lettered, still a running Temporal execution",
+          "file": "r2-40097564/v2-dead-lettered-open.history.json",
+          "inFlight": {
+            "phase": "dead-lettered",
+            "status": "failed"
+          },
+          "scenario": "v2-dead-lettered-open",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r2-40097564.v2-dead-lettered-open",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_failed",
+                  "requestId": "receive:dead:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                }
+              ],
+              "revision": 2,
+              "status": "failed",
+              "updatedAt": "2026-10-05T12:00:01.000Z",
+              "workflowId": "supervisor-message-workflow:v2:44b197b950f2414890c63af7ade69137fd2bccad29491be7835b335eed64aa4b",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:dead:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "failed",
+                  "workflowId": "supervisor-message-workflow:v2:44b197b950f2414890c63af7ade69137fd2bccad29491be7835b335eed64aa4b"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "dead-letter",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": "2026-10-05T12:00:01.000Z",
+              "deliveredAt": null,
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r2-40097564.v2-dead-lettered-open",
+              "nextRetryAt": null,
+              "phase": "dead-lettered",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r2-40097564.v2-dead-lettered-open",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:44b197b950f2414890c63af7ade69137fd2bccad29491be7835b335eed64aa4b",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [],
+          "description": "a gated task waiting for its authority receipt",
+          "file": "r2-40097564/graph-awaiting-gate.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-awaiting-gate",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:gated",
+                  "revision": 1,
+                  "sequence": 1
+                }
+              ],
+              "revision": 1,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:00.000Z",
+              "workflowId": "task-graph:r2-40097564:graph-awaiting-gate",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {},
+            "status": {
+              "graphId": "replay-graph-gated",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": ["authority:owner-approval"],
+                  "failureCode": null,
+                  "phase": "pending",
+                  "taskId": "deliver-result",
+                  "workerId": null
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r2-40097564:graph-awaiting-gate",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": [],
+          "description": "a ready task waiting for a worker's claim, its dependent pending",
+          "file": "r2-40097564/graph-awaiting-claim.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-awaiting-claim",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:claim",
+                  "revision": 1,
+                  "sequence": 1
+                }
+              ],
+              "revision": 1,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:00.000Z",
+              "workflowId": "task-graph:r2-40097564:graph-awaiting-claim",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {},
+            "status": {
+              "graphId": "replay-graph-claim",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "ready",
+                  "taskId": "a-build",
+                  "workerId": null
+                },
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": ["dependency:a-build:ready"],
+                  "failureCode": null,
+                  "phase": "pending",
+                  "taskId": "b-publish",
+                  "workerId": null
+                }
+              ],
+              "readyTaskIds": ["a-build"],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r2-40097564:graph-awaiting-claim",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": [
+            "signal:claim:result",
+            "signal:start:result",
+            "signal:claim:result:again"
+          ],
+          "description": "a message's result graph: its task running, waiting for the result",
+          "file": "r2-40097564/graph-awaiting-result.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-awaiting-result",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:result",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:result",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "start",
+                  "requestId": "start:result",
+                  "revision": 3,
+                  "sequence": 3
+                }
+              ],
+              "revision": 3,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:02.000Z",
+              "workflowId": "supervisor-result-graph:v2:2910da1296f02cb92a0427eb645be0321d6b92c4b19af3854fbd8d41d308d276",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {
+              "signal:claim:result": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-result-graph",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "deliver-result",
+                        "workerId": "replay-worker"
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-result-graph:v2:2910da1296f02cb92a0427eb645be0321d6b92c4b19af3854fbd8d41d308d276"
+                }
+              },
+              "signal:start:result": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-result-graph",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "running",
+                        "taskId": "deliver-result",
+                        "workerId": "replay-worker"
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-result-graph:v2:2910da1296f02cb92a0427eb645be0321d6b92c4b19af3854fbd8d41d308d276"
+                }
+              },
+              "signal:claim:result:again": {
+                "error": {
+                  "code": "invalid-state",
+                  "message": "task deliver-result is not ready"
+                }
+              }
+            },
+            "status": {
+              "graphId": "replay-result-graph",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "running",
+                  "taskId": "deliver-result",
+                  "workerId": "replay-worker"
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "supervisor-result-graph:v2:2910da1296f02cb92a0427eb645be0321d6b92c4b19af3854fbd8d41d308d276",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": [
+            "signal:claim:partial:a",
+            "signal:start:partial:a",
+            "signal:complete:partial:a",
+            "signal:claim:partial:b"
+          ],
+          "description": "first task done; the dependent claimed, not started",
+          "file": "r2-40097564/graph-partially-complete.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-partially-complete",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:partial",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:partial:a",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "start",
+                  "requestId": "start:partial:a",
+                  "revision": 3,
+                  "sequence": 3
+                },
+                {
+                  "at": "2026-10-05T12:00:03.000Z",
+                  "kind": "signaled",
+                  "name": "complete",
+                  "requestId": "complete:partial:a",
+                  "revision": 4,
+                  "sequence": 4
+                },
+                {
+                  "at": "2026-10-05T12:00:04.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:partial:b",
+                  "revision": 5,
+                  "sequence": 5
+                }
+              ],
+              "revision": 5,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:04.000Z",
+              "workflowId": "task-graph:r2-40097564:graph-partially-complete",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {
+              "signal:claim:partial:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["dependency:a-build:ready"],
+                        "failureCode": null,
+                        "phase": "pending",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "task-graph:r2-40097564:graph-partially-complete"
+                }
+              },
+              "signal:start:partial:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "running",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["dependency:a-build:ready"],
+                        "failureCode": null,
+                        "phase": "pending",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "task-graph:r2-40097564:graph-partially-complete"
+                }
+              },
+              "signal:complete:partial:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [
+                          {
+                            "artifactRef": "artifact://sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "checkId": "result-artifact"
+                          }
+                        ],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "succeeded",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "ready",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": ["b-publish"],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 4,
+                  "status": "running",
+                  "workflowId": "task-graph:r2-40097564:graph-partially-complete"
+                }
+              },
+              "signal:claim:partial:b": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [
+                          {
+                            "artifactRef": "artifact://sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "checkId": "result-artifact"
+                          }
+                        ],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "succeeded",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "b-publish",
+                        "workerId": "replay-worker"
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 5,
+                  "status": "running",
+                  "workflowId": "task-graph:r2-40097564:graph-partially-complete"
+                }
+              }
+            },
+            "status": {
+              "graphId": "replay-graph-partial",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [
+                    {
+                      "artifactRef": "artifact://sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                      "checkId": "result-artifact"
+                    }
+                  ],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "succeeded",
+                  "taskId": "a-build",
+                  "workerId": "replay-worker"
+                },
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "claimed",
+                  "taskId": "b-publish",
+                  "workerId": "replay-worker"
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r2-40097564:graph-partially-complete",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": ["signal:claim:failed:a", "signal:fail:failed:a"],
+          "description": "first task failed and its dependent blocked: ended, still running",
+          "file": "r2-40097564/graph-failed-blocked.history.json",
+          "inFlight": {
+            "status": "failed"
+          },
+          "scenario": "graph-failed-blocked",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:failed",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:failed:a",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "fail",
+                  "requestId": "fail:failed:a",
+                  "revision": 3,
+                  "sequence": 3
+                }
+              ],
+              "revision": 3,
+              "status": "failed",
+              "updatedAt": "2026-10-05T12:00:02.000Z",
+              "workflowId": "task-graph:r2-40097564:graph-failed-blocked",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {
+              "signal:claim:failed:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-failed",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["dependency:a-build:ready"],
+                        "failureCode": null,
+                        "phase": "pending",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "task-graph:r2-40097564:graph-failed-blocked"
+                }
+              },
+              "signal:fail:failed:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-failed",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": "build-broke",
+                        "phase": "failed",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["failed:a-build"],
+                        "failureCode": null,
+                        "phase": "blocked",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 3,
+                  "status": "failed",
+                  "workflowId": "task-graph:r2-40097564:graph-failed-blocked"
+                }
+              }
+            },
+            "status": {
+              "graphId": "replay-graph-failed",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": "build-broke",
+                  "phase": "failed",
+                  "taskId": "a-build",
+                  "workerId": "replay-worker"
+                },
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": ["failed:a-build"],
+                  "failureCode": null,
+                  "phase": "blocked",
+                  "taskId": "b-publish",
+                  "workerId": null
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r2-40097564:graph-failed-blocked",
+          "workflowType": "task-graph.v1"
+        }
+      ],
+      "label": "r2-40097564",
+      "ref": "4009756459cb5db81f69d714206ae6be1bc1b193",
+      "summary": "r2: last line before the keyed result graph id and the deployment discriminator"
+    },
+    {
+      "bundleSha256": "efdd4be177604fe3fc532c9b43831b991972f8f8fd410d401b5bfefaf0d0f6bd",
+      "committedBundleDiffersFromSourceIn": [],
+      "histories": [
+        {
+          "commands": ["signal:claim:pending:1"],
+          "description": "started; delivery deferred (recipient not enrolled), a premature claim refused",
+          "file": "r3-ef570282/v2-delivery-pending.history.json",
+          "inFlight": {
+            "phase": "routed",
+            "status": "running"
+          },
+          "scenario": "v2-delivery-pending",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r3-ef570282.v2-delivery-pending",
+                  "revision": 1,
+                  "sequence": 1
+                }
+              ],
+              "revision": 1,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:00.000Z",
+              "workflowId": "supervisor-message-workflow:v2:deployment:a3875363fd658ea98f5421143106d8989d6cbc9aae61b1d86ad4a6bff2a6d2c1",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:claim:pending:1": {
+                "error": {
+                  "code": "invalid-state",
+                  "message": "SupervisorMessage cannot be claimed before delivery is accepted"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "claim",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": null,
+              "deliveredAt": null,
+              "deliveryAttempts": 0,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r3-ef570282.v2-delivery-pending",
+              "nextRetryAt": null,
+              "phase": "routed",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r3-ef570282.v2-delivery-pending",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:deployment:a3875363fd658ea98f5421143106d8989d6cbc9aae61b1d86ad4a6bff2a6d2c1",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": ["signal:receive:backoff:delivery:1"],
+          "description": "first delivery failed transiently; waiting out the retry delay",
+          "file": "r3-ef570282/v2-retry-backoff.history.json",
+          "inFlight": {
+            "phase": "retry-scheduled",
+            "status": "running"
+          },
+          "scenario": "v2-retry-backoff",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r3-ef570282.v2-retry-backoff",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_failed",
+                  "requestId": "receive:backoff:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                }
+              ],
+              "revision": 2,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:01.000Z",
+              "workflowId": "supervisor-message-workflow:v2:deployment:18a78685898b8b2c16c7521edc5d24c2698bd288fbaf82d2fe31ea3cc013fb5e",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:backoff:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:18a78685898b8b2c16c7521edc5d24c2698bd288fbaf82d2fe31ea3cc013fb5e"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "retry",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": null,
+              "deliveredAt": null,
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r3-ef570282.v2-retry-backoff",
+              "nextRetryAt": "2026-10-05T12:01:01.000Z",
+              "phase": "retry-scheduled",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r3-ef570282.v2-retry-backoff",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:deployment:18a78685898b8b2c16c7521edc5d24c2698bd288fbaf82d2fe31ea3cc013fb5e",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [
+            "signal:receive:awaiting:delivery:1",
+            "signal:recovery-retry:awaiting:2026-10-05T12:01:01.000Z",
+            "signal:recovery:awaiting:2"
+          ],
+          "description": "delivered after one retry; waiting for the recipient's claim",
+          "file": "r3-ef570282/v2-awaiting-claim.history.json",
+          "inFlight": {
+            "phase": "routed",
+            "status": "running"
+          },
+          "scenario": "v2-awaiting-claim",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r3-ef570282.v2-awaiting-claim",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_failed",
+                  "requestId": "receive:awaiting:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:01:01.000Z",
+                  "kind": "signaled",
+                  "name": "retry_due",
+                  "requestId": "recovery-retry:awaiting:2026-10-05T12:01:01.000Z",
+                  "revision": 3,
+                  "sequence": 3
+                },
+                {
+                  "at": "2026-10-05T12:01:02.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_succeeded",
+                  "requestId": "recovery:awaiting:2",
+                  "revision": 4,
+                  "sequence": 4
+                }
+              ],
+              "revision": 4,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:01:02.000Z",
+              "workflowId": "supervisor-message-workflow:v2:deployment:c0beb4bc10a42484effa51b962b2b5968d65cf349e4e7c2e48fe0dc631c601f8",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:awaiting:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:c0beb4bc10a42484effa51b962b2b5968d65cf349e4e7c2e48fe0dc631c601f8"
+                }
+              },
+              "signal:recovery-retry:awaiting:2026-10-05T12:01:01.000Z": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:c0beb4bc10a42484effa51b962b2b5968d65cf349e4e7c2e48fe0dc631c601f8"
+                }
+              },
+              "signal:recovery:awaiting:2": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 4,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:c0beb4bc10a42484effa51b962b2b5968d65cf349e4e7c2e48fe0dc631c601f8"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "claim",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": null,
+              "deliveredAt": "2026-10-05T12:01:02.000Z",
+              "deliveryAttempts": 2,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r3-ef570282.v2-awaiting-claim",
+              "nextRetryAt": null,
+              "phase": "routed",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r3-ef570282.v2-awaiting-claim",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:deployment:c0beb4bc10a42484effa51b962b2b5968d65cf349e4e7c2e48fe0dc631c601f8",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [
+            "signal:receive:claimed:delivery:1",
+            "signal:claim:claimed"
+          ],
+          "description": "claimed; waiting for the recipient's result and acknowledgement",
+          "file": "r3-ef570282/v2-claimed-awaiting-ack.history.json",
+          "inFlight": {
+            "phase": "claimed",
+            "status": "running"
+          },
+          "scenario": "v2-claimed-awaiting-ack",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r3-ef570282.v2-claimed-awaiting-ack",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_succeeded",
+                  "requestId": "receive:claimed:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:claimed",
+                  "revision": 3,
+                  "sequence": 3
+                }
+              ],
+              "revision": 3,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:02.000Z",
+              "workflowId": "supervisor-message-workflow:v2:deployment:cf93bc0e63fb06b82bdf7247ba666067b199e0c389cbd35748162b204716e144",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:claimed:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:cf93bc0e63fb06b82bdf7247ba666067b199e0c389cbd35748162b204716e144"
+                }
+              },
+              "signal:claim:claimed": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:cf93bc0e63fb06b82bdf7247ba666067b199e0c389cbd35748162b204716e144"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "acknowledge",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": "2026-10-05T12:00:02.000Z",
+              "claimedBy": "supervisor:replay-target",
+              "deadLetteredAt": null,
+              "deliveredAt": "2026-10-05T12:00:01.000Z",
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r3-ef570282.v2-claimed-awaiting-ack",
+              "nextRetryAt": null,
+              "phase": "claimed",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r3-ef570282.v2-claimed-awaiting-ack",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:deployment:cf93bc0e63fb06b82bdf7247ba666067b199e0c389cbd35748162b204716e144",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [
+            "signal:receive:open:delivery:1",
+            "signal:claim:open",
+            "signal:ack:open"
+          ],
+          "description": "acknowledged: ended for the message, still a running Temporal execution",
+          "file": "r3-ef570282/v2-acknowledged-open.history.json",
+          "inFlight": {
+            "phase": "acknowledged",
+            "status": "completed"
+          },
+          "scenario": "v2-acknowledged-open",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r3-ef570282.v2-acknowledged-open",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_succeeded",
+                  "requestId": "receive:open:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:open",
+                  "revision": 3,
+                  "sequence": 3
+                },
+                {
+                  "at": "2026-10-05T12:00:03.000Z",
+                  "kind": "signaled",
+                  "name": "acknowledge",
+                  "requestId": "ack:open",
+                  "revision": 4,
+                  "sequence": 4
+                }
+              ],
+              "revision": 4,
+              "status": "completed",
+              "updatedAt": "2026-10-05T12:00:03.000Z",
+              "workflowId": "supervisor-message-workflow:v2:deployment:f0add3f10aa0a06024155e8c06eecc064e2f330b11b129fdedf108a318e6bfca",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:open:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:f0add3f10aa0a06024155e8c06eecc064e2f330b11b129fdedf108a318e6bfca"
+                }
+              },
+              "signal:claim:open": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:f0add3f10aa0a06024155e8c06eecc064e2f330b11b129fdedf108a318e6bfca"
+                }
+              },
+              "signal:ack:open": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 4,
+                  "status": "completed",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:f0add3f10aa0a06024155e8c06eecc064e2f330b11b129fdedf108a318e6bfca"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": "2026-10-05T12:00:03.000Z",
+              "actionRequired": "none",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": "2026-10-05T12:00:02.000Z",
+              "claimedBy": "supervisor:replay-target",
+              "deadLetteredAt": null,
+              "deliveredAt": "2026-10-05T12:00:01.000Z",
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r3-ef570282.v2-acknowledged-open",
+              "nextRetryAt": null,
+              "phase": "acknowledged",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r3-ef570282.v2-acknowledged-open",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:deployment:f0add3f10aa0a06024155e8c06eecc064e2f330b11b129fdedf108a318e6bfca",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": ["signal:receive:dead:delivery:1"],
+          "description": "permanently failed: dead-lettered, still a running Temporal execution",
+          "file": "r3-ef570282/v2-dead-lettered-open.history.json",
+          "inFlight": {
+            "phase": "dead-lettered",
+            "status": "failed"
+          },
+          "scenario": "v2-dead-lettered-open",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "supervisor-message.v2",
+                  "requestId": "receive:r3-ef570282.v2-dead-lettered-open",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "delivery_failed",
+                  "requestId": "receive:dead:delivery:1",
+                  "revision": 2,
+                  "sequence": 2
+                }
+              ],
+              "revision": 2,
+              "status": "failed",
+              "updatedAt": "2026-10-05T12:00:01.000Z",
+              "workflowId": "supervisor-message-workflow:v2:deployment:d339ee404e8060350d27adca7d2a4154faafd6a1f295a2a48fa22542cf7f353d",
+              "workflowType": "supervisor-message.v2"
+            },
+            "outcomes": {
+              "signal:receive:dead:delivery:1": {
+                "receipt": {
+                  "replayed": false,
+                  "revision": 2,
+                  "status": "failed",
+                  "workflowId": "supervisor-message-workflow:v2:deployment:d339ee404e8060350d27adca7d2a4154faafd6a1f295a2a48fa22542cf7f353d"
+                }
+              }
+            },
+            "status": {
+              "acknowledgedAt": null,
+              "actionRequired": "dead-letter",
+              "artifactRefs": [
+                "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              ],
+              "claimedAt": null,
+              "claimedBy": null,
+              "deadLetteredAt": "2026-10-05T12:00:01.000Z",
+              "deliveredAt": null,
+              "deliveryAttempts": 1,
+              "escalatedAt": null,
+              "from": "supervisor:replay-sender",
+              "messageId": "message-r3-ef570282.v2-dead-lettered-open",
+              "nextRetryAt": null,
+              "phase": "dead-lettered",
+              "principal": "principal:replay-sender",
+              "receivedAt": "2026-10-05T12:00:00.000Z",
+              "schema": "supervisor-message-status.v2",
+              "tenantId": "tenant:replay",
+              "threadId": "thread-r3-ef570282.v2-dead-lettered-open",
+              "to": "supervisor:replay-target"
+            }
+          },
+          "workflowId": "supervisor-message-workflow:v2:deployment:d339ee404e8060350d27adca7d2a4154faafd6a1f295a2a48fa22542cf7f353d",
+          "workflowType": "supervisor-message.v2"
+        },
+        {
+          "commands": [],
+          "description": "a gated task waiting for its authority receipt",
+          "file": "r3-ef570282/graph-awaiting-gate.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-awaiting-gate",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:gated",
+                  "revision": 1,
+                  "sequence": 1
+                }
+              ],
+              "revision": 1,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:00.000Z",
+              "workflowId": "task-graph:r3-ef570282:graph-awaiting-gate",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {},
+            "status": {
+              "graphId": "replay-graph-gated",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": ["authority:owner-approval"],
+                  "failureCode": null,
+                  "phase": "pending",
+                  "taskId": "deliver-result",
+                  "workerId": null
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r3-ef570282:graph-awaiting-gate",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": [],
+          "description": "a ready task waiting for a worker's claim, its dependent pending",
+          "file": "r3-ef570282/graph-awaiting-claim.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-awaiting-claim",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:claim",
+                  "revision": 1,
+                  "sequence": 1
+                }
+              ],
+              "revision": 1,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:00.000Z",
+              "workflowId": "task-graph:r3-ef570282:graph-awaiting-claim",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {},
+            "status": {
+              "graphId": "replay-graph-claim",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "ready",
+                  "taskId": "a-build",
+                  "workerId": null
+                },
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": ["dependency:a-build:ready"],
+                  "failureCode": null,
+                  "phase": "pending",
+                  "taskId": "b-publish",
+                  "workerId": null
+                }
+              ],
+              "readyTaskIds": ["a-build"],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r3-ef570282:graph-awaiting-claim",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": [
+            "signal:claim:result",
+            "signal:start:result",
+            "signal:claim:result:again"
+          ],
+          "description": "a message's result graph: its task running, waiting for the result",
+          "file": "r3-ef570282/graph-awaiting-result.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-awaiting-result",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:result",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:result",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "start",
+                  "requestId": "start:result",
+                  "revision": 3,
+                  "sequence": 3
+                }
+              ],
+              "revision": 3,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:02.000Z",
+              "workflowId": "supervisor-result-graph:v3:54c3bc6ebb22ee932b77cd820b72ef98f8a28bb7ae357e27fd252a455caf7717",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {
+              "signal:claim:result": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-result-graph",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "deliver-result",
+                        "workerId": "replay-worker"
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "supervisor-result-graph:v3:54c3bc6ebb22ee932b77cd820b72ef98f8a28bb7ae357e27fd252a455caf7717"
+                }
+              },
+              "signal:start:result": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-result-graph",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "running",
+                        "taskId": "deliver-result",
+                        "workerId": "replay-worker"
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "supervisor-result-graph:v3:54c3bc6ebb22ee932b77cd820b72ef98f8a28bb7ae357e27fd252a455caf7717"
+                }
+              },
+              "signal:claim:result:again": {
+                "error": {
+                  "code": "invalid-state",
+                  "message": "task deliver-result is not ready"
+                }
+              }
+            },
+            "status": {
+              "graphId": "replay-result-graph",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "running",
+                  "taskId": "deliver-result",
+                  "workerId": "replay-worker"
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "supervisor-result-graph:v3:54c3bc6ebb22ee932b77cd820b72ef98f8a28bb7ae357e27fd252a455caf7717",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": [
+            "signal:claim:partial:a",
+            "signal:start:partial:a",
+            "signal:complete:partial:a",
+            "signal:claim:partial:b"
+          ],
+          "description": "first task done; the dependent claimed, not started",
+          "file": "r3-ef570282/graph-partially-complete.history.json",
+          "inFlight": {
+            "status": "running"
+          },
+          "scenario": "graph-partially-complete",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:partial",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:partial:a",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "start",
+                  "requestId": "start:partial:a",
+                  "revision": 3,
+                  "sequence": 3
+                },
+                {
+                  "at": "2026-10-05T12:00:03.000Z",
+                  "kind": "signaled",
+                  "name": "complete",
+                  "requestId": "complete:partial:a",
+                  "revision": 4,
+                  "sequence": 4
+                },
+                {
+                  "at": "2026-10-05T12:00:04.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:partial:b",
+                  "revision": 5,
+                  "sequence": 5
+                }
+              ],
+              "revision": 5,
+              "status": "running",
+              "updatedAt": "2026-10-05T12:00:04.000Z",
+              "workflowId": "task-graph:r3-ef570282:graph-partially-complete",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {
+              "signal:claim:partial:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["dependency:a-build:ready"],
+                        "failureCode": null,
+                        "phase": "pending",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "task-graph:r3-ef570282:graph-partially-complete"
+                }
+              },
+              "signal:start:partial:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "running",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["dependency:a-build:ready"],
+                        "failureCode": null,
+                        "phase": "pending",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 3,
+                  "status": "running",
+                  "workflowId": "task-graph:r3-ef570282:graph-partially-complete"
+                }
+              },
+              "signal:complete:partial:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [
+                          {
+                            "artifactRef": "artifact://sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "checkId": "result-artifact"
+                          }
+                        ],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "succeeded",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "ready",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": ["b-publish"],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 4,
+                  "status": "running",
+                  "workflowId": "task-graph:r3-ef570282:graph-partially-complete"
+                }
+              },
+              "signal:claim:partial:b": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-partial",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [
+                          {
+                            "artifactRef": "artifact://sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "checkId": "result-artifact"
+                          }
+                        ],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "succeeded",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "b-publish",
+                        "workerId": "replay-worker"
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 5,
+                  "status": "running",
+                  "workflowId": "task-graph:r3-ef570282:graph-partially-complete"
+                }
+              }
+            },
+            "status": {
+              "graphId": "replay-graph-partial",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [
+                    {
+                      "artifactRef": "artifact://sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                      "checkId": "result-artifact"
+                    }
+                  ],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "succeeded",
+                  "taskId": "a-build",
+                  "workerId": "replay-worker"
+                },
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": null,
+                  "phase": "claimed",
+                  "taskId": "b-publish",
+                  "workerId": "replay-worker"
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r3-ef570282:graph-partially-complete",
+          "workflowType": "task-graph.v1"
+        },
+        {
+          "commands": ["signal:claim:failed:a", "signal:fail:failed:a"],
+          "description": "first task failed and its dependent blocked: ended, still running",
+          "file": "r3-ef570282/graph-failed-blocked.history.json",
+          "inFlight": {
+            "status": "failed"
+          },
+          "scenario": "graph-failed-blocked",
+          "snapshot": {
+            "inspection": {
+              "createdAt": "2026-10-05T12:00:00.000Z",
+              "history": [
+                {
+                  "at": "2026-10-05T12:00:00.000Z",
+                  "kind": "started",
+                  "name": "task-graph.v1",
+                  "requestId": "graph:failed",
+                  "revision": 1,
+                  "sequence": 1
+                },
+                {
+                  "at": "2026-10-05T12:00:01.000Z",
+                  "kind": "signaled",
+                  "name": "claim",
+                  "requestId": "claim:failed:a",
+                  "revision": 2,
+                  "sequence": 2
+                },
+                {
+                  "at": "2026-10-05T12:00:02.000Z",
+                  "kind": "signaled",
+                  "name": "fail",
+                  "requestId": "fail:failed:a",
+                  "revision": 3,
+                  "sequence": 3
+                }
+              ],
+              "revision": 3,
+              "status": "failed",
+              "updatedAt": "2026-10-05T12:00:02.000Z",
+              "workflowId": "task-graph:r3-ef570282:graph-failed-blocked",
+              "workflowType": "task-graph.v1"
+            },
+            "outcomes": {
+              "signal:claim:failed:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-failed",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": null,
+                        "phase": "claimed",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["dependency:a-build:ready"],
+                        "failureCode": null,
+                        "phase": "pending",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 2,
+                  "status": "running",
+                  "workflowId": "task-graph:r3-ef570282:graph-failed-blocked"
+                }
+              },
+              "signal:fail:failed:a": {
+                "receipt": {
+                  "replayed": false,
+                  "result": {
+                    "graphId": "replay-graph-failed",
+                    "nodes": [
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": [],
+                        "failureCode": "build-broke",
+                        "phase": "failed",
+                        "taskId": "a-build",
+                        "workerId": "replay-worker"
+                      },
+                      {
+                        "acceptanceReceipts": [],
+                        "authorityReceipts": {},
+                        "blockedBy": ["failed:a-build"],
+                        "failureCode": null,
+                        "phase": "blocked",
+                        "taskId": "b-publish",
+                        "workerId": null
+                      }
+                    ],
+                    "readyTaskIds": [],
+                    "schema": "task-graph-projection.v1"
+                  },
+                  "revision": 3,
+                  "status": "failed",
+                  "workflowId": "task-graph:r3-ef570282:graph-failed-blocked"
+                }
+              }
+            },
+            "status": {
+              "graphId": "replay-graph-failed",
+              "nodes": [
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": [],
+                  "failureCode": "build-broke",
+                  "phase": "failed",
+                  "taskId": "a-build",
+                  "workerId": "replay-worker"
+                },
+                {
+                  "acceptanceReceipts": [],
+                  "authorityReceipts": {},
+                  "blockedBy": ["failed:a-build"],
+                  "failureCode": null,
+                  "phase": "blocked",
+                  "taskId": "b-publish",
+                  "workerId": null
+                }
+              ],
+              "readyTaskIds": [],
+              "schema": "task-graph-projection.v1"
+            }
+          },
+          "workflowId": "task-graph:r3-ef570282:graph-failed-blocked",
+          "workflowType": "task-graph.v1"
+        }
+      ],
+      "label": "r3-ef570282",
+      "ref": "ef5702821d0a233cdb3ce99e7949929587720613",
+      "summary": "r3: deployment-format workflow ids and keyed result graph ids"
+    }
+  ]
+}
