@@ -146,6 +146,15 @@ export interface A2AV2Config {
     maxDeliveryAttempts: number;
     retryDelayMs: number;
   };
+  /**
+   * Names of the environment variables holding the keys this host used
+   * before `resultGraphKeyEnv` (a rotation). Bindings derived under them
+   * still publish; nothing new is derived or bound under them, so bind every
+   * result graph started under a key before it becomes a previous key (one
+   * left unbound is reported at start and must be started again under the
+   * primary key). Never the secrets. Requires `resultGraphKeyEnv`.
+   */
+  previousResultGraphKeyEnvs?: string[];
   principal: string;
   /**
    * How long a session readiness-store outage may defer a recipient's V2
@@ -386,7 +395,7 @@ const assertCurrentResultArtifactShape = (
   }
   if (Object.keys(entry).sort().join(",") === RETIRED_RESULT_ARTIFACT_KEYS) {
     throw new Error(
-      `${label} uses the retired shape {artifactRef, commit, path, repositoryRoot}: add graphWorkflowId and graphTaskId naming the one graph task this artifact is evidence for (graphWorkflowId is the message-derived result graph, supervisor-result-graph:v3:<hmac-sha256>, from \`loop orchestration result-graph-id\`)`
+      `${label} uses the retired shape {artifactRef, commit, path, repositoryRoot}: add graphWorkflowId and graphTaskId naming the one graph task this artifact is evidence for (graphWorkflowId is the graph the result's binding is recorded under; only for a message not bound yet, compute it with \`loop orchestration result-graph-id\`)`
     );
   }
   if (
@@ -402,6 +411,40 @@ const assertCurrentResultArtifactShape = (
       `${label} graphWorkflowId is not a message-derived result graph (supervisor-result-graph:v3:<hmac-sha256>, from \`loop orchestration result-graph-id\`), so no result could ever bind to it`
     );
   }
+};
+
+const MAX_PREVIOUS_RESULT_GRAPH_KEYS = 8;
+
+/**
+ * `a2aV2.previousResultGraphKeyEnvs`: one to eight distinct environment
+ * variable names (never secrets), none the primary's, beside a primary.
+ */
+const parsePreviousResultGraphKeyEnvs = (
+  value: unknown,
+  resultGraphKeyEnv: string | undefined
+): string[] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!resultGraphKeyEnv) {
+    throw new Error(
+      "orchestration a2aV2 previousResultGraphKeyEnvs requires resultGraphKeyEnv"
+    );
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_PREVIOUS_RESULT_GRAPH_KEYS ||
+    value.some(
+      (name) => typeof name !== "string" || !TOKEN_ENV_RE.test(name)
+    ) ||
+    new Set([resultGraphKeyEnv, ...value]).size !== value.length + 1
+  ) {
+    throw new Error(
+      "orchestration a2aV2 previousResultGraphKeyEnvs is invalid"
+    );
+  }
+  return [...(value as string[])];
 };
 
 const parseA2AV2 = (
@@ -427,6 +470,9 @@ const parseA2AV2 = (
       "tenant",
       ...(value.resultArtifacts === undefined ? [] : ["resultArtifacts"]),
       ...(value.resultGraphKeyEnv === undefined ? [] : ["resultGraphKeyEnv"]),
+      ...(value.previousResultGraphKeyEnvs === undefined
+        ? []
+        : ["previousResultGraphKeyEnvs"]),
       ...(value.readinessOutageBoundMs === undefined
         ? []
         : ["readinessOutageBoundMs"]),
@@ -522,12 +568,19 @@ const parseA2AV2 = (
     value.resultArtifacts.length > 0 &&
     !resultGraphKeyEnv
   ) {
+    // Never tell an operator to recompute ids: a binding keeps the graph it
+    // was recorded under, and a recomputed id would stop it publishing.
     throw new Error(
-      "orchestration a2aV2 resultArtifacts requires resultGraphKeyEnv: name the environment variable holding the host's result graph HMAC key (at least 32 bytes), then compute each graphWorkflowId with `loop orchestration result-graph-id <config-path> <message-workflow-id>`"
+      "orchestration a2aV2 resultArtifacts requires resultGraphKeyEnv: name the environment variable holding the host's result graph HMAC key (at least 32 bytes). Keep every existing resultArtifacts graphWorkflowId as it is: a recorded binding keeps the graph it was bound to, and a recomputed id would stop it publishing. Run `loop orchestration result-graph-id <config-path> <message-workflow-id>` only for a message that is not bound yet. To change the key later, first bind every result graph started under the old key (a graph started but not bound when its key becomes a previous key can never be bound, and must be started again under the new key), then move the old key's variable name to previousResultGraphKeyEnvs instead of replacing it"
     );
   }
+  const previousResultGraphKeyEnvs = parsePreviousResultGraphKeyEnvs(
+    value.previousResultGraphKeyEnvs,
+    resultGraphKeyEnv
+  );
   return {
     ...(resultGraphKeyEnv ? { resultGraphKeyEnv } : {}),
+    ...(previousResultGraphKeyEnvs ? { previousResultGraphKeyEnvs } : {}),
     resultArtifacts: (() => {
       if (value.resultArtifacts === undefined) {
         return undefined;
@@ -628,27 +681,74 @@ const required = (value: unknown, pattern: RegExp, label: string): string => {
  * The host secret keying result graph ids, read from the operator-named
  * environment variable. Errors name the variable, never its value.
  */
-const resolveResultGraphKey = (
-  config: A2AV2Config,
+const resolveResultGraphKeyEnv = (
+  name: string,
   env: NodeJS.ProcessEnv
-): SupervisorResultGraphKey | undefined => {
-  if (!config.resultGraphKeyEnv) {
-    return undefined;
-  }
-  const secret = env[config.resultGraphKeyEnv];
+): SupervisorResultGraphKey => {
+  const secret = env[name];
   if (!secret) {
     throw new Error(
-      `missing orchestration A2A V2 result graph key environment ${config.resultGraphKeyEnv}`
+      `missing orchestration A2A V2 result graph key environment ${name}`
     );
   }
   try {
     return SupervisorResultGraphKey.fromSecret(secret);
   } catch {
     throw new Error(
-      `orchestration A2A V2 result graph key environment ${config.resultGraphKeyEnv} must hold at least 32 bytes`
+      `orchestration A2A V2 result graph key environment ${name} must hold at least 32 bytes`
     );
   }
 };
+
+/** A configured result graph key with the variable that holds it. */
+interface ConfiguredResultGraphKey {
+  env: string;
+  key: SupervisorResultGraphKey;
+  role: "previous" | "primary";
+}
+
+/**
+ * Every configured result graph key, the primary first. Two variables
+ * holding the same key are refused, named by variable and fingerprint.
+ */
+const resolveResultGraphKeys = (
+  config: A2AV2Config,
+  env: NodeJS.ProcessEnv
+): ConfiguredResultGraphKey[] => {
+  if (!config.resultGraphKeyEnv) {
+    return [];
+  }
+  const keys: ConfiguredResultGraphKey[] = [
+    {
+      env: config.resultGraphKeyEnv,
+      key: resolveResultGraphKeyEnv(config.resultGraphKeyEnv, env),
+      role: "primary",
+    },
+    ...(config.previousResultGraphKeyEnvs ?? []).map((name) => ({
+      env: name,
+      key: resolveResultGraphKeyEnv(name, env),
+      role: "previous" as const,
+    })),
+  ];
+  for (const [index, entry] of keys.entries()) {
+    const earlier = keys
+      .slice(0, index)
+      .find((other) => other.key.fingerprint === entry.key.fingerprint);
+    if (earlier) {
+      throw new Error(
+        `orchestration A2A V2 result graph key environments ${earlier.env} and ${entry.env} hold the same key (${entry.key.fingerprint})`
+      );
+    }
+  }
+  return keys;
+};
+
+const resolveResultGraphKey = (
+  config: A2AV2Config,
+  env: NodeJS.ProcessEnv
+): SupervisorResultGraphKey | undefined =>
+  resolveResultGraphKeys(config, env).find((entry) => entry.role === "primary")
+    ?.key;
 
 const readConfigFile = (path: string): unknown => {
   let descriptor: number | undefined;
@@ -1357,6 +1457,7 @@ const createDefaultRuntimeHost = async (input: {
     throw new Error("configured A2A V2 database environment is absent");
   }
   const controlAuthenticator = authenticator(input.config, input.env);
+  const resultGraphKeys = resolveResultGraphKeys(a2aConfig, input.env);
   const recipientBinding = input.config.supervisors.find(
     (entry) => entry.supervisorId === a2aConfig.recipient
   );
@@ -1389,7 +1490,11 @@ const createDefaultRuntimeHost = async (input: {
       pathname: `${a2aConfig.routePath}/assignment`,
       principal: a2aConfig.principal,
     },
-    resultGraphKey: resolveResultGraphKey(a2aConfig, input.env),
+    resultGraphKey: resultGraphKeys.find((entry) => entry.role === "primary")
+      ?.key,
+    previousResultGraphKeys: resultGraphKeys
+      .filter((entry) => entry.role === "previous")
+      .map((entry) => entry.key),
     resultGraphRoute: {
       pathname: `${a2aConfig.routePath}/result-graph`,
       principal: a2aConfig.principal,
@@ -1538,8 +1643,33 @@ const validateConfiguredRuntimeEnvironment = (
     );
   }
   if (config.a2aV2) {
-    resolveResultGraphKey(config.a2aV2, env);
+    resolveResultGraphKeys(config.a2aV2, env);
   }
+};
+
+/**
+ * The operator tool behind `loop orchestration result-graph-key-fingerprints`:
+ * each configured result graph key's fingerprint, by the variable holding it
+ * and its role. A refusal or report naming a fingerprint is matched to a key
+ * this way; the key itself is never printed.
+ */
+export const resultGraphKeyFingerprintsForConfig = (
+  configPath: string,
+  env: NodeJS.ProcessEnv = process.env
+): { env: string; fingerprint: string; role: "previous" | "primary" }[] => {
+  const config = parseLoopOrchestrationConfig(readConfigFile(configPath));
+  if (!config.a2aV2) {
+    throw new Error("orchestration config has no a2aV2 route");
+  }
+  const keys = resolveResultGraphKeys(config.a2aV2, env);
+  if (keys.length === 0) {
+    throw new Error("orchestration a2aV2 has no resultGraphKeyEnv");
+  }
+  return keys.map((entry) => ({
+    env: entry.env,
+    fingerprint: entry.key.fingerprint,
+    role: entry.role,
+  }));
 };
 
 /**

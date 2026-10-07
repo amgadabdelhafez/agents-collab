@@ -20,6 +20,7 @@ import {
   parseSupervisorMessageV2State,
   SUPERVISOR_MESSAGE_V2_LEGACY_RESULT_GRAPH_WORKFLOW_ID_RE,
   SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE,
+  SUPERVISOR_RESULT_GRAPH_KEY_FINGERPRINT_RE,
   type SupervisorMessageV2Projection,
   type SupervisorMessageV2State,
   SupervisorResultGraphKey,
@@ -570,6 +571,30 @@ describe("SupervisorMessage V2 tenant contract", () => {
         "task-graph:any"
       )
     ).toThrow();
+  });
+
+  test("a result graph key's fingerprint is a short keyed hash that names the key without revealing it", () => {
+    const secret = randomBytes(32).toString("hex");
+    const key = SupervisorResultGraphKey.fromSecret(secret);
+    // The documented format: `rgk:` and the first 16 hex digits of the
+    // HMAC-SHA256 under the key over the fixed fingerprint label.
+    const mac = createHmac("sha256", Buffer.from(secret, "utf8"));
+    for (const field of ["supervisor-result-graph-key-fingerprint", "v1"]) {
+      mac.update(`${Buffer.byteLength(field)}:`);
+      mac.update(field);
+      mac.update(Buffer.from([0]));
+    }
+    expect(key.fingerprint).toBe(`rgk:${mac.digest("hex").slice(0, 16)}`);
+    expect(key.fingerprint).toMatch(SUPERVISOR_RESULT_GRAPH_KEY_FINGERPRINT_RE);
+    expect(key.fingerprint).not.toContain(secret.slice(0, 16));
+    // Stable for the same key, distinct for another.
+    expect(SupervisorResultGraphKey.fromSecret(secret).fingerprint).toBe(
+      key.fingerprint
+    );
+    expect(
+      SupervisorResultGraphKey.fromSecret(randomBytes(32).toString("hex"))
+        .fingerprint
+    ).not.toBe(key.fingerprint);
   });
 
   test("keeps the unkeyed v2 result graph id byte-for-byte for bindings recorded before the key", () => {

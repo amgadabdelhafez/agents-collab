@@ -4,12 +4,14 @@ import { resolve } from "node:path";
 const ORCHESTRATION_COMMAND = "orchestration";
 const SERVE_COMMAND = "serve";
 const RESULT_GRAPH_ID_COMMAND = "result-graph-id";
+const RESULT_GRAPH_KEY_FINGERPRINTS_COMMAND = "result-graph-key-fingerprints";
 const QUARANTINE_COMMAND = "v2-quarantine";
 const RELEASE_COMMAND = "v2-quarantine-release";
 const LIST_COMMAND = "v2-quarantine-list";
 const USAGE = [
   "Usage: loop orchestration serve <config-path>",
   "loop orchestration result-graph-id <config-path> <message-workflow-id>",
+  "loop orchestration result-graph-key-fingerprints <config-path>",
   "loop orchestration v2-quarantine <config-path> <workflow-id> --reason <text> [--by <operator>]",
   "loop orchestration v2-quarantine-release <config-path> <workflow-id> --reason <text> [--by <operator>]",
   "loop orchestration v2-quarantine-list <config-path>",
@@ -22,6 +24,7 @@ export type OrchestrationCommandRequest =
       configPath: string;
       messageWorkflowId: string;
     }
+  | { command: "result-graph-key-fingerprints"; configPath: string }
   | {
       /** Defaults to the operating-system user running the command. */
       by?: string;
@@ -75,6 +78,16 @@ export const parseOrchestrationCommand = (
   if (command === LIST_COMMAND && configPath?.trim() && rest.length === 0) {
     return {
       command: "v2-quarantine-list",
+      configPath: resolve(cwd, configPath),
+    };
+  }
+  if (
+    command === RESULT_GRAPH_KEY_FINGERPRINTS_COMMAND &&
+    configPath?.trim() &&
+    rest.length === 0
+  ) {
+    return {
+      command: "result-graph-key-fingerprints",
       configPath: resolve(cwd, configPath),
     };
   }
@@ -165,6 +178,19 @@ export const runOrchestrationCommand = async (
     return false;
   }
   const write = io.write ?? ((text: string) => process.stdout.write(text));
+  if (request.command === "result-graph-key-fingerprints") {
+    // One line per configured key: variable, role, fingerprint. Never a key.
+    const { resultGraphKeyFingerprintsForConfig } = await import(
+      "./loop-orchestration-server"
+    );
+    for (const entry of resultGraphKeyFingerprintsForConfig(
+      request.configPath,
+      io.env ?? process.env
+    )) {
+      write(`${entry.env} ${entry.role} ${entry.fingerprint}\n`);
+    }
+    return true;
+  }
   if (request.command === "result-graph-id") {
     // Only the derived id is printed; the key never leaves the environment.
     const graphWorkflowId = await deriveFromConfig(

@@ -15,6 +15,7 @@ import {
   enrollConfiguredA2AV2Session,
   parseLoopOrchestrationConfig,
   requireA2AV2Enrollment,
+  resultGraphKeyFingerprintsForConfig,
   resultGraphWorkflowIdForConfig,
   runLoopOrchestrationServer,
 } from "../../src/loop/loop-orchestration-server";
@@ -152,15 +153,18 @@ test("orchestration config accepts a result artifact bound to a keyed graph task
   }
 });
 
+/** The startup refusal's procedure: it must never tell an operator to
+ * recompute an id a binding is already recorded under. */
+const RESULT_GRAPH_KEY_REQUIRED =
+  "orchestration a2aV2 resultArtifacts requires resultGraphKeyEnv: name the environment variable holding the host's result graph HMAC key (at least 32 bytes). Keep every existing resultArtifacts graphWorkflowId as it is: a recorded binding keeps the graph it was bound to, and a recomputed id would stop it publishing. Run `loop orchestration result-graph-id <config-path> <message-workflow-id>` only for a message that is not bound yet. To change the key later, first bind every result graph started under the old key (a graph started but not bound when its key becomes a previous key can never be bound, and must be started again under the new key), then move the old key's variable name to previousResultGraphKeyEnvs instead of replacing it";
+
 test("orchestration config refuses result artifacts without a result graph key environment, with the exact migration", () => {
   const graphWorkflowId = `supervisor-result-graph:v3:${"c".repeat(64)}`;
   expect(() =>
     parseLoopOrchestrationConfig(
       a2aV2([{ ...artifact, graphTaskId: "result-node", graphWorkflowId }], {})
     )
-  ).toThrow(
-    "orchestration a2aV2 resultArtifacts requires resultGraphKeyEnv: name the environment variable holding the host's result graph HMAC key (at least 32 bytes), then compute each graphWorkflowId with `loop orchestration result-graph-id <config-path> <message-workflow-id>`"
-  );
+  ).toThrow(RESULT_GRAPH_KEY_REQUIRED);
   // A V2 route that binds no results needs no key.
   expect(
     parseLoopOrchestrationConfig(a2aV2([], {})).a2aV2?.resultGraphKeyEnv
@@ -291,6 +295,162 @@ test("the server refuses to start when the configured result graph key environme
     expect(failure).not.toContain(short);
   } finally {
     file.remove();
+  }
+});
+
+test("orchestration config names previous result graph keys by environment variable only, and only beside a primary key", () => {
+  const rotated = parseLoopOrchestrationConfig(
+    a2aV2([], {
+      resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+      previousResultGraphKeyEnvs: [
+        "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_09",
+        "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_08",
+      ],
+    })
+  ).a2aV2;
+  expect(rotated?.resultGraphKeyEnv).toBe("LOOP_A2A_V2_RESULT_GRAPH_KEY");
+  expect(rotated?.previousResultGraphKeyEnvs).toEqual([
+    "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_09",
+    "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_08",
+  ]);
+  // Absent, the field stays absent.
+  expect(
+    Object.keys(parseLoopOrchestrationConfig(a2aV2([])).a2aV2 ?? {})
+  ).not.toContain("previousResultGraphKeyEnvs");
+  expect(() =>
+    parseLoopOrchestrationConfig(
+      a2aV2([], {
+        previousResultGraphKeyEnvs: ["LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_09"],
+      })
+    )
+  ).toThrow(
+    "orchestration a2aV2 previousResultGraphKeyEnvs requires resultGraphKeyEnv"
+  );
+  for (const previousResultGraphKeyEnvs of [
+    "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_09",
+    [],
+    ["an-inline-secret-value-that-must-not-be-configured"],
+    [42],
+    [
+      "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_09",
+      "LOOP_A2A_V2_RESULT_GRAPH_KEY_2026_09",
+    ],
+    ["LOOP_A2A_V2_RESULT_GRAPH_KEY"],
+  ]) {
+    expect(() =>
+      parseLoopOrchestrationConfig(
+        a2aV2([], {
+          resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+          previousResultGraphKeyEnvs,
+        })
+      )
+    ).toThrow("orchestration a2aV2 previousResultGraphKeyEnvs is invalid");
+  }
+});
+
+test("orchestration config holds at most eight previous result graph keys", () => {
+  const names = (count: number) =>
+    Array.from(
+      { length: count },
+      (_, index) => `LOOP_A2A_V2_RESULT_GRAPH_KEY_PREVIOUS_${index}`
+    );
+  expect(
+    parseLoopOrchestrationConfig(
+      a2aV2([], {
+        resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+        previousResultGraphKeyEnvs: names(8),
+      })
+    ).a2aV2?.previousResultGraphKeyEnvs
+  ).toEqual(names(8));
+  expect(() =>
+    parseLoopOrchestrationConfig(
+      a2aV2([], {
+        resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+        previousResultGraphKeyEnvs: names(9),
+      })
+    )
+  ).toThrow("orchestration a2aV2 previousResultGraphKeyEnvs is invalid");
+});
+
+test("the server refuses to start when a previous result graph key is absent, short, or the same key as another, naming only variables and fingerprints", async () => {
+  const value = a2aV2([], {
+    resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+    previousResultGraphKeyEnvs: ["LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD"],
+  });
+  const file = configFile({ ...value, address: "127.0.0.1:9" });
+  const primary = randomBytes(32).toString("hex");
+  const env = {
+    LOOP_A2A_V2_DATABASE_URL: "postgres://unused.invalid/none",
+    LOOP_HARNESS_ORCHESTRATION_TOKEN: randomBytes(16).toString("hex"),
+    LOOP_A2A_V2_RESULT_GRAPH_KEY: primary,
+  };
+  const failureOf = (extra: Record<string, string>) =>
+    runLoopOrchestrationServer(file.path, { ...env, ...extra }).then(
+      () => "started",
+      (error: unknown) => String(error)
+    );
+  try {
+    expect(await failureOf({})).toContain(
+      "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD"
+    );
+    const short = "short-throwaway-key";
+    const shortFailure = await failureOf({
+      LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: short,
+    });
+    expect(shortFailure).toContain(
+      "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD must hold at least 32 bytes"
+    );
+    expect(shortFailure).not.toContain(short);
+    const duplicate = await failureOf({
+      LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: primary,
+    });
+    expect(duplicate).toContain(
+      `orchestration A2A V2 result graph key environments LOOP_A2A_V2_RESULT_GRAPH_KEY and LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD hold the same key (${SupervisorResultGraphKey.fromSecret(primary).fingerprint})`
+    );
+    expect(duplicate).not.toContain(primary);
+  } finally {
+    file.remove();
+  }
+});
+
+test("result-graph-key-fingerprints names each configured key's fingerprint by variable and role, never the key", () => {
+  const file = configFile(
+    a2aV2([], {
+      resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+      previousResultGraphKeyEnvs: ["LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD"],
+    })
+  );
+  const primary = randomBytes(32).toString("hex");
+  const previous = randomBytes(32).toString("hex");
+  try {
+    const listed = resultGraphKeyFingerprintsForConfig(file.path, {
+      LOOP_A2A_V2_RESULT_GRAPH_KEY: primary,
+      LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: previous,
+    });
+    expect(listed).toEqual([
+      {
+        env: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+        fingerprint: SupervisorResultGraphKey.fromSecret(primary).fingerprint,
+        role: "primary",
+      },
+      {
+        env: "LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD",
+        fingerprint: SupervisorResultGraphKey.fromSecret(previous).fingerprint,
+        role: "previous",
+      },
+    ]);
+    expect(JSON.stringify(listed)).not.toContain(primary);
+    expect(JSON.stringify(listed)).not.toContain(previous);
+  } finally {
+    file.remove();
+  }
+  const keyless = configFile(a2aV2([], {}));
+  try {
+    expect(() => resultGraphKeyFingerprintsForConfig(keyless.path, {})).toThrow(
+      "orchestration a2aV2 has no resultGraphKeyEnv"
+    );
+  } finally {
+    keyless.remove();
   }
 });
 
