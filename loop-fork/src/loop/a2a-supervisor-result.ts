@@ -69,6 +69,11 @@ export const assertSupervisorA2AResultGraphTask = async (input: {
     throw new Error("Result graph task is unrelated to this recipient");
   }
 };
+/** The id of the artifact a published result of `messageWorkflowId` adds to
+ * its A2A task. Its presence means that binding's result was published. */
+export const acceptedResultArtifactId = (messageWorkflowId: string): string =>
+  `accepted:${messageWorkflowId}`;
+
 const artifactSemantics = (artifact: Artifact): string =>
   JSON.stringify(Artifact.toJSON(artifact), (_key, value) =>
     record(value)
@@ -155,7 +160,7 @@ export const publishSupervisorA2AAcceptedResult = async (input: {
     });
   }
   const artifact: Artifact = {
-    artifactId: `accepted:${binding.messageWorkflowId}`,
+    artifactId: acceptedResultArtifactId(binding.messageWorkflowId),
     name: "Accepted work result",
     description:
       "Verified Temporal task-graph acceptance receipts, not a delivery acknowledgement.",
@@ -204,7 +209,9 @@ export const publishSupervisorA2AAcceptedResult = async (input: {
     }
     const artifacts = prior ? task.artifacts : [...task.artifacts, artifact];
     const allAccepted = workflowIds.every((workflowId) =>
-      artifacts.some((value) => value.artifactId === `accepted:${workflowId}`)
+      artifacts.some(
+        (value) => value.artifactId === acceptedResultArtifactId(workflowId)
+      )
     );
     return {
       ...task,

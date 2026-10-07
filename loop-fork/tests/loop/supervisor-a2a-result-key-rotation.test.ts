@@ -14,7 +14,6 @@ import {
   deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
-  deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2Input,
   SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
@@ -61,25 +60,35 @@ let raw: SQL;
 let tasks: PostgresA2ATaskStore;
 const opened: { close(): Promise<void> }[] = [];
 
-const ledgerWith = async (
-  resultGraphKey: SupervisorResultGraphKey | undefined,
-  previousResultGraphKeys: SupervisorResultGraphKey[] = [],
-  databaseUrl = postgres.databaseUrl()
-): Promise<PostgresSupervisorMessageV2DeliveryLedger> => {
+/** A migrated ledger of one deployment (the host's task queue). */
+const deploymentLedger = async (input: {
+  databaseUrl?: string;
+  deployment?: string;
+  previousResultGraphKeys?: SupervisorResultGraphKey[];
+  resultGraphKey: SupervisorResultGraphKey | undefined;
+  workflowIdFormat?: "deployment" | "legacy";
+}): Promise<PostgresSupervisorMessageV2DeliveryLedger> => {
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    databaseUrl,
+    input.databaseUrl ?? postgres.databaseUrl(),
     {
       buildId: BUILD_ID,
-      deployment: DEPLOYMENT,
-      ...(resultGraphKey ? { resultGraphKey } : {}),
-      previousResultGraphKeys,
-      workflowIdFormat: "deployment",
+      deployment: input.deployment ?? DEPLOYMENT,
+      ...(input.resultGraphKey ? { resultGraphKey: input.resultGraphKey } : {}),
+      previousResultGraphKeys: input.previousResultGraphKeys ?? [],
+      workflowIdFormat: input.workflowIdFormat ?? "deployment",
     }
   );
   opened.push(ledger);
   await ledger.migrate();
   return ledger;
 };
+
+const ledgerWith = (
+  resultGraphKey: SupervisorResultGraphKey | undefined,
+  previousResultGraphKeys: SupervisorResultGraphKey[] = [],
+  databaseUrl = postgres.databaseUrl()
+): Promise<PostgresSupervisorMessageV2DeliveryLedger> =>
+  deploymentLedger({ databaseUrl, previousResultGraphKeys, resultGraphKey });
 
 beforeAll(async () => {
   postgres = await DisposablePostgres.create();
@@ -137,11 +146,8 @@ const sendMessage = async (
   scope: TrustedSupervisorMessageV2Scope,
   dedupeKey: string
 ): Promise<string> => {
-  const workflowId = deriveSupervisorMessageV2WorkflowId(
-    scope,
-    dedupeKey,
-    DEPLOYMENT
-  );
+  // The id of the ledger's deployment and workflow id format.
+  const workflowId = await ledger.workflowIdFor(scope, dedupeKey);
   await ledger.recordStartIntent(workflowId, scope, inputFor(scope, dedupeKey));
   return workflowId;
 };
@@ -149,7 +155,8 @@ const sendMessage = async (
 const saveTask = async (
   scope: TrustedSupervisorMessageV2Scope,
   id: string,
-  workflowIds: string[]
+  workflowIds: string[],
+  state = TaskState.TASK_STATE_WORKING
 ): Promise<void> => {
   const task: Task = {
     id,
@@ -158,7 +165,7 @@ const saveTask = async (
     artifacts: [],
     metadata: { [WORKFLOW_IDS_METADATA_KEY]: workflowIds },
     status: {
-      state: TaskState.TASK_STATE_WORKING,
+      state,
       timestamp: NOW,
       message: undefined,
     },
@@ -206,7 +213,9 @@ const serviceFor = async (input: {
   resultGraphKey: SupervisorResultGraphKey | undefined;
   previousResultGraphKeys?: SupervisorResultGraphKey[];
   databaseUrl?: string;
+  deployment?: string;
   log?: (line: string) => void;
+  workflowIdFormat?: "deployment" | "legacy";
 }): Promise<SupervisorA2AV2Service> => {
   const service = await createSupervisorA2AV2Service({
     ...({
@@ -240,7 +249,7 @@ const serviceFor = async (input: {
         nativeConnection: {},
         receipts: { record: () => undefined },
         store: {} as JsonlSupervisorThreadStore,
-        taskQueue: DEPLOYMENT,
+        taskQueue: input.deployment ?? DEPLOYMENT,
         workflowBundle: { code: "unused" },
         workflowClient: {},
       },
@@ -270,7 +279,7 @@ const serviceFor = async (input: {
     resultGraphKey: input.resultGraphKey,
     previousResultGraphKeys: input.previousResultGraphKeys,
     resultGraphTasks: input.allow,
-    workflowIdFormat: "deployment",
+    workflowIdFormat: input.workflowIdFormat ?? "deployment",
     verifyResultArtifact: (reference, target) =>
       Promise.resolve(
         reference === ARTIFACT &&
@@ -405,6 +414,23 @@ test("after a key rotation a binding made under the previous key still publishes
   await expect(
     after.resultBinding(scope, oldMessage, "task:rotate-old")
   ).resolves.toEqual(oldBinding);
+  // Until it publishes, the authenticated listing names the binding under
+  // the previous key: removing that key now would strand it.
+  const underOld = {
+    a2aTaskId: "task:rotate-old",
+    graphTaskId: "result-node",
+    graphWorkflowId: oldBinding.graphWorkflowId,
+    keyFingerprint: OLD_KEY.fingerprint,
+    messageWorkflowId: oldMessage,
+  };
+  expect(await assignmentStatus(service)).toEqual({
+    schema: "supervisor-result-assignment-status.v1",
+    underPreviousResultGraphKey: [underOld],
+    unpublishable: [],
+  });
+  expect(await after.previousKeyResultBindings(scope.tenantId)).toEqual([
+    { ...underOld, tenantId: scope.tenantId },
+  ]);
   await service.publishResult(scope, {
     workflowId: oldMessage,
     taskId: "task:rotate-old",
@@ -415,9 +441,14 @@ test("after a key rotation a binding made under the previous key still publishes
   ).toBe(TaskState.TASK_STATE_COMPLETED);
 
   // A new bind is derived under the primary key only.
-  const underOld = bindingUnder(OLD_KEY, scope, newMessage, "task:rotate-new");
-  expect((await assign(service, underOld))?.status).toBe(409);
-  await expect(after.bindResult(scope, underOld)).rejects.toThrow(
+  const newUnderOld = bindingUnder(
+    OLD_KEY,
+    scope,
+    newMessage,
+    "task:rotate-new"
+  );
+  expect((await assign(service, newUnderOld))?.status).toBe(409);
+  await expect(after.bindResult(scope, newUnderOld)).rejects.toThrow(
     previousKeyRefusal(OLD_KEY.fingerprint)
   );
   expect((await assign(service, newBinding))?.status).toBe(200);
@@ -432,20 +463,16 @@ test("after a key rotation a binding made under the previous key still publishes
     )
   ).rejects.toThrow("conflicts with prior assignment");
 
-  // The authenticated listing names the bindings under a previous key.
+  // Published, the binding has settled: it no longer needs the previous key,
+  // so the host's listing drops it. The ledger alone still classifies it.
   expect(await assignmentStatus(service)).toEqual({
     schema: "supervisor-result-assignment-status.v1",
-    underPreviousResultGraphKey: [
-      {
-        a2aTaskId: "task:rotate-old",
-        graphTaskId: "result-node",
-        graphWorkflowId: oldBinding.graphWorkflowId,
-        keyFingerprint: OLD_KEY.fingerprint,
-        messageWorkflowId: oldMessage,
-      },
-    ],
+    underPreviousResultGraphKey: [],
     unpublishable: [],
   });
+  expect(await after.previousKeyResultBindings(scope.tenantId)).toEqual([
+    { ...underOld, tenantId: scope.tenantId },
+  ]);
 }, 60_000);
 
 test("a binding whose key was removed is reported unpublishable by fingerprint and refused exactly, not left silently stuck, and publishes again once the key is restored", async () => {
@@ -1166,4 +1193,324 @@ test("a host holding no result graph key names the key to configure for a bindin
   expect(lines.filter((line) => line.includes(scope.tenantId))).toEqual([
     `A2A V2 result binding cannot publish (unknown-result-graph-key): tenant ${scope.tenantId} message ${message} A2A task task:keyless; it was derived under result graph key ${OLD_KEY.fingerprint}, which this host does not hold: ${advice}`,
   ]);
+}, 60_000);
+
+/** The listing entry of a binding under `key`, without its tenant. */
+const listedUnder = (
+  key: SupervisorResultGraphKey,
+  binding: SupervisorA2AResultBinding
+) => ({
+  a2aTaskId: binding.a2aTaskId,
+  graphTaskId: binding.graphTaskId,
+  graphWorkflowId: binding.graphWorkflowId,
+  keyFingerprint: key.fingerprint,
+  messageWorkflowId: binding.messageWorkflowId,
+});
+
+/** Start lines other than the workflow id format line every start logs. */
+const findings = (lines: readonly string[]) =>
+  lines.filter((line) => !line.startsWith("A2A V2 workflow ids:"));
+
+/** As an older build records a binding: it names no deployment. */
+const forgetBinder = (workflowIds: readonly string[], sql: SQL = raw) =>
+  run(sql`UPDATE loop_supervisor_message_v2_result_binding SET bound_by_deployment = NULL
+    WHERE workflow_id IN ${sql(workflowIds)}`);
+
+test("two deployments holding different result graph keys on one database each classify, list and report only their own bindings", async () => {
+  // One tenant on both: only the deployment tells their bindings apart.
+  const scope = tenant("shared");
+  const firstKeyA = throwawayKey();
+  const keyA = throwawayKey();
+  const keyB = throwawayKey();
+  const beforeA = await deploymentLedger({
+    deployment: "deployment-a",
+    resultGraphKey: firstKeyA,
+  });
+  const ledgerB = await deploymentLedger({
+    deployment: "deployment-b",
+    resultGraphKey: keyB,
+  });
+  const messageA = await sendMessage(beforeA, scope, "shared-a");
+  const messageB = await sendMessage(ledgerB, scope, "shared-b");
+  // A message of B that is not bound. A's resultArtifacts happens to list
+  // the graph A's previous key derives for it: still not A's message.
+  const unboundB = await sendMessage(ledgerB, scope, "shared-b-unbound");
+  await saveTask(scope, "task:shared-a", [messageA]);
+  await saveTask(scope, "task:shared-b", [messageB]);
+  const bindingA = bindingUnder(firstKeyA, scope, messageA, "task:shared-a");
+  const bindingB = bindingUnder(keyB, scope, messageB, "task:shared-b");
+  await beforeA.bindResult(scope, bindingA);
+  await ledgerB.bindResult(scope, bindingB);
+  // Deployment A rotates; deployment B keeps its one key.
+  const ledgerA = await deploymentLedger({
+    deployment: "deployment-a",
+    previousResultGraphKeys: [firstKeyA],
+    resultGraphKey: keyA,
+  });
+
+  // Neither classifies the other's binding as under a key it lacks, with or
+  // without a tenant, and only A's own binding is under a previous key.
+  for (const ledger of [ledgerA, ledgerB]) {
+    expect(await ledger.unpublishableResultBindings()).toEqual([]);
+    expect(await ledger.unpublishableResultBindings(scope.tenantId)).toEqual(
+      []
+    );
+  }
+  expect(await ledgerA.previousKeyResultBindings()).toEqual([
+    { ...listedUnder(firstKeyA, bindingA), tenantId: scope.tenantId },
+  ]);
+  expect(await ledgerB.previousKeyResultBindings()).toEqual([]);
+  // Each deployment's binding still publishes on its own hosts.
+  await expect(
+    ledgerA.resultBinding(scope, messageA, "task:shared-a")
+  ).resolves.toEqual(bindingA);
+  await expect(
+    ledgerB.resultBinding(scope, messageB, "task:shared-b")
+  ).resolves.toEqual(bindingB);
+
+  // Starting either host reports nothing about the other's binding, and the
+  // authenticated listing names only its own.
+  const linesA: string[] = [];
+  const linesB: string[] = [];
+  const serviceA = await serviceFor({
+    scope,
+    allow: [
+      {
+        graphTaskId: "result-node",
+        graphWorkflowId: deriveSupervisorMessageV2ResultGraphWorkflowId(
+          firstKeyA,
+          scope,
+          unboundB
+        ),
+      },
+    ],
+    deployment: "deployment-a",
+    log: (line) => linesA.push(line),
+    previousResultGraphKeys: [firstKeyA],
+    resultGraphKey: keyA,
+  });
+  const serviceB = await serviceFor({
+    scope,
+    allow: [],
+    deployment: "deployment-b",
+    log: (line) => linesB.push(line),
+    resultGraphKey: keyB,
+  });
+  expect(findings(linesA)).toEqual([]);
+  expect(findings(linesB)).toEqual([]);
+  expect(await assignmentStatus(serviceA)).toEqual({
+    schema: "supervisor-result-assignment-status.v1",
+    underPreviousResultGraphKey: [listedUnder(firstKeyA, bindingA)],
+    unpublishable: [],
+  });
+  expect(await assignmentStatus(serviceB)).toEqual({
+    schema: "supervisor-result-assignment-status.v1",
+    underPreviousResultGraphKey: [],
+    unpublishable: [],
+  });
+
+  // A binding an older build recorded names no deployment: it is
+  // attributed by its message, which in deployment ids names its own.
+  await forgetBinder([messageA, messageB]);
+  expect(await ledgerA.unpublishableResultBindings()).toEqual([]);
+  expect(await ledgerB.unpublishableResultBindings()).toEqual([]);
+  expect(await ledgerA.previousKeyResultBindings()).toEqual([
+    { ...listedUnder(firstKeyA, bindingA), tenantId: scope.tenantId },
+  ]);
+
+  // A's own binding under a key A no longer holds is still reported, by A.
+  const removedA = await deploymentLedger({
+    deployment: "deployment-a",
+    resultGraphKey: keyA,
+  });
+  expect(
+    (await removedA.unpublishableResultBindings()).map((entry) => [
+      entry.messageWorkflowId,
+      entry.reason,
+    ])
+  ).toEqual([[messageA, "unknown-result-graph-key"]]);
+}, 60_000);
+
+test("with legacy workflow ids, whose messages name no deployment, a binding is attributed to the deployment that recorded it, and one recorded by an older build to its tenant", async () => {
+  const isolated = await DisposablePostgres.create();
+  const isolatedSql = new SQL(isolated.databaseUrl());
+  try {
+    await isolatedSql.connect();
+    const databaseUrl = isolated.databaseUrl();
+    const scope = tenant("legacy-shared");
+    const other = tenant("legacy-other");
+    const keyA = throwawayKey();
+    const keyB = throwawayKey();
+    const ledgerA = await deploymentLedger({
+      databaseUrl,
+      deployment: "legacy-a",
+      resultGraphKey: keyA,
+      workflowIdFormat: "legacy",
+    });
+    const ledgerB = await deploymentLedger({
+      databaseUrl,
+      deployment: "legacy-b",
+      resultGraphKey: keyB,
+      workflowIdFormat: "legacy",
+    });
+    const messageA = await sendMessage(ledgerA, scope, "legacy-a");
+    const messageB = await sendMessage(ledgerB, scope, "legacy-b");
+    const messageOther = await sendMessage(ledgerB, other, "legacy-other");
+    expect(messageA).toBe(
+      deriveSupervisorMessageV2LegacyWorkflowId(scope, "legacy-a")
+    );
+    const bindingA = bindingUnder(keyA, scope, messageA, "task:legacy-a");
+    const bindingB = bindingUnder(keyB, scope, messageB, "task:legacy-b");
+    const bindingOther = bindingUnder(
+      keyB,
+      other,
+      messageOther,
+      "task:legacy-other"
+    );
+    await ledgerA.bindResult(scope, bindingA);
+    await ledgerB.bindResult(scope, bindingB);
+    await ledgerB.bindResult(other, bindingOther);
+    for (const ledger of [ledgerA, ledgerB]) {
+      expect(await ledger.unpublishableResultBindings()).toEqual([]);
+    }
+    const linesA: string[] = [];
+    await serviceFor({
+      scope,
+      allow: [],
+      databaseUrl,
+      deployment: "legacy-a",
+      log: (line) => linesA.push(line),
+      resultGraphKey: keyA,
+      workflowIdFormat: "legacy",
+    });
+    expect(findings(linesA)).toEqual([]);
+
+    // Recorded by an older build, a legacy binding names no deployment, so
+    // the host's start report keeps to its own route tenant. Within that
+    // tenant, another deployment's such binding cannot be told apart from
+    // one under a key this deployment removed (the documented limit of
+    // legacy ids): it is reported.
+    await forgetBinder([messageA, messageB, messageOther], isolatedSql);
+    const later: string[] = [];
+    await serviceFor({
+      scope,
+      allow: [],
+      databaseUrl,
+      deployment: "legacy-a",
+      log: (line) => later.push(line),
+      resultGraphKey: keyA,
+      workflowIdFormat: "legacy",
+    });
+    expect(findings(later)).toEqual([
+      `A2A V2 result binding cannot publish (unknown-result-graph-key): tenant ${scope.tenantId} message ${messageB} A2A task task:legacy-b; it was derived under result graph key ${keyB.fingerprint}, which this host does not hold: add the environment variable holding that key to a2aV2.previousResultGraphKeyEnvs`,
+    ]);
+  } finally {
+    for (const resource of opened.splice(0)) {
+      await resource.close().catch(() => undefined);
+    }
+    await isolatedSql.close();
+    await isolated.close();
+  }
+}, 60_000);
+
+test("a previous key is no longer needed once every binding under it has settled: the listing drops a binding when its result publishes or its A2A task ends without one, and a host started without the key then reports nothing", async () => {
+  const scope = tenant("retire");
+  const retiring = throwawayKey();
+  const before = await ledgerWith(retiring);
+  // One A2A task carries two messages; another carries a third.
+  const first = await sendMessage(before, scope, "retire-first");
+  const second = await sendMessage(before, scope, "retire-second");
+  const third = await sendMessage(before, scope, "retire-third");
+  await saveTask(scope, "task:retire-shared", [first, second]);
+  await saveTask(scope, "task:retire-ended", [third]);
+  const bindings = [
+    bindingUnder(retiring, scope, first, "task:retire-shared"),
+    bindingUnder(retiring, scope, second, "task:retire-shared"),
+    bindingUnder(retiring, scope, third, "task:retire-ended"),
+  ] as const;
+  for (const binding of bindings) {
+    await before.bindResult(scope, binding);
+  }
+  const [firstBinding] = bindings;
+  const service = await serviceFor({
+    scope,
+    allow: bindings.map(({ graphWorkflowId }) => ({
+      graphWorkflowId,
+      graphTaskId: "result-node",
+    })),
+    previousResultGraphKeys: [retiring],
+    resultGraphKey: NEW_KEY,
+  });
+  const listed = async () =>
+    (
+      (await assignmentStatus(service)).underPreviousResultGraphKey as {
+        messageWorkflowId: string;
+      }[]
+    ).map((entry) => entry.messageWorkflowId);
+  const byMessage = (ids: string[]) => [...ids].sort();
+  expect(byMessage(await listed())).toEqual(byMessage([first, second, third]));
+  expect(
+    (await assignmentStatus(service)).underPreviousResultGraphKey
+  ).toContainEqual(listedUnder(retiring, firstBinding));
+
+  // The first message's result publishes. Its A2A task still waits for the
+  // second, so only the published artifact settles the binding.
+  await service.publishResult(scope, {
+    recipient: RECIPIENT,
+    taskId: "task:retire-shared",
+    workflowId: first,
+  });
+  expect(
+    (await tasks.load("task:retire-shared", contextOf(scope)))?.status?.state
+  ).toBe(TaskState.TASK_STATE_WORKING);
+  expect(byMessage(await listed())).toEqual(byMessage([second, third]));
+
+  // An A2A task that ended without a result can never publish one.
+  await saveTask(
+    scope,
+    "task:retire-ended",
+    [third],
+    TaskState.TASK_STATE_CANCELED
+  );
+  expect(await listed()).toEqual([second]);
+  // Still listed, so still needed: a host without the key would strand it.
+  const early: string[] = [];
+  await serviceFor({
+    scope,
+    allow: [],
+    log: (line) => early.push(line),
+    resultGraphKey: NEW_KEY,
+  });
+  expect(early.filter((line) => line.includes(scope.tenantId))).toEqual([
+    `A2A V2 result binding cannot publish (unknown-result-graph-key): tenant ${scope.tenantId} message ${second} A2A task task:retire-shared; it was derived under result graph key ${retiring.fingerprint}, which this host does not hold: add the environment variable holding that key to a2aV2.previousResultGraphKeyEnvs`,
+  ]);
+
+  await service.publishResult(scope, {
+    recipient: RECIPIENT,
+    taskId: "task:retire-shared",
+    workflowId: second,
+  });
+  expect(
+    (await tasks.load("task:retire-shared", contextOf(scope)))?.status?.state
+  ).toBe(TaskState.TASK_STATE_COMPLETED);
+  expect(await listed()).toEqual([]);
+
+  // Retired: a host started without the key reports and lists nothing for
+  // these bindings, though they stay recorded under it.
+  const lines: string[] = [];
+  const retired = await serviceFor({
+    scope,
+    allow: [],
+    log: (line) => lines.push(line),
+    resultGraphKey: NEW_KEY,
+  });
+  expect(lines.filter((line) => line.includes(scope.tenantId))).toEqual([]);
+  expect(await assignmentStatus(retired)).toEqual({
+    schema: "supervisor-result-assignment-status.v1",
+    underPreviousResultGraphKey: [],
+    unpublishable: [],
+  });
+  expect(await fingerprintOf(third, "task:retire-ended")).toBe(
+    retiring.fingerprint
+  );
 }, 60_000);

@@ -365,7 +365,14 @@ Closed since r4 (numbers refer to the r4 list above):
 Still open on the round-5 base:
 
 1. Result graph key rotation: unchanged from r4 item 2.
-   claude/fix4-key-rotation (a54a21f4) is not merged.
+   claude/fix4-key-rotation (a54a21f4) is not merged. On 2026-10-07
+   claude/fix5-key-rotation ported it onto the round-5 base and fixed its
+   two round-4 review majors: classification, listings and start reports
+   are scoped to the host's own deployment and route tenant, and bindings
+   that settled (published, or their A2A task ended without a result) are
+   no longer listed, so a previous key can be retired (runbook "Result
+   graph key rotation (claude/fix5-key-rotation)"). Not reviewed, not
+   merged.
 2. Decision 6 off by default: unchanged from r4 item 5 (owner question Q1).
 3. Returning to legacy when deployment rows never settle: unchanged from r4
    item 6 (owner question on hand-recorded outcomes). A quarantine makes

@@ -944,7 +944,7 @@ test("migration drops the retired per-graph-task unique index an unreleased revi
   }
 }, 60_000);
 
-test("service start logs each binding that will never publish once, with ids only, and the assignment route lists its tenant's", async () => {
+test("service start logs each binding of its route tenant that will never publish once, with ids only, and the assignment route lists its tenant's", async () => {
   const isolated = await DisposablePostgres.create();
   const legacy = new SQL(isolated.databaseUrl());
   const lines: string[] = [];
@@ -977,22 +977,29 @@ test("service start logs each binding that will never publish once, with ids onl
     };
     const mine = await seed(scope, "stranded-mine", "task:stranded-mine");
     const theirs = await seed(other, "stranded-theirs", "task:stranded-theirs");
-    const start = () =>
+    const start = (owner = scope, log = (line: string) => lines.push(line)) =>
       serviceFor({
-        scope,
+        scope: owner,
         allow: [],
         graphs: new Map(),
         databaseUrl: isolated.databaseUrl(),
-        log: (line) => lines.push(line),
+        log,
       });
     service = await start();
+    // Only this host's route tenant: another tenant's binding is reported
+    // by the host whose route serves that tenant.
     const expected = [
       // The start line naming the resolved workflow id format.
       "A2A V2 workflow ids: deployment format, scoped to this host's task queue",
       `A2A V2 result binding will never publish (body-chosen-graph): tenant ${scope.tenantId} message ${mine} A2A task task:stranded-mine; re-bind it to its message-derived result graph`,
-      `A2A V2 result binding will never publish (body-chosen-graph): tenant ${other.tenantId} message ${theirs} A2A task task:stranded-theirs; re-bind it to its message-derived result graph`,
     ];
     expect([...lines].sort()).toEqual([...expected].sort());
+    const otherLines: string[] = [];
+    await (await start(other, (line) => otherLines.push(line))).close();
+    expect(otherLines).toContain(
+      `A2A V2 result binding will never publish (body-chosen-graph): tenant ${other.tenantId} message ${theirs} A2A task task:stranded-theirs; re-bind it to its message-derived result graph`
+    );
+    expect(otherLines.join("\n")).not.toContain(mine);
     // Once per binding at each start.
     await service.close();
     service = await start();

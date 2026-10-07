@@ -149,10 +149,14 @@ refers to are in `specs/harness-control-plane-vertical-release-v1/decisions.md`
 before the keyed graph id and the deployment discriminator) and ef570282
 ("r3").
 
-Not on r4 or the round-5 base, so not described here as available: result
-graph key rotation with previous keys (claude/fix4-key-rotation, 226e40c2 and
-a54a21f4). The recovery quarantine CLI is on the round-5 base only; it is
-described under "Recovery quarantine (round-5 base)" below and is not on r4.
+Not on r4 or the round-5 base: result graph key rotation with previous keys.
+It is on claude/fix5-key-rotation, the round-5 base plus a port of
+claude/fix4-key-rotation (226e40c2, a54a21f4) and the fixes for its two
+round-4 review majors, not merged and not installed. It is described under
+"Result graph key rotation (claude/fix5-key-rotation)" below; a `file:line`
+there is a path under `loop-fork/` on that branch. The recovery quarantine
+CLI is on the round-5 base only; it is described under "Recovery quarantine
+(round-5 base)" below and is not on r4.
 
 ### Configuration keys added in rounds 3 and 4
 
@@ -167,6 +171,7 @@ to start with "orchestration a2aV2 has invalid fields"
 | `readinessOutageBoundMs` | r3 (11b71513) | Whole ms, 1000..86400000. How long a session readiness-store outage may defer a recipient's deliveries before each one fails as a normal retryable attempt. | 900000 (15 min) | loop-orchestration-server.ts:147-152, 560-568; supervisor-message-v2-runtime.ts:84 |
 | `workflowIdFormat` | r4 (ae877039) | `"legacy"` or `"deployment"`. The V2 workflow id format new messages are written in. | The format the ledger database records, or `"legacy"` when none is recorded. `"deployment"` is always an explicit opt-in. | loop-orchestration-server.ts:162-175, 578-597; supervisor-message-v2-delivery-ledger.ts:513-562 |
 | `notEnrolledBoundMs` | r4 (f3f8c2e1) | Whole ms, 1000..86400000. How long a recipient that is not enrolled may defer its deliveries, measured from when enrollment first failed. | 900000 (15 min) | loop-orchestration-server.ts:132-139, 550-559; supervisor-message-v2-runtime.ts:275 |
+| `previousResultGraphKeyEnvs` | claude/fix5-key-rotation only | One to eight distinct names of environment variables, each holding a result graph key this host held before `resultGraphKeyEnv` (at least 32 bytes each). Requires `resultGraphKeyEnv`; none may be its name, and no two variables may hold the same key. | No previous key. | that branch: loop-orchestration-server.ts:416-447, 703-744 |
 
 Changed in r3: a non-empty `resultArtifacts` without `resultGraphKeyEnv`
 refuses startup with "orchestration a2aV2 resultArtifacts requires
@@ -324,8 +329,11 @@ Authenticated `GET <routePath>/assignment`, control principal only, returns
 `{"schema": "supervisor-result-assignment-status.v1", "notEnrolled": [seat ids], "readinessOutage": [recipient ids], "unpublishable": [...]}`
 (a2a-supervisor-assignment-http.ts:66-108; supervisor-a2a-v2-service.ts:628-664).
 `unpublishable` lists this tenant's bindings recorded before graphs were
-derived (`body-chosen-graph`) or unreadable (`malformed`). It does not list a
-binding stranded by a key change (see rotation below).
+derived (`body-chosen-graph`) or unreadable (`malformed`). On r4 and the
+round-5 base it does not list a binding stranded by a key change (see
+rotation below); on claude/fix5-key-rotation it does, and the GET also
+carries `underPreviousResultGraphKey` (see "Result graph key rotation
+(claude/fix5-key-rotation)").
 
 On the round-5 base the same GET also carries `"recoveryQuarantine": [...]`:
 this tenant's records an operator quarantined from recovery, each as
@@ -608,6 +616,19 @@ section of the assignment GET. No config key was added after r4.
   record (`loop orchestration v2-quarantine-list <config-path>`) and every
   same-queue conflict; a record that still fails refuses the older build's
   start.
+- From claude/fix5-key-rotation to the round-5 base, r4 or 40097564: remove
+  `previousResultGraphKeyEnvs` first (an older build refuses the unknown
+  field and does not start). An older build holds only the primary key, so
+  every binding still listed under `underPreviousResultGraphKey` stops
+  publishing there: roll back only once that list is empty (the retirement
+  check below). The added column, trigger and lost-reservation table stay;
+  the older build ignores them, but the trigger still refuses its overwrite
+  of a binding recorded under a key. That includes 40097564's re-bind of a
+  keyed binding to its unkeyed v2 graph, which the rollback limit above
+  allows on r4 and the round-5 base (ledger test "rollback limit: the
+  base-era ledger does not publish a result this build bound to its keyed
+  graph, and the database refuses its re-bind of that message to its
+  unkeyed graph").
 
 ### Result graph key rotation on r4
 
@@ -623,7 +644,7 @@ may name an unkeyed v2 graph, and a ledger without the key binds nothing":
   and it publishes again. A host still holding the old key then no longer
   publishes it.
 
-Procedure, if a rotation cannot wait for claude/fix4-key-rotation:
+Procedure, if a rotation cannot wait for claude/fix5-key-rotation:
 
 1. Drain: wait until every bound result has been published, so no binding is
    pending under the old key. r4 offers no listing of keyed bindings; check
@@ -637,6 +658,105 @@ Procedure, if a rotation cannot wait for claude/fix4-key-rotation:
    again with `POST <routePath>/result-graph`, add the returned
    `graphWorkflowId` to `resultArtifacts`, restart, and re-POST the
    assignment with it. The old graph's Temporal execution keeps running.
+
+### Result graph key rotation (claude/fix5-key-rotation)
+
+Not on r4 or the round-5 base. Verified on 2026-10-07 by
+tests/loop/supervisor-a2a-result-key-rotation.test.ts (18 tests) on real
+PostgreSQL 17, and loop-orchestration-server-postgres "the orchestration
+server holds its configured previous result graph keys" with Temporal.
+
+What a host does with its keys:
+
+- New bindings and result graphs are derived under the primary key
+  (`resultGraphKeyEnv`) only. Nothing new is bound under a previous key: a
+  bind naming a graph derived under one is refused, 409
+  `{"code": "result-graph-under-previous-key"}` (a2a-supervisor-assignment-http.ts:71-77),
+  except an exact retry of the binding already recorded while it still holds
+  its graph task (supervisor-message-v2-delivery-ledger.ts:1334-1381).
+- A binding derived under a previous key still publishes. A binding derived
+  under a key the host does not hold is refused on publish with an error
+  naming the key's fingerprint, and reported (`unknown-result-graph-key`).
+- Each binding records the fingerprint of its key
+  (`rgk:` + 16 hex digits, not reversible) and the deployment (task queue)
+  that recorded it, in the additive column `bound_by_deployment`
+  (supervisor-message-v2-delivery-ledger.ts:1145-1149).
+- `loop orchestration result-graph-key-fingerprints <config-path>` prints
+  `<ENV> <primary|previous> <fingerprint>` per configured key, never a key
+  (loop-orchestration-server.ts:1650-1675). Use it to match a fingerprint in
+  a log line or listing to a variable.
+
+Whose bindings a host classifies (round-4 major 1). Keys belong to a
+deployment, so a host classifies, lists and reports only its own
+deployment's bindings, never those of another deployment sharing the ledger
+database (supervisor-message-v2-delivery-ledger.ts:626-659):
+
+- a binding recorded by this build belongs to the deployment that recorded
+  it;
+- a binding an older build recorded names no deployment and belongs to its
+  message's owner: a deployment-format message (id
+  `supervisor-message-workflow:v2:deployment:...`) to the deployment its
+  start intent names; a legacy message to every deployment, as for
+  recovery;
+- the start report and the authenticated GET are further limited to the
+  host's route tenant (supervisor-a2a-v2-service.ts:676-700). The start
+  report of body-chosen and lost-reservation bindings is now limited to the
+  route tenant too; before, a host reported every tenant's.
+
+Limit: a legacy binding recorded by an older build, of the host's own
+tenant, cannot be told apart from one under a key this deployment removed,
+so it is reported by every deployment that shares the database and serves
+that tenant (test "with legacy workflow ids, whose messages name no
+deployment, ..."). Bindings recorded by this build are not affected.
+
+When a binding settles (round-4 major 2). A binding needs no key any more
+once its result was published (its A2A task holds the message's
+`accepted:<messageWorkflowId>` artifact) or its A2A task ended without a
+result (failed, canceled or rejected), since publication is then refused
+forever. A missing task, or a task-store read that fails, counts as not
+settled, so nothing is hidden (supervisor-a2a-v2-service.ts:644-673;
+supervisor-message-v2-delivery-ledger.ts:661-686). Settled bindings are left
+out of `underPreviousResultGraphKey`, and out of the `unknown-result-graph-key`
+start lines and listing once their key is removed. A settled binding stays
+recorded under its key; after that key is removed, re-publishing its
+already published result is refused with the unknown-key error.
+
+Authenticated `GET <routePath>/assignment` adds
+`"underPreviousResultGraphKey": [{"a2aTaskId", "graphTaskId", "graphWorkflowId", "keyFingerprint", "messageWorkflowId"}]`:
+this route tenant's unsettled bindings under a previous key of this
+deployment. /healthz carries no binding, key or fingerprint.
+
+Rotation procedure:
+
+1. Before rotating, bind every result graph already started under the
+   current key. A graph started but not bound when its key becomes a
+   previous key can never be bound; it must be started again under the new
+   key. Each start reports such a graph that `resultArtifacts` lists:
+   `A2A V2 result graph cannot be bound (started-under-previous-result-graph-key): ...`.
+2. Put the new key in the secret store under a new variable name. Set
+   `resultGraphKeyEnv` to it and add the old variable's name to
+   `previousResultGraphKeyEnvs`, on every host of the deployment. Keep every
+   existing `resultArtifacts` `graphWorkflowId` as it is; compute ids with
+   `loop orchestration result-graph-id` only for messages not bound yet.
+3. Restart each host. Check with `result-graph-key-fingerprints` that the
+   old fingerprint is `previous` and the new one `primary`.
+
+Retirement check, before removing a previous key's variable, on each route
+tenant of the deployment:
+
+1. `loop orchestration result-graph-key-fingerprints <config-path>`: note
+   the fingerprint of the variable to remove.
+2. Authenticated `GET <routePath>/assignment`: no entry of
+   `underPreviousResultGraphKey` has that `keyFingerprint`. Each remaining
+   entry is a binding whose result has not been published yet; wait for it
+   to publish, or for its A2A task to end, and check again.
+3. The latest start log has no `started-under-previous-result-graph-key`
+   line naming that fingerprint.
+
+Then remove the variable from `previousResultGraphKeyEnvs` (and the secret
+store), restart, and confirm the start log has no `unknown-result-graph-key`
+line naming that fingerprint (test "a previous key is no longer needed once
+every binding under it has settled: ...").
 
 ### Proof by test file
 

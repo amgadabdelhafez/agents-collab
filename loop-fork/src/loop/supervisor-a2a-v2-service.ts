@@ -14,6 +14,7 @@ import {
   type SupervisorA2AAuthenticator,
 } from "./a2a-supervisor-http";
 import {
+  acceptedResultArtifactId,
   assertSupervisorA2AResultGraphTask,
   publishSupervisorA2AAcceptedResult,
   type SupervisorA2AResultArtifactTarget,
@@ -31,6 +32,7 @@ import {
 import {
   PostgresSupervisorMessageV2DeliveryLedger,
   type PostgresSupervisorMessageV2DeliveryLedgerOptions,
+  type SupervisorMessageV2SettledResultBindingCheck,
   type SupervisorMessageV2UnpublishableResultBinding,
   type SupervisorMessageV2WorkflowIdFormat,
   SupervisorMessageV2WorkflowIdFormatError,
@@ -640,18 +642,56 @@ const unpublishableLine = (
 };
 
 /**
- * Recorded bindings that do not publish (a graph the request body chose
- * before graphs were derived, an unreadable row, an unkeyed binding that
- * lost its graph task's reservation, or a binding derived under a result
- * graph key this host does not hold), reported at every start, one line
- * each with ids and key fingerprints only, until each is resolved.
+ * Whether a recorded binding needs no result graph key any more, by its A2A
+ * task: the binding's result was published (the task holds the message's
+ * accepted-result artifact), or the task ended without a result (failed,
+ * canceled or rejected), so it can never publish. A missing task is not
+ * settled. Read in the binding's own scope.
+ */
+const settledResultBinding =
+  (taskStore: TaskStore): SupervisorMessageV2SettledResultBindingCheck =>
+  async (binding, scope) => {
+    const task = await taskStore.load(
+      binding.a2aTaskId,
+      new ServerCallContext({
+        tenant: scope.tenantId,
+        user: { isAuthenticated: true, userName: scope.principal },
+      })
+    );
+    if (!task) {
+      return false;
+    }
+    return (
+      (task.status !== undefined &&
+        ENDED_WITHOUT_RESULT.includes(task.status.state)) ||
+      task.artifacts.some(
+        (artifact) =>
+          artifact.artifactId ===
+          acceptedResultArtifactId(binding.messageWorkflowId)
+      )
+    );
+  };
+
+/**
+ * Recorded bindings of this host's deployment and route tenant that do not
+ * publish (a graph the request body chose before graphs were derived, an
+ * unreadable row, an unkeyed binding that lost its graph task's
+ * reservation, or a binding derived under a result graph key this host does
+ * not hold and that has not settled), reported at every start, one line
+ * each with ids and key fingerprints only, until each is resolved. Another
+ * deployment's bindings, and other tenants', are never reported here.
  */
 const reportUnpublishableResultBindings = async (
   ledger: LedgerResource,
-  hostHasKey: boolean,
+  options: SupervisorA2AV2ServiceOptions,
+  settled: SupervisorMessageV2SettledResultBindingCheck,
   log: (line: string) => void = (line) => console.error(line)
 ): Promise<void> => {
-  for (const entry of (await ledger.unpublishableResultBindings?.()) ?? []) {
+  const hostHasKey = options.resultGraphKey !== undefined;
+  for (const entry of (await ledger.unpublishableResultBindings?.(
+    options.route.tenant,
+    { settled }
+  )) ?? []) {
     log(unpublishableLine(entry, hostHasKey));
   }
 };
@@ -710,7 +750,8 @@ const createAssignmentRoute = (
   options: SupervisorA2AV2ServiceOptions,
   ledger: LedgerResource,
   bind: SupervisorA2AV2Service["bindResult"],
-  readinessOutage: SupervisorMessageV2ReadinessOutageTracker
+  readinessOutage: SupervisorMessageV2ReadinessOutageTracker,
+  settled: SupervisorMessageV2SettledResultBindingCheck
 ): SupervisorA2AV2Service["assignmentRoute"] => {
   if (!options.assignmentRoute) {
     return undefined;
@@ -746,9 +787,13 @@ const createAssignmentRoute = (
       recoveryQuarantine: quarantined
         ? (scope) => quarantined(scope.tenantId)
         : undefined,
-      unpublishable: list ? (scope) => list(scope.tenantId) : undefined,
+      // Bindings that settled (published, or their A2A task ended without
+      // a result) need no key: listed under neither section.
+      unpublishable: list
+        ? (scope) => list(scope.tenantId, { settled })
+        : undefined,
       underPreviousKey: previous
-        ? (scope) => previous(scope.tenantId)
+        ? (scope) => previous(scope.tenantId, { settled })
         : undefined,
     }),
   };
@@ -831,7 +876,8 @@ export const createSupervisorA2AV2Service = async (
     reportWorkflowIdFormat(ledger, options.log);
     await reportUnpublishableResultBindings(
       ledger,
-      options.resultGraphKey !== undefined,
+      options,
+      settledResultBinding(taskStore),
       options.log
     );
     await reportUnboundPreviousKeyResultGraphs(ledger, options, options.log);
@@ -961,7 +1007,8 @@ export const createSupervisorA2AV2Service = async (
       options,
       ledger,
       (scope, binding) => ownedService.bindResult(scope, binding),
-      readinessOutage
+      readinessOutage,
+      settledResultBinding(taskStore)
     );
     const resultGraphRoute = createResultGraphRoute(options, (scope, command) =>
       ownedService.startResultGraph(scope, command)
