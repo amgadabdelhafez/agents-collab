@@ -672,6 +672,7 @@ test("migration backfills reservations once for existing unkeyed derived binding
     await upgraded.migrate();
     expect(await markerRows(legacy)).toEqual([
       { name: "result-graph-task-backfill.v1" },
+      { name: "result-graph-task-reservation-loss.v1" },
       { name: "workflow-id-format.v1" },
     ]);
     // The scan runs once per schema version, not on every start: a row that
@@ -818,13 +819,15 @@ test("no new binding may name an unkeyed v2 graph, and a ledger without the key 
       ledger.resultBinding(scope, message, "task:legacy-new")
     ).resolves.toEqual(keyed);
     // A keyed binding is not publishable through a ledger that cannot verify
-    // it, nor through one holding another key.
+    // it, nor through one holding another key: both refuse it by naming the
+    // key it was derived under, rather than skipping it silently.
+    const refusal = `Result binding was derived under result graph key ${KEY.fingerprint}, which this host does not hold`;
     await expect(
       keyless.resultBinding(scope, message, "task:legacy-new")
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(refusal);
     await expect(
       otherKey.resultBinding(scope, message, "task:legacy-new")
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(refusal);
   } finally {
     await keyless.close();
     await otherKey.close();
@@ -1007,6 +1010,7 @@ test("service start logs each binding that will never publish once, with ids onl
       // No record of this tenant is quarantined from recovery.
       recoveryQuarantine: [],
       schema: "supervisor-result-assignment-status.v1",
+      underPreviousResultGraphKey: [],
       unpublishable: [
         {
           a2aTaskId: "task:stranded-mine",

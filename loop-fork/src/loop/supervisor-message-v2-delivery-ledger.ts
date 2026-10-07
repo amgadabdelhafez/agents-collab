@@ -10,6 +10,7 @@ import {
   parseSupervisorMessageV2Deployment,
   parseSupervisorMessageV2Input,
   SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS,
+  SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
   type SupervisorResultGraphKey,
@@ -165,17 +166,108 @@ const quarantineOf = (
   tenantId: row.tenant_id,
   workflowId: row.workflow_id,
 });
+/** Recorded once the scan for unkeyed bindings that lost their graph task's
+ * reservation has run on a database. */
+const RESULT_GRAPH_TASK_LOSS_MARKER = "result-graph-task-reservation-loss.v1";
+/** The fingerprint column value of a binding recorded under the retired
+ * unkeyed v2 graph id: derived, immutable, and needing no key. */
+const UNKEYED_V2 = "unkeyed-v2";
 
-/** A recorded binding that will never publish, by ids only. */
+/** A recorded binding that does not publish, by ids only. */
 export interface SupervisorMessageV2UnpublishableResultBinding {
   a2aTaskId: string;
   graphTaskId: string | null;
   graphWorkflowId: string | null;
+  /** For `unknown-result-graph-key` only: the fingerprint of the key the
+   * binding was derived under, or null when it was recorded before key
+   * fingerprints were. */
+  keyFingerprint?: string | null;
   messageWorkflowId: string;
   /** body-chosen-graph: recorded before graphs were derived from the
-   * message; malformed: the stored binding cannot be read. */
-  reason: "body-chosen-graph" | "malformed";
+   * message; malformed: the stored binding cannot be read;
+   * lost-graph-task-reservation: an unkeyed binding whose graph task is
+   * reserved for another A2A task carrying the same message (it will never
+   * publish); unknown-result-graph-key: derived under a result graph key
+   * this host does not hold (computed, never persisted: it publishes again
+   * once that key is configured as a previous key). */
+  reason:
+    | "body-chosen-graph"
+    | "lost-graph-task-reservation"
+    | "malformed"
+    | "unknown-result-graph-key";
   tenantId: string;
+}
+
+/** A recorded binding derived under one of this host's previous result
+ * graph keys: it still publishes, and stops when that key is removed. */
+export interface SupervisorMessageV2PreviousKeyResultBinding {
+  a2aTaskId: string;
+  graphTaskId: string;
+  graphWorkflowId: string;
+  keyFingerprint: string;
+  messageWorkflowId: string;
+  tenantId: string;
+}
+
+/** What an operator does to make a host hold a key it lacks. A host with no
+ * key at all needs a primary key before it may hold a previous one. */
+export const unknownResultGraphKeyAdvice = (hostHasKey: boolean): string =>
+  hostHasKey
+    ? "add the environment variable holding that key to a2aV2.previousResultGraphKeyEnvs"
+    : "this host holds no result graph key, so name one in a2aV2.resultGraphKeyEnv and add the environment variable holding that key to a2aV2.previousResultGraphKeyEnvs";
+
+/** The refusal for a binding derived under a key this host does not hold. */
+export const unknownResultGraphKeyMessage = (
+  fingerprint: string | null,
+  hostHasKey: boolean
+): string =>
+  fingerprint
+    ? `Result binding was derived under result graph key ${fingerprint}, which this host does not hold: ${unknownResultGraphKeyAdvice(hostHasKey)}`
+    : `Result binding was derived under a result graph key this host does not hold, recorded before key fingerprints were: ${unknownResultGraphKeyAdvice(hostHasKey)}`;
+
+/** The `name` of the refusal below, matched by the assignment route to give
+ * the client an exact code without the fingerprint. */
+export const RESULT_GRAPH_UNDER_PREVIOUS_KEY_ERROR =
+  "SupervisorResultGraphUnderPreviousKeyError";
+
+/**
+ * The refusal of a new binding whose graph is derived under a key that is
+ * now a previous key. Nothing new is bound under a previous key, so a result
+ * graph started under it and not bound before the rotation is started again
+ * under the primary key.
+ */
+export class SupervisorResultGraphUnderPreviousKeyError extends Error {
+  constructor(fingerprint: string) {
+    super(
+      `Result graph was derived under previous result graph key ${fingerprint}, and new bindings use the primary key only: start this message's result graph again under the primary key and bind that graph`
+    );
+    this.name = RESULT_GRAPH_UNDER_PREVIOUS_KEY_ERROR;
+  }
+}
+
+/** A configured result graph derived under a previous key for a message
+ * that has no binding: it can never be bound. Ids and fingerprint only. */
+export interface SupervisorMessageV2UnboundPreviousKeyResultGraph {
+  graphWorkflowId: string;
+  keyFingerprint: string;
+  messageWorkflowId: string;
+}
+
+/** How a recorded binding's graph relates to the keys this host holds. */
+type ResultGraphStanding =
+  | { kind: "keyed"; key: SupervisorResultGraphKey }
+  | { kind: "unkeyed-v2" }
+  | { kind: "unknown-key" }
+  | { kind: "not-derived" };
+
+/** A stored binding row with what classifies it. */
+interface StoredBindingRow {
+  a2a_task_id: string;
+  binding_json: unknown;
+  principal: string;
+  result_graph_key_fingerprint: string | null;
+  tenant_id: string;
+  workflow_id: string;
 }
 
 const canonical = (value: unknown): string =>
@@ -288,8 +380,13 @@ export interface PostgresSupervisorMessageV2DeliveryLedgerOptions {
   buildId: string;
   /** The workflow-id discriminator: the host's Temporal task queue. */
   deployment: string;
-  /** The host secret keying result graph ids. Without it nothing can be
-   * bound, and only bindings recorded under the unkeyed v2 id publish. */
+  /** Keys this host held before `resultGraphKey` (a rotation). A binding
+   * derived under one of them still publishes and stays immutable; nothing
+   * new is derived under them. They require a primary key. */
+  previousResultGraphKeys?: readonly SupervisorResultGraphKey[];
+  /** The host secret keying result graph ids: the primary key, under which
+   * every new binding and result graph is derived. Without it nothing can
+   * be bound, and only bindings recorded under the unkeyed v2 id publish. */
   resultGraphKey?: SupervisorResultGraphKey;
   /**
    * The workflow id format new messages are written in (operator config
@@ -353,16 +450,42 @@ export class PostgresSupervisorMessageV2DeliveryLedger
   readonly #sql: SQL;
   readonly #resultGraphKey: SupervisorResultGraphKey | undefined;
   #format: SupervisorMessageV2WorkflowIdFormat | undefined;
+  readonly #previousResultGraphKeys: readonly SupervisorResultGraphKey[];
 
   private constructor(
     sql: SQL,
-    options: PostgresSupervisorMessageV2DeliveryLedgerOptions
+    options: PostgresSupervisorMessageV2DeliveryLedgerOptions,
+    previousResultGraphKeys: readonly SupervisorResultGraphKey[]
   ) {
     this.#buildId = options.buildId;
     this.#deployment = options.deployment;
     this.#requestedFormat = options.workflowIdFormat;
     this.#sql = sql;
     this.#resultGraphKey = options.resultGraphKey;
+    this.#previousResultGraphKeys = previousResultGraphKeys;
+  }
+
+  /** Refuses a key ring a host could not use unambiguously. */
+  static #keyRing(
+    options: PostgresSupervisorMessageV2DeliveryLedgerOptions
+  ): readonly SupervisorResultGraphKey[] {
+    const previous = [...(options.previousResultGraphKeys ?? [])];
+    if (previous.length > 0 && !options.resultGraphKey) {
+      throw new Error("previous result graph keys require a primary key");
+    }
+    const seen = new Set<string>();
+    for (const key of [
+      ...(options.resultGraphKey ? [options.resultGraphKey] : []),
+      ...previous,
+    ]) {
+      if (seen.has(key.fingerprint)) {
+        throw new Error(
+          `result graph key ${key.fingerprint} is configured more than once`
+        );
+      }
+      seen.add(key.fingerprint);
+    }
+    return previous;
   }
 
   static async connect(
@@ -390,14 +513,20 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     ) {
       throw new Error("V2 delivery ledger workflow id format is invalid");
     }
+    const previous =
+      PostgresSupervisorMessageV2DeliveryLedger.#keyRing(options);
     const sql = new SQL(databaseUrl);
     await sql.connect();
-    return new PostgresSupervisorMessageV2DeliveryLedger(sql, {
-      buildId: options.buildId,
-      deployment,
-      resultGraphKey: options.resultGraphKey,
-      workflowIdFormat: options.workflowIdFormat,
-    });
+    return new PostgresSupervisorMessageV2DeliveryLedger(
+      sql,
+      {
+        buildId: options.buildId,
+        deployment,
+        resultGraphKey: options.resultGraphKey,
+        workflowIdFormat: options.workflowIdFormat,
+      },
+      previous
+    );
   }
 
   /** The format new messages are written in, once `migrate` resolved it. */
@@ -414,12 +543,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     return this.#format;
   }
 
-  /** The keyed graph of a message, or undefined without the key. */
+  /** The keyed graph of a message under `key`, or undefined without one. */
   #keyedResultGraph(
     scope: TrustedSupervisorMessageV2Scope,
-    workflowId: string
+    workflowId: string,
+    key: SupervisorResultGraphKey | undefined = this.#resultGraphKey
   ): string | undefined {
-    const key = this.#resultGraphKey;
     return key
       ? attempt(() =>
           deriveSupervisorMessageV2ResultGraphWorkflowId(key, scope, workflowId)
@@ -427,17 +556,99 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       : undefined;
   }
 
-  /** True when `graphWorkflowId` is derived from this message: the keyed id,
-   * or the unkeyed v2 id a binding recorded before the key may still name. */
-  #isDerivedResultGraph(
+  /**
+   * How `graphWorkflowId` relates to this message and the keys this host
+   * holds: derived under the primary or a previous key, the unkeyed v2 id a
+   * binding recorded before the key may name, a keyed id no key held here
+   * derives (a removed key), or not derived from the message at all.
+   */
+  #standing(
     scope: TrustedSupervisorMessageV2Scope,
     workflowId: string,
     graphWorkflowId: string
-  ): boolean {
-    return (
-      graphWorkflowId === this.#keyedResultGraph(scope, workflowId) ||
-      graphWorkflowId === legacyResultGraph(scope, workflowId)
+  ): ResultGraphStanding {
+    for (const key of [
+      ...(this.#resultGraphKey ? [this.#resultGraphKey] : []),
+      ...this.#previousResultGraphKeys,
+    ]) {
+      if (graphWorkflowId === this.#keyedResultGraph(scope, workflowId, key)) {
+        return { kind: "keyed", key };
+      }
+    }
+    if (graphWorkflowId === legacyResultGraph(scope, workflowId)) {
+      return { kind: "unkeyed-v2" };
+    }
+    return SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE.test(
+      graphWorkflowId
+    )
+      ? { kind: "unknown-key" }
+      : { kind: "not-derived" };
+  }
+
+  /** A stored row's binding and standing, or undefined when unreadable. */
+  #classify(row: StoredBindingRow):
+    | {
+        binding: SupervisorA2AResultBinding;
+        standing: ResultGraphStanding;
+      }
+    | undefined {
+    const binding = parseStoredBinding(
+      storedJson(row.binding_json),
+      row.workflow_id,
+      row.a2a_task_id
     );
+    return binding
+      ? {
+          binding,
+          standing: this.#standing(
+            { tenantId: row.tenant_id, principal: row.principal },
+            row.workflow_id,
+            binding.graphWorkflowId
+          ),
+        }
+      : undefined;
+  }
+
+  /**
+   * Recorded bindings whose fingerprint is not the primary key's: the only
+   * rows that can be under a previous or an unknown key. Rows recorded
+   * before fingerprints existed, or by an older build sharing the database,
+   * have none and are classified by recomputing their graph.
+   */
+  async #nonPrimaryKeyBindings(tenantId?: string): Promise<StoredBindingRow[]> {
+    const primary = this.#resultGraphKey?.fingerprint ?? null;
+    return await this.#sql<StoredBindingRow[]>`
+      SELECT workflow_id, a2a_task_id, tenant_id, principal, binding_json, result_graph_key_fingerprint
+      FROM loop_supervisor_message_v2_result_binding
+      WHERE (${tenantId ?? null}::text IS NULL OR tenant_id = ${tenantId ?? null})
+        AND result_graph_key_fingerprint IS DISTINCT FROM ${UNKEYED_V2}
+        AND (${primary}::text IS NULL OR result_graph_key_fingerprint IS DISTINCT FROM ${primary})
+      ORDER BY tenant_id, a2a_task_id, workflow_id`;
+  }
+
+  /** Recorded bindings derived under one of this host's previous keys.
+   * Pass a tenant to list only that tenant's. Ids and fingerprints only. */
+  async previousKeyResultBindings(
+    tenantId?: string
+  ): Promise<SupervisorMessageV2PreviousKeyResultBinding[]> {
+    const listed: SupervisorMessageV2PreviousKeyResultBinding[] = [];
+    for (const row of await this.#nonPrimaryKeyBindings(tenantId)) {
+      const classified = this.#classify(row);
+      if (
+        classified?.standing.kind === "keyed" &&
+        classified.standing.key !== this.#resultGraphKey
+      ) {
+        listed.push({
+          a2aTaskId: row.a2a_task_id,
+          graphTaskId: classified.binding.graphTaskId,
+          graphWorkflowId: classified.binding.graphWorkflowId,
+          keyFingerprint: classified.standing.key.fingerprint,
+          messageWorkflowId: row.workflow_id,
+          tenantId: row.tenant_id,
+        });
+      }
+    }
+    return listed;
   }
 
   /** The deployment discriminator this ledger mints workflow ids for. */
@@ -538,7 +749,20 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (workflow_id, a2a_task_id)
     )`;
+    // Unkeyed bindings that lost their graph task's reservation. They can
+    // never be re-bound, so they live apart from the table above: an older
+    // build reports that table with advice to re-bind, and never sees these.
+    await this
+      .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_lost_result_graph_task_reservation (
+      workflow_id TEXT NOT NULL, a2a_task_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+      graph_workflow_id TEXT NOT NULL, graph_task_id TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (workflow_id, a2a_task_id)
+    )`;
+    await this.#migrateResultGraphKeys();
     await this.#backfillResultGraphTasks();
+    await this.#recordLostResultGraphTaskReservations();
+    await this.#fingerprintResultBindings();
     // Additive terminal marker on the start intent. NULL means no terminal
     // outcome was observed; a value closes the workflow for recovery, sender
     // retries and delivery claims, even after the engine purges it.
@@ -787,9 +1011,197 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     });
   }
 
-  /** Recorded bindings that will never publish. Pass a tenant to list only
-   * that tenant's. Ids only: no message body, no secret. */
+  /**
+   * Additive schema for result graph key rotation, safe for an older build
+   * sharing the database or rolled back to:
+   * - each binding records the fingerprint of the key it was derived under
+   *   (`unkeyed-v2` for the retired unkeyed id; NULL until classified), a
+   *   column older builds neither read nor write;
+   * - a binding derived under a key is immutable in the database itself, so
+   *   an older build, which can verify only its one key, cannot overwrite a
+   *   binding derived under another key as if the request body chose it.
+   *   That covers a binding with a fingerprint, and a keyed binding an older
+   *   build recorded without one (before any newer build fingerprints it),
+   *   unless the first scan recorded it as body-chosen. Only the fingerprint
+   *   of a binding that has none may be filled in.
+   * The older build's tables, columns and reason check are left as they
+   * were. One transaction under an advisory lock, so hosts starting together
+   * do not race. The column and trigger are created only when absent, so a
+   * later start takes no lock on the binding table; the function is
+   * replaced, which locks no table. Needs PostgreSQL 11 or later.
+   */
+  async #migrateResultGraphKeys(): Promise<void> {
+    await this.#sql.begin(async (sql) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtext('loop_supervisor_message_v2_result_graph_keys'))`;
+      await sql`CREATE OR REPLACE FUNCTION loop_v2_result_binding_keyed_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+        DECLARE
+          stored jsonb := OLD.binding_json;
+          graph text;
+        BEGIN
+          IF NEW.binding_json IS NOT DISTINCT FROM OLD.binding_json AND (
+            OLD.result_graph_key_fingerprint IS NULL OR
+            NEW.result_graph_key_fingerprint IS NOT DISTINCT FROM OLD.result_graph_key_fingerprint
+          ) THEN
+            RETURN NEW;
+          END IF;
+          IF OLD.result_graph_key_fingerprint IS NOT NULL THEN
+            RAISE EXCEPTION 'result binding recorded under a result graph key is immutable';
+          END IF;
+          -- Bindings are stored as JSON strings or objects.
+          IF jsonb_typeof(stored) = 'string' THEN
+            BEGIN
+              stored := (stored #>> '{}')::jsonb;
+            EXCEPTION WHEN others THEN
+              stored := NULL;
+            END;
+          END IF;
+          IF jsonb_typeof(stored) = 'object' THEN
+            graph := stored ->> 'graphWorkflowId';
+          END IF;
+          IF graph ~ '^supervisor-result-graph:v3:[a-f0-9]{64}$' AND NOT EXISTS (
+            SELECT 1 FROM loop_supervisor_message_v2_unpublishable_result_binding body
+            WHERE body.workflow_id = OLD.workflow_id AND body.a2a_task_id = OLD.a2a_task_id
+              AND body.reason = 'body-chosen-graph'
+          ) THEN
+            RAISE EXCEPTION 'result binding recorded under a result graph key is immutable';
+          END IF;
+          RETURN NEW;
+        END
+      $$`;
+      await sql`DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_attribute
+            WHERE attrelid = 'loop_supervisor_message_v2_result_binding'::regclass
+              AND attname = 'result_graph_key_fingerprint' AND NOT attisdropped) THEN
+            ALTER TABLE loop_supervisor_message_v2_result_binding ADD COLUMN result_graph_key_fingerprint TEXT;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_trigger
+            WHERE tgrelid = 'loop_supervisor_message_v2_result_binding'::regclass
+              AND tgname = 'loop_v2_result_binding_keyed_immutable') THEN
+            CREATE TRIGGER loop_v2_result_binding_keyed_immutable
+              BEFORE UPDATE ON loop_supervisor_message_v2_result_binding
+              FOR EACH ROW EXECUTE FUNCTION loop_v2_result_binding_keyed_immutable();
+          END IF;
+        END
+      $$`;
+    });
+  }
+
+  /**
+   * Unkeyed v2 bindings that lost their graph task's first-binding-wins
+   * reservation (two A2A tasks carrying one message, both bound by 2b1b1893
+   * to the same graph task) or never held one. They will never publish and
+   * cannot be re-bound (a derived binding is immutable), so each is recorded
+   * as unpublishable, ids only, in a table of its own that an older build
+   * never reports (it would advise a re-bind), and reported like a
+   * body-chosen binding.
+   * Scanned once per schema version, including on a database whose first
+   * scan an earlier build already ran.
+   */
+  async #recordLostResultGraphTaskReservations(): Promise<void> {
+    await this.#sql.begin(async (sql) => {
+      const done = await sql<
+        { name: string }[]
+      >`SELECT name FROM loop_supervisor_message_v2_schema_marker WHERE name = ${RESULT_GRAPH_TASK_LOSS_MARKER}`;
+      if (done[0]) {
+        return;
+      }
+      const rows = await sql<StoredBindingRow[]>`
+        SELECT workflow_id, a2a_task_id, tenant_id, principal, binding_json, result_graph_key_fingerprint
+        FROM loop_supervisor_message_v2_result_binding
+        ORDER BY tenant_id, a2a_task_id, workflow_id`;
+      for (const row of rows) {
+        const classified = this.#classify(row);
+        if (classified?.standing.kind !== "unkeyed-v2") {
+          continue;
+        }
+        const { binding } = classified;
+        const holder = await sql<
+          { a2a_task_id: string; tenant_id: string }[]
+        >`SELECT tenant_id, a2a_task_id FROM loop_supervisor_message_v2_result_graph_task
+          WHERE graph_workflow_id = ${binding.graphWorkflowId} AND graph_task_id = ${binding.graphTaskId}`;
+        if (
+          holder[0]?.tenant_id === row.tenant_id &&
+          holder[0]?.a2a_task_id === row.a2a_task_id
+        ) {
+          continue;
+        }
+        await sql`INSERT INTO loop_supervisor_message_v2_lost_result_graph_task_reservation (workflow_id, a2a_task_id, tenant_id, graph_workflow_id, graph_task_id)
+          VALUES (${row.workflow_id}, ${row.a2a_task_id}, ${row.tenant_id}, ${binding.graphWorkflowId}, ${binding.graphTaskId})
+          ON CONFLICT (workflow_id, a2a_task_id) DO NOTHING`;
+      }
+      await sql`INSERT INTO loop_supervisor_message_v2_schema_marker (name) VALUES (${RESULT_GRAPH_TASK_LOSS_MARKER})
+        ON CONFLICT (name) DO NOTHING`;
+    });
+  }
+
+  /**
+   * Records, on each binding that has none, the fingerprint of the key it
+   * was derived under: one this host holds, or `unkeyed-v2`. Bindings a
+   * previous build recorded under its key gain theirs at the first start
+   * holding that key, so a later rotation can name it. A row no held key
+   * derives keeps none and is reported as under an unknown key.
+   */
+  async #fingerprintResultBindings(): Promise<void> {
+    const rows = await this.#sql<StoredBindingRow[]>`
+      SELECT workflow_id, a2a_task_id, tenant_id, principal, binding_json, result_graph_key_fingerprint
+      FROM loop_supervisor_message_v2_result_binding
+      WHERE result_graph_key_fingerprint IS NULL`;
+    for (const row of rows) {
+      const standing = this.#classify(row)?.standing;
+      let fingerprint: string | undefined;
+      if (standing?.kind === "keyed") {
+        fingerprint = standing.key.fingerprint;
+      } else if (standing?.kind === "unkeyed-v2") {
+        fingerprint = UNKEYED_V2;
+      }
+      if (fingerprint) {
+        await this
+          .#sql`UPDATE loop_supervisor_message_v2_result_binding SET result_graph_key_fingerprint = ${fingerprint}
+          WHERE workflow_id = ${row.workflow_id} AND a2a_task_id = ${row.a2a_task_id} AND result_graph_key_fingerprint IS NULL`;
+      }
+    }
+  }
+
+  /** Recorded bindings that do not publish: those persisted as never
+   * publishing, and those derived under a key this host does not hold.
+   * Pass a tenant to list only that tenant's. Ids and key fingerprints
+   * only: no message body, no secret. */
   async unpublishableResultBindings(
+    tenantId?: string
+  ): Promise<SupervisorMessageV2UnpublishableResultBinding[]> {
+    const persisted = await this.#persistedUnpublishable(tenantId);
+    // A row the first scan recorded is listed once, under that reason: a
+    // body-chosen graph id can look keyed without being derived under a key.
+    const listed = new Set(
+      persisted.map((entry) =>
+        JSON.stringify([entry.messageWorkflowId, entry.a2aTaskId])
+      )
+    );
+    const unknownKey: SupervisorMessageV2UnpublishableResultBinding[] = [];
+    for (const row of await this.#nonPrimaryKeyBindings(tenantId)) {
+      const classified = this.#classify(row);
+      if (
+        classified?.standing.kind === "unknown-key" &&
+        !listed.has(JSON.stringify([row.workflow_id, row.a2a_task_id]))
+      ) {
+        unknownKey.push({
+          a2aTaskId: row.a2a_task_id,
+          graphTaskId: classified.binding.graphTaskId,
+          graphWorkflowId: classified.binding.graphWorkflowId,
+          keyFingerprint: row.result_graph_key_fingerprint,
+          messageWorkflowId: row.workflow_id,
+          reason: "unknown-result-graph-key",
+          tenantId: row.tenant_id,
+        });
+      }
+    }
+    return [...persisted, ...unknownKey];
+  }
+
+  /** The bindings the one-time scans recorded: body-chosen or malformed
+   * ones, and unkeyed ones that lost their graph task's reservation. */
+  async #persistedUnpublishable(
     tenantId?: string
   ): Promise<SupervisorMessageV2UnpublishableResultBinding[]> {
     const rows = await this.#sql<
@@ -804,6 +1216,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     >`SELECT workflow_id, a2a_task_id, tenant_id, reason, graph_workflow_id, graph_task_id
       FROM loop_supervisor_message_v2_unpublishable_result_binding
       WHERE ${tenantId ?? null}::text IS NULL OR tenant_id = ${tenantId ?? null}
+      UNION ALL
+      SELECT workflow_id, a2a_task_id, tenant_id, 'lost-graph-task-reservation' AS reason, graph_workflow_id, graph_task_id
+      FROM loop_supervisor_message_v2_lost_result_graph_task_reservation
+      WHERE ${tenantId ?? null}::text IS NULL OR tenant_id = ${tenantId ?? null}
       ORDER BY tenant_id, a2a_task_id, workflow_id`;
     return rows.map((row) => ({
       a2aTaskId: row.a2a_task_id,
@@ -815,11 +1231,122 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     }));
   }
 
+  /** True when the first scan recorded this binding as body-chosen. */
+  async #recordedBodyChosen(
+    sql: SQL,
+    tenantId: string,
+    workflowId: string,
+    a2aTaskId: string
+  ): Promise<boolean> {
+    const rows = await sql<{ reason: string }[]>`
+      SELECT reason FROM loop_supervisor_message_v2_unpublishable_result_binding
+      WHERE workflow_id = ${workflowId} AND a2a_task_id = ${a2aTaskId} AND tenant_id = ${tenantId}
+        AND reason = ${"body-chosen-graph"}`;
+    return rows.length > 0;
+  }
+
+  /**
+   * A bind naming a graph not derived under the primary key. Under a
+   * previous key it succeeds only as a retry of the exact binding already
+   * recorded, still holding its graph task, so a client retrying across a
+   * rotation gets its receipt; nothing new is ever bound under a previous
+   * key, which is refused with an exact error naming that key's
+   * fingerprint. Anything else is not derived from the message.
+   */
+  async #retryUnderPreviousKey(
+    scope: TrustedSupervisorMessageV2Scope,
+    binding: SupervisorA2AResultBinding
+  ): Promise<void> {
+    const standing = this.#standing(
+      scope,
+      binding.messageWorkflowId,
+      binding.graphWorkflowId
+    );
+    if (standing.kind !== "keyed") {
+      throw new Error("Result graph is not derived from this message");
+    }
+    const rows = await this.#sql<{ binding_json: unknown }[]>`
+      SELECT binding_json FROM loop_supervisor_message_v2_result_binding
+      WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId}
+        AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
+    const recorded = rows[0]
+      ? parseStoredBinding(
+          storedJson(rows[0].binding_json),
+          binding.messageWorkflowId,
+          binding.a2aTaskId
+        )
+      : undefined;
+    if (!recorded || canonical(recorded) !== canonical(binding)) {
+      throw new SupervisorResultGraphUnderPreviousKeyError(
+        standing.key.fingerprint
+      );
+    }
+    const holder = await this.#sql<
+      { a2a_task_id: string; tenant_id: string }[]
+    >`
+      SELECT tenant_id, a2a_task_id FROM loop_supervisor_message_v2_result_graph_task
+      WHERE graph_workflow_id = ${binding.graphWorkflowId} AND graph_task_id = ${binding.graphTaskId}`;
+    if (
+      holder[0]?.tenant_id !== scope.tenantId ||
+      holder[0]?.a2a_task_id !== binding.a2aTaskId
+    ) {
+      throw new Error("Result graph task is reserved for another A2A task");
+    }
+  }
+
+  /**
+   * Configured result graphs (`graphWorkflowIds`, the host's resultArtifacts)
+   * derived under a previous key for a message of this scope that has no
+   * binding. Such a graph was started before the rotation and not bound; it
+   * can never be bound, since nothing new is bound under a previous key.
+   * Scans this scope's messages only while a previous key is configured and
+   * some configured graph has the keyed format. Ids and fingerprints only.
+   */
+  async unboundPreviousKeyResultGraphs(
+    scope: TrustedSupervisorMessageV2Scope,
+    graphWorkflowIds: readonly string[]
+  ): Promise<SupervisorMessageV2UnboundPreviousKeyResultGraph[]> {
+    const configured = new Set(
+      graphWorkflowIds.filter((id) =>
+        SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE.test(id)
+      )
+    );
+    if (this.#previousResultGraphKeys.length === 0 || configured.size === 0) {
+      return [];
+    }
+    const messages = await this.#sql<{ workflow_id: string }[]>`
+      SELECT intent.workflow_id FROM loop_supervisor_message_v2_start_intent intent
+      WHERE intent.tenant_id = ${scope.tenantId} AND intent.principal = ${scope.principal}
+        AND NOT EXISTS (SELECT 1 FROM loop_supervisor_message_v2_result_binding bound
+          WHERE bound.workflow_id = intent.workflow_id)
+      ORDER BY intent.workflow_id`;
+    const unbound: SupervisorMessageV2UnboundPreviousKeyResultGraph[] = [];
+    for (const { workflow_id: messageWorkflowId } of messages) {
+      for (const key of this.#previousResultGraphKeys) {
+        const graphWorkflowId = this.#keyedResultGraph(
+          scope,
+          messageWorkflowId,
+          key
+        );
+        if (graphWorkflowId && configured.has(graphWorkflowId)) {
+          unbound.push({
+            graphWorkflowId,
+            keyFingerprint: key.fingerprint,
+            messageWorkflowId,
+          });
+        }
+      }
+    }
+    return unbound;
+  }
+
   /**
    * Immutable assignment. The graph must be the one derived, under this
-   * host's result graph key, from the message's own scoped identity; a
-   * body-named graph that differs (including the retired unkeyed v2 id) is
-   * refused here as well as by the host. This ledger reserves the graph task
+   * host's primary result graph key, from the message's own scoped identity;
+   * a body-named graph that differs (including the retired unkeyed v2 id and
+   * an id under a previous key) is refused here as well as by the host. The
+   * binding records the primary key's fingerprint. This ledger reserves the
+   * graph task
    * for this one A2A task, in the same transaction as the binding, so a
    * refused bind leaves nothing reserved.
    *
@@ -847,15 +1374,18 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     ) {
       throw new Error("Invalid result binding");
     }
-    if (!this.#resultGraphKey) {
+    const primary = this.#resultGraphKey;
+    if (!primary) {
       throw new Error("Result graph key is not configured");
     }
     await this.assertStartIntent(binding.messageWorkflowId, scope);
+    // New bindings are derived under the primary key only.
     if (
       binding.graphWorkflowId !==
-      this.#keyedResultGraph(scope, binding.messageWorkflowId)
+      this.#keyedResultGraph(scope, binding.messageWorkflowId, primary)
     ) {
-      throw new Error("Result graph is not derived from this message");
+      await this.#retryUnderPreviousKey(scope, binding);
+      return;
     }
     const assigned = await this.recipientAssignment({
       tenantId: scope.tenantId,
@@ -895,12 +1425,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
           throw new Error("Result graph task is reserved for another A2A task");
         }
       }
-      await sql`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
-        VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb)
+      await sql`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json, result_graph_key_fingerprint)
+        VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb, ${primary.fingerprint})
         ON CONFLICT (workflow_id, a2a_task_id) DO NOTHING`;
       const existing = await sql<
-        { binding_json: unknown }[]
-      >`SELECT binding_json FROM loop_supervisor_message_v2_result_binding
+        { binding_json: unknown; result_graph_key_fingerprint: string | null }[]
+      >`SELECT binding_json, result_graph_key_fingerprint FROM loop_supervisor_message_v2_result_binding
         WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
       if (!existing[0]) {
         throw new Error("Result binding conflicts with prior assignment");
@@ -913,39 +1443,64 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       if (stored && canonical(stored) === canonical(binding)) {
         return;
       }
-      // A derived binding, keyed or recorded under the unkeyed v2 id, is
-      // immutable. Throwing also rolls back a reservation this call just made.
+      const standing = stored
+        ? this.#standing(
+            scope,
+            binding.messageWorkflowId,
+            stored.graphWorkflowId
+          )
+        : undefined;
+      // Derived under a key this host does not hold (a removed key): it is
+      // neither overwritten nor reported as an ordinary conflict. A graph id
+      // the first scan recorded as body-chosen only looks keyed: replaced.
       if (
-        stored &&
-        this.#isDerivedResultGraph(
-          scope,
+        standing?.kind === "unknown-key" &&
+        !(await this.#recordedBodyChosen(
+          sql,
+          scope.tenantId,
           binding.messageWorkflowId,
-          stored.graphWorkflowId
-        )
+          binding.a2aTaskId
+        ))
       ) {
+        throw new Error(
+          unknownResultGraphKeyMessage(
+            existing[0].result_graph_key_fingerprint,
+            true
+          )
+        );
+      }
+      // A derived binding, keyed under any held key or recorded under the
+      // unkeyed v2 id, is immutable. Throwing also rolls back a reservation
+      // this call just made.
+      if (standing?.kind === "keyed" || standing?.kind === "unkeyed-v2") {
         throw new Error("Result binding conflicts with prior assignment");
       }
       // A binding recorded before graphs were derived from the message named
       // a graph the request body chose (or cannot be read). It was never
       // publishable, so the message's derived graph replaces it.
-      await sql`UPDATE loop_supervisor_message_v2_result_binding SET binding_json = ${canonical(binding)}::jsonb
+      await sql`UPDATE loop_supervisor_message_v2_result_binding SET binding_json = ${canonical(binding)}::jsonb, result_graph_key_fingerprint = ${primary.fingerprint}
         WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
       await sql`DELETE FROM loop_supervisor_message_v2_unpublishable_result_binding
         WHERE workflow_id = ${binding.messageWorkflowId} AND a2a_task_id = ${binding.a2aTaskId} AND tenant_id = ${scope.tenantId}`;
     });
   }
 
-  /** The binding to publish, only while its graph is derived from the
-   * message (the keyed id, or the unkeyed v2 id of a binding recorded before
-   * the key) and it still holds that graph task's reservation. */
+  /**
+   * The binding to publish, only while its graph is derived from the
+   * message (under the primary or a previous key, or the unkeyed v2 id of a
+   * binding recorded before the key) and it still holds that graph task's
+   * reservation. A binding derived under a key this host does not hold is
+   * refused with an error naming that key's fingerprint, never skipped
+   * silently.
+   */
   async resultBinding(
     scope: TrustedSupervisorMessageV2Scope,
     workflowId: string,
     taskId: string
   ): Promise<SupervisorA2AResultBinding | undefined> {
     const rows = await this.#sql<
-      { binding_json: unknown }[]
-    >`SELECT binding_json FROM loop_supervisor_message_v2_result_binding
+      { binding_json: unknown; result_graph_key_fingerprint: string | null }[]
+    >`SELECT binding_json, result_graph_key_fingerprint FROM loop_supervisor_message_v2_result_binding
       WHERE workflow_id = ${workflowId} AND a2a_task_id = ${taskId} AND tenant_id = ${scope.tenantId} AND principal = ${scope.principal}`;
     if (!rows[0]) {
       return undefined;
@@ -958,7 +1513,28 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     if (!value) {
       throw new Error("Stored result binding is invalid");
     }
-    if (!this.#isDerivedResultGraph(scope, workflowId, value.graphWorkflowId)) {
+    const standing = this.#standing(scope, workflowId, value.graphWorkflowId);
+    if (standing.kind === "unknown-key") {
+      // A body-chosen graph id that only looks keyed never publishes, as
+      // before; it is reported under that reason.
+      if (
+        await this.#recordedBodyChosen(
+          this.#sql,
+          scope.tenantId,
+          workflowId,
+          taskId
+        )
+      ) {
+        return undefined;
+      }
+      throw new Error(
+        unknownResultGraphKeyMessage(
+          rows[0].result_graph_key_fingerprint,
+          this.#resultGraphKey !== undefined
+        )
+      );
+    }
+    if (standing.kind === "not-derived") {
       return undefined;
     }
     const reserved = await this.#sql<

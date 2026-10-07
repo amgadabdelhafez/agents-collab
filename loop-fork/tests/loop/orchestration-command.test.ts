@@ -529,3 +529,104 @@ test("result-graph-id prints the id the server derives from the config's key env
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test("result-graph-key-fingerprints prints each configured key's variable, role and fingerprint, never a key, and never starts the server", async () => {
+  for (const argv of [
+    ["orchestration", "result-graph-key-fingerprints"],
+    ["orchestration", "result-graph-key-fingerprints", "/tmp/c.json", "x"],
+  ]) {
+    expect(() => parseOrchestrationCommand(argv)).toThrow(
+      "loop orchestration result-graph-key-fingerprints <config-path>"
+    );
+  }
+  const root = mkdtempSync(join(tmpdir(), "loop-orch-cli-"));
+  const configPath = join(root, "orchestration.json");
+  const primary = randomBytes(32).toString("hex");
+  const previous = randomBytes(32).toString("hex");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      a2aV2: {
+        databaseUrlEnv: "LOOP_A2A_V2_DATABASE_URL",
+        endpointRef: "endpoint:local-a2a",
+        policy: {
+          claimTimeoutMs: 60_000,
+          escalationTimeoutMs: 120_000,
+          maxDeliveryAttempts: 3,
+          retryDelayMs: 1000,
+        },
+        previousResultGraphKeyEnvs: ["LOOP_CLI_RESULT_GRAPH_KEY_OLD"],
+        principal: "principal:harness",
+        recipient: "supervisor:harness",
+        resultGraphKeyEnv: "LOOP_CLI_RESULT_GRAPH_KEY",
+        routePath: "/a2a",
+        sessionTtlMs: 3_600_000,
+        tenant: "tenant:local",
+      },
+      address: "127.0.0.1:9",
+      buildId: "loop-orchestration.v1",
+      grants: [
+        {
+          from: "supervisor:source",
+          operations: ["receive"],
+          principal: "principal:harness",
+          to: "supervisor:harness",
+        },
+      ],
+      hostname: "127.0.0.1",
+      identity: "loop-orchestration@local",
+      namespace: "default",
+      port: 7321,
+      schema: "loop-orchestration-server.v1",
+      stateDir: join(root, "state"),
+      supervisors: [
+        {
+          manifestPath: join(root, "manifest.json"),
+          principal: "principal:harness",
+          supervisorId: "supervisor:harness",
+          tokenEnv: "LOOP_HARNESS_ORCHESTRATION_TOKEN",
+        },
+      ],
+      taskQueue: "loop-orchestration",
+    })
+  );
+  const runner = mock(async (_configPath: string) => undefined);
+  const lines: string[] = [];
+  try {
+    expect(
+      await runOrchestrationCommand(
+        ["orchestration", "result-graph-key-fingerprints", configPath],
+        runner,
+        {
+          env: {
+            LOOP_CLI_RESULT_GRAPH_KEY: primary,
+            LOOP_CLI_RESULT_GRAPH_KEY_OLD: previous,
+          },
+          write: (text) => lines.push(text),
+        }
+      )
+    ).toBe(true);
+    expect(runner).not.toHaveBeenCalled();
+    expect(lines).toEqual([
+      `LOOP_CLI_RESULT_GRAPH_KEY primary ${SupervisorResultGraphKey.fromSecret(primary).fingerprint}\n`,
+      `LOOP_CLI_RESULT_GRAPH_KEY_OLD previous ${SupervisorResultGraphKey.fromSecret(previous).fingerprint}\n`,
+    ]);
+    expect(lines.join("")).not.toContain(primary);
+    expect(lines.join("")).not.toContain(previous);
+    await expect(
+      runOrchestrationCommand(
+        ["orchestration", "result-graph-key-fingerprints", configPath],
+        runner,
+        {
+          env: { LOOP_CLI_RESULT_GRAPH_KEY: primary },
+          write: (text) => lines.push(text),
+        }
+      )
+    ).rejects.toThrow(
+      "missing orchestration A2A V2 result graph key environment LOOP_CLI_RESULT_GRAPH_KEY_OLD"
+    );
+    expect(lines).toHaveLength(2);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

@@ -825,7 +825,20 @@ export class SupervisorResultGraphKey {
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join("");
   }
+
+  /**
+   * A short, non-reversible name for this key: `rgk:` and the first 16 hex
+   * digits of an HMAC under the key over a fixed label. It identifies which
+   * key a binding was derived under (in errors, logs and the assignment
+   * listing) without revealing the key.
+   */
+  get fingerprint(): string {
+    return `rgk:${this.mac(["supervisor-result-graph-key-fingerprint", "v1"]).slice(0, 16)}`;
+  }
 }
+
+/** The format of `SupervisorResultGraphKey.fingerprint`. */
+export const SUPERVISOR_RESULT_GRAPH_KEY_FINGERPRINT_RE = /^rgk:[a-f0-9]{16}$/;
 
 /**
  * The one task graph whose tasks may carry this message's result. A

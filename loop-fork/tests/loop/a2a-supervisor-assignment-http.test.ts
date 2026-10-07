@@ -184,6 +184,58 @@ test("assignment route lists only what its service returns for the authenticated
   expect(scopes).toEqual([
     { principal: "principal:control", tenantId: "tenant:owned" },
   ]);
+  // With a rotation listing, the same authenticated GET also names the
+  // bindings derived under a previous result graph key, by fingerprint.
+  const rotationScopes: unknown[] = [];
+  const rotating = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    pathname: "/assign",
+    principal: "principal:control",
+    tenant: "tenant:owned",
+    unpublishable: () => Promise.resolve([]),
+    underPreviousKey: (scope) => {
+      rotationScopes.push(scope);
+      return Promise.resolve([
+        {
+          a2aTaskId: "task:two",
+          graphTaskId: "node",
+          graphWorkflowId: `supervisor-result-graph:v3:${"d".repeat(64)}`,
+          keyFingerprint: "rgk:0123456789abcdef",
+          messageWorkflowId: "message:two",
+          tenantId: "tenant:owned",
+        },
+      ]);
+    },
+  });
+  const rotatingGet = (authorization?: string) =>
+    rotating(
+      new Request("http://local/assign", {
+        headers: authorization ? { authorization } : {},
+      })
+    );
+  expect((await rotatingGet()).status).toBe(401);
+  expect((await rotatingGet("Bearer other")).status).toBe(403);
+  expect(rotationScopes).toEqual([]);
+  expect(await (await rotatingGet("Bearer fixture")).json()).toEqual({
+    schema: "supervisor-result-assignment-status.v1",
+    underPreviousResultGraphKey: [
+      {
+        a2aTaskId: "task:two",
+        graphTaskId: "node",
+        graphWorkflowId: `supervisor-result-graph:v3:${"d".repeat(64)}`,
+        keyFingerprint: "rgk:0123456789abcdef",
+        messageWorkflowId: "message:two",
+      },
+    ],
+    unpublishable: [],
+  });
+  expect(rotationScopes).toEqual([
+    { principal: "principal:control", tenantId: "tenant:owned" },
+  ]);
   const { handler: postOnly } = createHandler();
   expect(
     (

@@ -1255,6 +1255,7 @@ test("the orchestration server refuses to start while its own queue holds anothe
         },
       ],
       schema: "supervisor-result-assignment-status.v1",
+      underPreviousResultGraphKey: [],
       unpublishable: [],
     });
     const anonymous = await fetch(
@@ -1461,9 +1462,13 @@ test("the orchestration server starts a message's result graph under its keyed i
     ).toBe(409);
     const assigned = await post("/a2a/v2/assignment", binding);
     expect(assigned.status).toBe(200);
+    // This ledger holds no key: it cannot verify the binding, and refuses it
+    // by naming the key the server derived it under.
     await expect(
       ledger.resultBinding(scope, messageWorkflowId, "task:keyed-server")
-    ).resolves.toBeUndefined(); // this ledger holds no key: it cannot verify
+    ).rejects.toThrow(
+      `Result binding was derived under result graph key ${SupervisorResultGraphKey.fromSecret(secret).fingerprint}, which this host does not hold`
+    );
     const keyed = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       postgres.databaseUrl(),
       {
@@ -1494,6 +1499,7 @@ test("the orchestration server starts a message's result graph under its keyed i
       readinessOutage: [],
       recoveryQuarantine: [],
       schema: "supervisor-result-assignment-status.v1",
+      underPreviousResultGraphKey: [],
       unpublishable: [],
     });
   } finally {
@@ -1505,6 +1511,135 @@ test("the orchestration server starts a message's result graph under its keyed i
       .catch(() => undefined);
     await tasks.close();
     await ledger.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server holds its configured previous result graph keys: a binding made under a rotated-out key still publishes and is listed under its fingerprint", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const scope = scopeOf(config);
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  const dedupeKey = `rotated-${randomUUID().slice(0, 8)}`;
+  const taskQueue = `orchestration-composition-${randomUUID().slice(0, 8)}`;
+  const messageWorkflowId = deriveSupervisorMessageV2WorkflowId(
+    scope,
+    dedupeKey,
+    taskQueue
+  );
+  // Throwaway host secrets, passed only through the environment.
+  const oldSecret = randomBytes(32).toString("hex");
+  const newSecret = randomBytes(32).toString("hex");
+  const oldKey = SupervisorResultGraphKey.fromSecret(oldSecret);
+  const graphWorkflowId = deriveSupervisorMessageV2ResultGraphWorkflowId(
+    oldKey,
+    scope,
+    messageWorkflowId
+  );
+  const fixture = compositionFixture({
+    address: environment.address,
+    a2aExtra: {
+      // The operator kept the existing entry as it was.
+      resultArtifacts: [
+        {
+          artifactRef: `artifact://sha256/${"e".repeat(64)}`,
+          commit: "b".repeat(40),
+          graphTaskId: "result-node",
+          graphWorkflowId,
+          path: "results/accepted.md",
+          repositoryRoot: "/nonexistent/repository",
+        },
+      ],
+      resultGraphKeyEnv: "LOOP_TEST_RESULT_GRAPH_KEY",
+      previousResultGraphKeyEnvs: ["LOOP_TEST_RESULT_GRAPH_KEY_OLD"],
+    },
+    envExtra: {
+      LOOP_TEST_RESULT_GRAPH_KEY: newSecret,
+      LOOP_TEST_RESULT_GRAPH_KEY_OLD: oldSecret,
+    },
+    taskQueue,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  // The host before the rotation: the old key was its only key.
+  const before = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl(),
+    {
+      buildId: "orchestration-composition.v1",
+      deployment: taskQueue,
+      resultGraphKey: oldKey,
+    }
+  );
+  const tasks = await PostgresA2ATaskStore.connect({
+    databaseUrl: postgres.databaseUrl(),
+  });
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    await before.migrate();
+    await tasks.migrate();
+    await before.recordStartIntent(messageWorkflowId, scope, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey,
+      messageId: `message-${dedupeKey}`,
+      principal: scope.principal,
+      tenantId: scope.tenantId,
+      threadId: `thread-${dedupeKey}`,
+      to: "supervisor:target",
+    });
+    await before.recordTerminalOutcome(
+      messageWorkflowId,
+      scope,
+      "acknowledged"
+    );
+    const binding = {
+      a2aTaskId: "task:rotated-server",
+      graphTaskId: "result-node",
+      graphWorkflowId,
+      messageWorkflowId,
+      recipient: "supervisor:target",
+    };
+    await before.bindResult(scope, binding);
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    const listed = await fetch(
+      `http://127.0.0.1:${fixture.port}/a2a/v2/assignment`,
+      {
+        headers: {
+          authorization: `Bearer ${fixture.env.LOOP_TEST_HARNESS_TOKEN}`,
+        },
+      }
+    );
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      notEnrolled: [],
+      readinessOutage: [],
+      recoveryQuarantine: [],
+      schema: "supervisor-result-assignment-status.v1",
+      underPreviousResultGraphKey: [
+        {
+          a2aTaskId: "task:rotated-server",
+          graphTaskId: "result-node",
+          graphWorkflowId,
+          keyFingerprint: oldKey.fingerprint,
+          messageWorkflowId,
+        },
+      ],
+      unpublishable: [],
+    });
+    // The unauthenticated health route names no binding or key.
+    const healthBody = JSON.stringify(await health(fixture));
+    expect(healthBody).not.toContain(oldKey.fingerprint);
+    expect(healthBody).not.toContain("task:rotated-server");
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    await tasks.close();
+    await before.close();
     fixture.remove();
   }
 }, 120_000);

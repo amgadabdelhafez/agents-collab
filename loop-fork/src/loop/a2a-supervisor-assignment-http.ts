@@ -2,9 +2,11 @@ import type { SupervisorA2AAuthenticator } from "./a2a-supervisor-http";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import { readBoundedRequestText } from "./bounded-request-body";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
-import type {
-  SupervisorMessageV2RecoveryQuarantineEntry,
-  SupervisorMessageV2UnpublishableResultBinding,
+import {
+  RESULT_GRAPH_UNDER_PREVIOUS_KEY_ERROR,
+  type SupervisorMessageV2PreviousKeyResultBinding,
+  type SupervisorMessageV2RecoveryQuarantineEntry,
+  type SupervisorMessageV2UnpublishableResultBinding,
 } from "./supervisor-message-v2-delivery-ledger";
 import type { JsonObject, WorkflowStartReceipt } from "./workflow-port";
 
@@ -66,6 +68,14 @@ const readJsonBody = async (
   }
 };
 
+/** A graph started under a key that is now a previous key gets its own code:
+ * the client must start the message's result graph again. No code names a
+ * key; every other refusal stays generic. */
+const assignmentRefusalCode = (error: unknown): string =>
+  error instanceof Error && error.name === RESULT_GRAPH_UNDER_PREVIOUS_KEY_ERROR
+    ? "result-graph-under-previous-key"
+    : "assignment-refused";
+
 /**
  * Per-seat delivery detail that the unauthenticated /healthz reports only as
  * counts: the host's seats that are not enrolled now, and the recipients a
@@ -81,6 +91,11 @@ interface AssignmentStatusLists {
   recoveryQuarantine?(
     scope: TrustedSupervisorMessageV2Scope
   ): Promise<readonly SupervisorMessageV2RecoveryQuarantineEntry[]>;
+  /** This tenant's unsettled bindings derived under a previous result graph
+   * key of this host's deployment. */
+  underPreviousKey?(
+    scope: TrustedSupervisorMessageV2Scope
+  ): Promise<readonly SupervisorMessageV2PreviousKeyResultBinding[]>;
   unpublishable?(
     scope: TrustedSupervisorMessageV2Scope
   ): Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>;
@@ -94,6 +109,7 @@ const listStatus = async (
 ): Promise<Response> => {
   try {
     const unpublishable = await lists.unpublishable?.(scope);
+    const previous = await lists.underPreviousKey?.(scope);
     const quarantined = await lists.recoveryQuarantine?.(scope);
     const delivery = lists.deliveryStatus?.();
     return Response.json(
@@ -112,6 +128,16 @@ const listStatus = async (
             }
           : {}),
         schema: "supervisor-result-assignment-status.v1",
+        // Additive: this deployment's bindings that have not published yet
+        // under a previous result graph key, named by fingerprint. A key no
+        // entry names any more is no longer needed by this tenant.
+        ...(previous
+          ? {
+              underPreviousResultGraphKey: previous.map(
+                ({ tenantId: _tenantId, ...entry }) => entry
+              ),
+            }
+          : {}),
         ...(unpublishable
           ? {
               unpublishable: unpublishable.map(
@@ -138,12 +164,14 @@ const listStatus = async (
  *
  * GET on the same path is the inspection surface, for the authenticated
  * control principal only: the recorded bindings of this route's tenant that
- * will never publish, its recorded starts an operator quarantined from
- * recovery (ids, recipient, who, when and why), and the host's per-seat
- * delivery status (ids only). Each section is present only when the host
- * provides it: `unpublishable` and `recoveryQuarantine` need a ledger that
- * can list them (the PostgreSQL ledger can), `notEnrolled` and
- * `readinessOutage` need the delivery status. With none, GET is 405. */
+ * will never publish, those of this host's deployment that have not
+ * published yet under a previous result graph key (ids and key fingerprints
+ * only), its recorded starts an operator quarantined from recovery (ids,
+ * recipient, who, when and why), and the host's per-seat delivery status
+ * (ids only). Each section is present only when the host provides it:
+ * `unpublishable`, `underPreviousResultGraphKey` and `recoveryQuarantine`
+ * need a ledger that can list them (the PostgreSQL ledger can), `notEnrolled`
+ * and `readinessOutage` need the delivery status. With none, GET is 405. */
 export const createSupervisorA2AAssignmentHttpHandler =
   (
     options: AssignmentStatusLists & {
@@ -205,8 +233,8 @@ export const createSupervisorA2AAssignmentHttpHandler =
         },
         { headers: { "cache-control": "no-store" } }
       );
-    } catch {
-      return reply(409, "assignment-refused");
+    } catch (error) {
+      return reply(409, assignmentRefusalCode(error));
     }
   };
 

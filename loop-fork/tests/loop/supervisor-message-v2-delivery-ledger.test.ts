@@ -1832,7 +1832,7 @@ describe("V2 rollback to the real base-era (40097564) ledger on PostgreSQL", () 
     );
   });
 
-  test("rollback limit: the base-era ledger does not publish a result this build bound to its keyed graph, and lets the message be re-bound to its unkeyed graph", async () => {
+  test("rollback limit: the base-era ledger does not publish a result this build bound to its keyed graph, and the database refuses its re-bind of that message to its unkeyed graph", async () => {
     const { open, openBaseEra } = await sharedDatabase();
     const key = SupervisorResultGraphKey.fromSecret(
       randomBytes(32).toString("hex")
@@ -1865,10 +1865,19 @@ describe("V2 rollback to the real base-era (40097564) ledger on PostgreSQL", () 
       ...keyed,
       graphWorkflowId: baseEraResultGraphId(SCOPE, workflowId),
     };
-    await baseEra.bindResult(SCOPE, unkeyed);
+    // Since the result graph key rotation, a binding recorded under a key is
+    // immutable in the database itself, for every writer: the base-era
+    // ledger's replacement of a "body-chosen" binding is refused, and the
+    // keyed binding stays as this build recorded it.
+    await expect(baseEra.bindResult(SCOPE, unkeyed)).rejects.toThrow(
+      "result binding recorded under a result graph key is immutable"
+    );
     expect(
       await baseEra.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
-    ).toEqual(unkeyed);
+    ).toBeUndefined();
+    expect(
+      await upgraded.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toEqual(keyed);
   });
 
   test("default legacy-write mode does not isolate deployments that share a database: each recovers and resolves the other's messages until the flip", async () => {

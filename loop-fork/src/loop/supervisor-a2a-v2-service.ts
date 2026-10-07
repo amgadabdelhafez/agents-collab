@@ -31,8 +31,10 @@ import {
 import {
   PostgresSupervisorMessageV2DeliveryLedger,
   type PostgresSupervisorMessageV2DeliveryLedgerOptions,
+  type SupervisorMessageV2UnpublishableResultBinding,
   type SupervisorMessageV2WorkflowIdFormat,
   SupervisorMessageV2WorkflowIdFormatError,
+  unknownResultGraphKeyAdvice,
 } from "./supervisor-message-v2-delivery-ledger";
 import {
   GovernedSupervisorMessageV2Service,
@@ -104,6 +106,8 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   recoveryQuarantines?: PostgresSupervisorMessageV2DeliveryLedger["recoveryQuarantines"];
   /** The format `migrate` resolved new messages to be written in. */
   readonly workflowIdFormat?: PostgresSupervisorMessageV2DeliveryLedger["workflowIdFormat"];
+  previousKeyResultBindings?: PostgresSupervisorMessageV2DeliveryLedger["previousKeyResultBindings"];
+  unboundPreviousKeyResultGraphs?: PostgresSupervisorMessageV2DeliveryLedger["unboundPreviousKeyResultGraphs"];
   close(): Promise<void>;
   migrate(): Promise<void>;
 };
@@ -198,6 +202,9 @@ export interface SupervisorA2AV2ServiceOptions {
   operatorConfigPath?: string;
   peerRoutes?: readonly { pathname: string; supervisorId: string }[];
   policy: SupervisorA2AV2IngressOptions["policy"];
+  /** Keys this host held before `resultGraphKey` (a rotation): bindings
+   * derived under them still publish; nothing new is derived under them. */
+  previousResultGraphKeys?: readonly SupervisorResultGraphKey[];
   providerReadiness: SupervisorSessionProviderReadinessPort;
   /**
    * How long a session readiness-store outage may defer a recipient's
@@ -342,6 +349,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly #workflows: WorkflowPort;
   readonly #now: () => string;
   readonly #resultGraphKey: SupervisorResultGraphKey | undefined;
+  readonly #previousResultGraphKeys: readonly SupervisorResultGraphKey[];
   readonly #resultGraphTasks: readonly SupervisorA2AResultArtifactTarget[];
   readonly #verifyResultArtifact: SupervisorA2AV2ServiceOptions["verifyResultArtifact"];
   readonly recipientRoute: SupervisorA2AV2Service["recipientRoute"];
@@ -365,6 +373,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
     workflows: WorkflowPort;
     now: () => string;
+    previousResultGraphKeys?: readonly SupervisorResultGraphKey[];
     resultGraphKey?: SupervisorResultGraphKey;
     resultGraphRoute?: SupervisorA2AV2Service["resultGraphRoute"];
     resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
@@ -386,6 +395,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.#workflows = input.workflows;
     this.#now = input.now;
     this.#resultGraphKey = input.resultGraphKey;
+    this.#previousResultGraphKeys = input.previousResultGraphKeys ?? [];
     this.resultGraphRoute = input.resultGraphRoute;
     this.#resultGraphTasks = (input.resultGraphTasks ?? []).map((target) => ({
       graphWorkflowId: target.graphWorkflowId,
@@ -460,6 +470,23 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
         binding.messageWorkflowId
       )
     ) {
+      // Under a previous key the ledger accepts only a retry of the exact
+      // binding it recorded (checked when it was recorded) and refuses
+      // anything new with an exact error naming that key's fingerprint.
+      if (
+        this.#previousResultGraphKeys.some(
+          (previous) =>
+            binding.graphWorkflowId ===
+            deriveSupervisorMessageV2ResultGraphWorkflowId(
+              previous,
+              scope,
+              binding.messageWorkflowId
+            )
+        )
+      ) {
+        await this.#ledger.bindResult(scope, binding);
+        return;
+      }
       throw new Error("Result graph is not derived from this message");
     }
     if (
@@ -592,18 +619,67 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   }
 }
 
+/** What an operator does about each kind of unpublishable binding. */
+const unpublishableLine = (
+  entry: SupervisorMessageV2UnpublishableResultBinding,
+  hostHasKey: boolean
+): string => {
+  const ids = `tenant ${entry.tenantId} message ${entry.messageWorkflowId} A2A task ${entry.a2aTaskId}`;
+  switch (entry.reason) {
+    case "unknown-result-graph-key":
+      return `A2A V2 result binding cannot publish (${entry.reason}): ${ids}; it was derived under ${
+        entry.keyFingerprint
+          ? `result graph key ${entry.keyFingerprint}`
+          : "a result graph key recorded before key fingerprints were"
+      }, which this host does not hold: ${unknownResultGraphKeyAdvice(hostHasKey)}`;
+    case "lost-graph-task-reservation":
+      return `A2A V2 result binding will never publish (${entry.reason}): ${ids}; it does not hold its graph task's reservation (another A2A task carrying this message holds it, or none does), and a binding to a derived graph cannot be re-bound`;
+    default:
+      return `A2A V2 result binding will never publish (${entry.reason}): ${ids}; re-bind it to its message-derived result graph`;
+  }
+};
+
 /**
- * Recorded bindings that will never publish (a graph the request body chose
- * before graphs were derived, or an unreadable row), reported at every start,
- * one line each with ids only, until each message is re-bound.
+ * Recorded bindings that do not publish (a graph the request body chose
+ * before graphs were derived, an unreadable row, an unkeyed binding that
+ * lost its graph task's reservation, or a binding derived under a result
+ * graph key this host does not hold), reported at every start, one line
+ * each with ids and key fingerprints only, until each is resolved.
  */
 const reportUnpublishableResultBindings = async (
   ledger: LedgerResource,
+  hostHasKey: boolean,
   log: (line: string) => void = (line) => console.error(line)
 ): Promise<void> => {
   for (const entry of (await ledger.unpublishableResultBindings?.()) ?? []) {
+    log(unpublishableLine(entry, hostHasKey));
+  }
+};
+
+/**
+ * Configured result graphs (resultArtifacts) started under a key that is
+ * now a previous key, for a message of this host's assignment scope that
+ * has no binding: nothing new is bound under a previous key, so each can
+ * never be bound. Reported at every start, one line each with ids and the
+ * key fingerprint only, until the message is bound under the primary key.
+ */
+const reportUnboundPreviousKeyResultGraphs = async (
+  ledger: LedgerResource,
+  options: SupervisorA2AV2ServiceOptions,
+  log: (line: string) => void = (line) => console.error(line)
+): Promise<void> => {
+  if (!(options.assignmentRoute && ledger.unboundPreviousKeyResultGraphs)) {
+    return;
+  }
+  for (const entry of await ledger.unboundPreviousKeyResultGraphs(
+    {
+      tenantId: options.route.tenant,
+      principal: options.assignmentRoute.principal,
+    },
+    (options.resultGraphTasks ?? []).map((target) => target.graphWorkflowId)
+  )) {
     log(
-      `A2A V2 result binding will never publish (${entry.reason}): tenant ${entry.tenantId} message ${entry.messageWorkflowId} A2A task ${entry.a2aTaskId}; re-bind it to its message-derived result graph`
+      `A2A V2 result graph cannot be bound (started-under-previous-result-graph-key): tenant ${options.route.tenant} message ${entry.messageWorkflowId}; resultArtifacts lists its graph under previous result graph key ${entry.keyFingerprint}, no binding was recorded for the message before the rotation, and new bindings use the primary key only: start the message's result graph again under the primary key, list that graph in resultArtifacts, and bind it`
     );
   }
 };
@@ -650,6 +726,7 @@ const createAssignmentRoute = (
   }
   const list = ledger.unpublishableResultBindings?.bind(ledger);
   const quarantined = ledger.recoveryQuarantines?.bind(ledger);
+  const previous = ledger.previousKeyResultBindings?.bind(ledger);
   return {
     pathname: options.assignmentRoute.pathname,
     httpHandler: createSupervisorA2AAssignmentHttpHandler({
@@ -670,6 +747,9 @@ const createAssignmentRoute = (
         ? (scope) => quarantined(scope.tenantId)
         : undefined,
       unpublishable: list ? (scope) => list(scope.tenantId) : undefined,
+      underPreviousKey: previous
+        ? (scope) => previous(scope.tenantId)
+        : undefined,
     }),
   };
 };
@@ -742,13 +822,19 @@ export const createSupervisorA2AV2Service = async (
       buildId: options.host.buildId,
       deployment: options.host.taskQueue,
       resultGraphKey: options.resultGraphKey,
+      previousResultGraphKeys: options.previousResultGraphKeys,
       ...(options.workflowIdFormat
         ? { workflowIdFormat: options.workflowIdFormat }
         : {}),
     });
     await ledger.migrate();
     reportWorkflowIdFormat(ledger, options.log);
-    await reportUnpublishableResultBindings(ledger, options.log);
+    await reportUnpublishableResultBindings(
+      ledger,
+      options.resultGraphKey !== undefined,
+      options.log
+    );
+    await reportUnboundPreviousKeyResultGraphs(ledger, options, options.log);
     stage = "session-store";
     sessions = await dependencies.connectSessions({
       authority: options.rebindAuthority,
@@ -913,6 +999,7 @@ export const createSupervisorA2AV2Service = async (
       assignmentRoute,
       workflows,
       now: options.now,
+      previousResultGraphKeys: options.previousResultGraphKeys,
       resultGraphKey: options.resultGraphKey,
       resultGraphRoute,
       resultGraphTasks: options.resultGraphTasks,
