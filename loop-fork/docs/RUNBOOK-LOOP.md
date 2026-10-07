@@ -432,11 +432,16 @@ loop orchestration v2-quarantine-list <config-path>
 - The command reads the config, takes the database URL from the environment
   variable named by `a2aV2.databaseUrlEnv`, and opens this deployment's
   ledger (its `taskQueue`) as the server does: the config's `buildId` and
-  `a2aV2.workflowIdFormat`. It runs the server's own additive migrations, so
-  on a database with no format marker it records what the server's first
-  start would. Do not run it with a config whose `workflowIdFormat` differs
-  from the one the running hosts use: like a server start, it would record
-  the config's format. It never starts the server.
+  `a2aV2.workflowIdFormat`. Every one of the three commands, the list
+  included, runs the server's full migrations: the additive DDL, the format
+  marker write and, in legacy format, the legacy-id backfill. So on a
+  database with no format marker it records what the server's first start
+  would. Do not run any of them with a config whose `workflowIdFormat`
+  differs from the one the running hosts use: like a server start, it would
+  record the config's format, and the guard trigger would then refuse the
+  running hosts' new start intents. Use the running hosts' own config. It
+  never starts the server. Whether these commands should leave the format
+  alone is an open owner question.
 - Output names workflow ids, recipient, who, when and why, never the database
   URL: `quarantined <id> for <recipient> by <by> at <at>: <reason>`,
   `already quarantined ...` (the first quarantine stands, unchanged),
@@ -455,6 +460,16 @@ loop orchestration v2-quarantine-list <config-path>
   (`deployment` NULL), can be quarantined, readable or not. A legacy row is
   recovered by every deployment sharing the database, and each deployment
   quarantines it separately.
+
+Quarantine and workflow id formats: a quarantine is not a terminal outcome,
+and recovery never settles a quarantined record. A quarantined
+deployment-format record therefore counts as unsettled, and every start with
+`a2aV2.workflowIdFormat` `"legacy"` (or none) is refused with "cannot return
+to legacy workflow ids" until the record is released and recovery records
+its outcome; releasing it is not enough. No outcome can be recorded by hand
+(owner question). So while a deployment-format record is quarantined, a
+return to legacy ids, including a rollback to the legacy-write default, is
+blocked. Plan the release before planning that rollback.
 
 Storage: table `loop_supervisor_message_v2_recovery_quarantine`, one active
 row per (workflow id, deployment); a release keeps the row with who, when and
@@ -575,7 +590,10 @@ section of the assignment GET. No config key was added after r4.
   outcome. If rows never settle (for example rows of a task queue that no
   longer runs), run a host on that task queue in `"deployment"` mode until
   its recovery settles them; otherwise stay on `"deployment"`. No override
-  exists. After a flip, 40097564 is not a rollback target.
+  exists. On the round-5 base a quarantined deployment-format record never
+  settles: release it and let recovery record its outcome first (see
+  "Recovery quarantine (round-5 base)"). After a flip, 40097564 is not a
+  rollback target.
 - To ef570282 (r3): not recommended. By code reading, untested: r3 always
   writes deployment-format intents (ef570282
   supervisor-message-v2-delivery-ledger.ts:636-664), so with the marker at

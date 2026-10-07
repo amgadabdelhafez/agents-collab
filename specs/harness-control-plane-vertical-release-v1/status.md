@@ -319,7 +319,8 @@ Still open on r4:
 State on claude/fix5-base-2026-10-06 ("round-5 base"), observed 2026-10-06:
 r4 (00094c66), plus the r4 runbook and decision docs (fc8cd748), plus
 claude/fix4-recovery-escape-path (26f91ac5) merged at 0ea648f9, plus the
-fixture fix de5e019d. Not merged into main and not installed; nothing here
+fixture fix de5e019d, plus the review repair commits after b721681a (a
+typed test query, two tests, these corrections). Not merged into main and not installed; nothing here
 has runtime evidence on a live host. Decision status is in decisions.md,
 "2026-10-06: round-5 base status and record corrections". Operator
 procedures, including the quarantine commands, are in
@@ -346,7 +347,11 @@ Closed since r4 (numbers refer to the r4 list above):
 
 - r4 item 1, the failing supervisor-a2a-v2-service test: fixed by de5e019d.
   The fixture needed a host buildId and the deployment workflow id format,
-  not only the buildId.
+  not only the buildId, because it runs its message under a deployment id.
+  The review repair runs the same test body in the legacy-write default too
+  (a legacy id, no format configured): "in the legacy-write default, every
+  V2 delivery path of one service defers a not-enrolled recipient under one
+  shared bound, log line, and counters".
 - r4 item 3, recovery refusal with no escape and no named record: the
   refusal now names each record and its quarantine command, is logged, and
   an operator can quarantine the record (merge 0ea648f9).
@@ -360,23 +365,37 @@ Still open on the round-5 base:
    claude/fix4-key-rotation (a54a21f4) is not merged.
 2. Decision 6 off by default: unchanged from r4 item 5 (owner question Q1).
 3. Returning to legacy when deployment rows never settle: unchanged from r4
-   item 6 (owner question on hand-recorded outcomes).
+   item 6 (owner question on hand-recorded outcomes). A quarantine makes
+   this more likely: a quarantine is not a terminal outcome, and recovery
+   never settles a quarantined record, so one quarantined deployment-format
+   record refuses every start with workflowIdFormat "legacy" (or none) until
+   it is released and recovery records its outcome. Releasing it alone is
+   not enough. Test: supervisor-message-v2-delivery-ledger "a quarantined
+   deployment-format record keeps blocking a return to legacy ids: a
+   quarantine is not a terminal outcome".
 4. Rollback limits: r4 item 7, plus: a build without the quarantine ignores
    it, so a quarantined failing record refuses that build's start, and it
    records a closed same-queue workflow-type conflict as `terminated`.
-5. The quarantine command opens the ledger with the config's
-   workflowIdFormat and runs the server's migrations, so run against a
-   database with no format marker it records the config's format, as a
-   server start would. Running it with a config whose format differs from
-   the running hosts' can change the recorded format. Documented in the
-   runbook; whether the command should be read-only for the format is not
-   decided.
+5. Every quarantine command, `v2-quarantine-list` included, opens the
+   ledger with the config's workflowIdFormat and runs the server's full
+   migrations, including the format marker write and the legacy-id
+   backfill. Run against a database with no format marker it records the
+   config's format, as a server start would. Run with a config whose format
+   differs from the running hosts' it can flip the recorded format, after
+   which the guard trigger refuses the running hosts' new start intents.
+   Documented in the runbook; whether the commands should be read-only for
+   the format is not decided (owner question).
 6. r4 items 8 to 11 (purged-before-marker executions, in-memory deferral
    state, receipt retention not configurable, pre-2b1b1893 bindings) are
    unchanged.
 7. Full-project `tsc -p loop-fork/tsconfig.json --noEmit` reports 282
-   errors on r4 and on the round-5 base (same set). 279 of them are the
-   40097564-era baseline; the other 3 are in the vendored, blob-pinned
+   errors on r4 and on the round-5 base after the review repair, the same
+   set by file, code and message (line numbers normalized). Correction: at
+   b721681a it reported 283; the extra one was a TS2769 in the new
+   orchestration-command test "v2-quarantine opens the ledger as the server
+   does", whose untyped SQL result the repair now types. The earlier "282,
+   same set" claim was measured before that test was added. 279 of the 282
+   are the 40097564-era baseline; the other 3 are in the vendored, blob-pinned
    fixtures under loop-fork/tests/fixtures/base-era-40097564: two are the
    same errors 40097564's own supervisor-message-v2-runtime.ts has at the
    same lines, and one is the type import of ./a2a-supervisor-result, a

@@ -577,3 +577,33 @@ Status on the round-5 base, where it differs from r4:
 Owner questions Q1, Q2 and the hand-recorded terminal outcome remain
 unanswered; the round-5 base keeps the conservative choices recorded above
 (legacy write by default, no seat IDs on /healthz, no override).
+
+## 2026-10-06: round-5 base review repair
+
+This is a status entry, not an owner decision. It corrects the round-5 base
+status entry above after review of b721681a; the decisions are unchanged.
+
+- Full-project tsc: the round-5 base status said 282 errors, the same set as
+  r4. At b721681a it was 283: the new orchestration-command test
+  "v2-quarantine opens the ledger as the server does: the config's build and
+  workflow id format" compared an untyped SQL result (TS2769). The repair
+  types the query; tsc reports 282 again, the same set as r4 00094c66 by
+  file, code and message.
+- Merge 0ea648f9's message says the regenerated Temporal workflow bundle's
+  decoded diff from r4 "equals" the escape path's decoded diff from
+  ef570282. That holds only up to a minifier identifier rename and the
+  inline source map; the code is equivalent, not byte-identical.
+- Decision 7 gains a limit: a quarantine is not a terminal outcome, so a
+  quarantined deployment-format record blocks every return to legacy
+  workflow ids until it is released and recovery records its outcome. Test:
+  supervisor-message-v2-delivery-ledger "a quarantined deployment-format
+  record keeps blocking a return to legacy ids: a quarantine is not a
+  terminal outcome". Documented in the runbook.
+- Every quarantine command, `v2-quarantine-list` included, runs the
+  server's full migrations, format marker write included. Whether the
+  commands should leave the format alone remains an owner question; the
+  runbook says to run them only with the running hosts' config.
+- The shared not-enrolled deferral test now also runs in the legacy-write
+  default: supervisor-a2a-v2-service "in the legacy-write default, every V2
+  delivery path of one service defers a not-enrolled recipient under one
+  shared bound, log line, and counters".
