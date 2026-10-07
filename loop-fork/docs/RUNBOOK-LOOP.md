@@ -548,6 +548,10 @@ All migrations run in `migrate()` on the first start and are additive
 
 ### Upgrade procedure
 
+An upgrade from a deployed build (the live orchestration service, the
+installed launcher lineage or origin/main) starts with the "Pre-upgrade
+checklist" below, which keeps that build a working rollback target.
+
 Conservative path: rolling back stays possible until an explicit flip. The
 steps name r4; they apply unchanged to the round-5 base, whose only additions
 are the quarantine table, the quarantine commands and the `recoveryQuarantine`
@@ -579,6 +583,11 @@ section of the assignment GET. No config key was added after r4.
    on this database and its recovery refuses deployment-format rows.
 
 ### Rollback procedure
+
+This subsection rolls back within the V2 line: to 40097564 (r2), ef570282
+(r3) or r4. None of them is deployed, installed or on origin/main. To return
+to a build that is actually deployed, see "Rollback to the deployed builds"
+below.
 
 - Before the flip (marker `legacy`, and the database never held a
   deployment-format row), to 40097564: stop the r4 hosts. Restore the 40097564
@@ -629,6 +638,374 @@ section of the assignment GET. No config key was added after r4.
   base-era ledger does not publish a result this build bound to its keyed
   graph, and the database refuses its re-bind of that message to its
   unkeyed graph").
+
+### Rollback to the deployed builds
+
+Written 2026-10-07 on claude/fix5-rollback-to-deployed (from the round-5
+base, c7646ed3). Tests: `tests/loop/orchestration-rollback-to-deployed.test.ts`.
+
+#### What is deployed (read-only checks, 2026-10-07)
+
+- The orchestration service is launchd job `com.harness.loop-orchestration`.
+  It runs `/Users/amgad/.loop/bin/loop-orchestration-serve`, which sources
+  the 0600 `~/.config/loop/orchestration.env` and execs
+  `${LOOP_BIN:-$HOME/.local/bin/loop} orchestration serve ~/.loop/orchestration/config.json`.
+  The running process (pid 1400, started 2026-10-05 14:41 PDT) executes
+  `/Users/amgad/.loop/bin/candidates/loop-ed33f43f`: its text inode is that
+  file's, and the file's sha256 is
+  `ed33f43f30e0b909ac30668e1084bf8d20d427beb44010acb6d565df3277c4e2`. The
+  service's activation packet (§2) records it as built from 455ccc32
+  (claude/orchestration-session-comms). 455ccc32 is not an ancestor of the
+  V2 line: the two share 4439b2e7 as merge base.
+- The installed launcher, `~/.local/bin/loop`, is sha256 `ba3671b6…`
+  (installed 2026-10-04 21:42 PDT), recorded as the installed candidate in
+  `specs/governess-qwen-location-v1/status.md` at ea968d82. It is not
+  678e2fde: that binary (built from 4439b2e7) is retained as
+  `~/.loop/release-backups/loop.pre-no-session-pressure.678e2fde.20261004T195614Z`
+  (hash checked). `~/.loop/binary-of-record.sha256` holds `9dac1029…`, which
+  is neither. 4439b2e7 and ea968d82 hold the same blob for the orchestration
+  server, every workflow file and the generated workflow bundle (cebd34d4),
+  so for orchestration they are one build. The service does not run this
+  binary unless `LOOP_BIN` is unset.
+- origin/main is dde60215: `git ls-remote origin main`, where `origin` is
+  the Forgejo remote `http://192.168.1.18:3100/amgad/agents-collab.git`.
+  The `github` remote (`https://github.com/amgadabdelhafez/agents-collab.git`)
+  has main at 31ff22a7, which diverged from dde60215 (merge base 0f69b9a9)
+  and has no `loop-orchestration-server.ts` at all, so it is no
+  orchestration build and no rollback target. In a checkout where `origin`
+  names GitHub, "origin/main" below still means the Forgejo main, dde60215.
+- No retained binary is recorded as built from dde60215: no install record
+  or backup name names it. Comparing hashes cannot settle it either way,
+  since no reference sha256 of a dde60215 build is recorded and bun-compiled
+  binaries are not reproducible. Rebuild from the commit if one is needed.
+- The activation packet's pre-activation config,
+  `~/.loop/orchestration/config.json.bak-20260920T004032Z` (sha256
+  `98bab79bf70c…`, mtime 2026-09-05), is still there; it is the config the
+  packet's rollback restores (§8, §8a, §11). Its key structure (values not
+  read): the base keys, no `deadlines`, no `a2aV2`, no `wake`; 12 grants;
+  three supervisors, `supervisor:harness`, `supervisor:harvto` and
+  `supervisor:ai-cur`, each exactly {manifestPath, principal, supervisorId,
+  tokenEnv}, with no mailbox. All three manifest paths exist; each of the
+  three `tokenEnv` names has exactly one line in the env file (lines
+  counted, never printed); address, buildId, hostname, identity, namespace,
+  port, schema, stateDir and taskQueue are equal to the live config's. A
+  second file, `config.json.bak-20260920T022206Z`, has the live config's
+  sha256 (`c0c925483a37…`), so it is a copy of today's mailbox config, not a
+  pre-activation one.
+- None of 455ccc32, 4439b2e7, ea968d82 or dde60215 holds any V2 code: no
+  `a2aV2`, no `supervisor-message.v2` workflow definition, no
+  `loop_supervisor_message_v2` table (`git grep`; the one textual match is a
+  replay fixture's worker label, `supervisor-message.v2-worker`).
+  Byte probes of `loop-ed33f43f` and `~/.local/bin/loop` find no `a2aV2` or
+  `supervisor-message.v2`, with `loop-orchestration-health.v1` as control.
+- The live config's key structure (values not read): top level
+  `deadlines` and the base keys; five supervisors, each exactly {mailbox,
+  principal, supervisorId, tokenEnv}, none with `manifestPath`; no `a2aV2`,
+  no `wake`.
+
+#### What each deployed build does with V2 state
+
+(a) A config this line wrote. Every deployed parser checks keys exactly and
+refuses to start, with no other effect. Tested against each build's own
+vendored parser:
+
+| Build | Refuses at top level ("orchestration config has invalid fields") | Refuses per supervisor ("orchestration supervisor has invalid fields") | Accepts |
+| --- | --- | --- | --- |
+| 455ccc32 (live service) | `a2aV2`, `wake` | `seat`, `wakeSession` | `deadlines`, `mailbox`, mailbox-only supervisors |
+| 4439b2e7 = ea968d82, dde60215 | `a2aV2`, `deadlines`, `wake` | `mailbox`, `seat`, `wakeSession`, and any supervisor without `manifestPath` | base keys only |
+
+So 4439b2e7, ea968d82 and dde60215 refuse the live service's config as it
+is today, V2 or not (test "the launcher lineage and origin/main cannot run
+the live service's config at all"). They do accept the live service's
+pre-activation config, the manifest-only file the activation packet's
+rollback restores, and read it as 455ccc32 and this build do (test "the
+activation packet's pre-activation config shape starts on every deployed
+build, which read it as this build does"). The packet's rollback has two
+halves (§8, §8a and §11): delete the `LOOP_BIN` line, so the wrapper falls
+back to `~/.local/bin/loop` (floor 678e2fde), and restore
+`config.json.bak-20260920T004032Z`, then kickstart. Done whole, it still
+works, as a degraded rollback of the live service: see Rollback B1. Done
+half, deleting the `LOOP_BIN` line while the mailbox config stays, it does
+not: the fallback binary refuses that config and launchd's KeepAlive
+(ThrottleInterval 10) restarts it every 10 seconds.
+
+(b) The V2 PostgreSQL database. No deployed build can open it. The
+orchestration server's import closure at each of the four commits contains
+no database client (computed over relative imports; only the retired DBOS
+replay files mention PostgreSQL, outside the closure, and they start their
+own container). `databaseUrlEnv` lives only in `a2aV2`, which every deployed
+parser refuses. So tables, the format marker, quarantine rows and result
+bindings stay exactly as the V2 build left them, and the variables named by
+`databaseUrlEnv` and `resultGraphKeyEnv` are ignored. Not exercised by a test,
+since there is no code to exercise.
+
+(c) Temporal executions this line left on the same task queue. All builds
+here register the generic workflow function `temporalWorkflow` and dispatch
+on a `workflowType` field inside the input. Tested on a real Temporal dev
+server with this build's committed bundle against each deployed build's
+workflow code, run twice: once as its commit's own committed generated
+bundle, read from git by pinned blob id (cebd34d4 at 4439b2e7 and ea968d82,
+which 455ccc32 also commits; 17cd45cd at dde60215), which is what a binary
+built from that commit embeds; once rebuilt from its dispatcher, vendored
+unmodified. Every worker is composed as the deployed servers compose
+theirs: `buildId` without versioning, `debugMode` on (`workflowExecution:
+"in-process"`).
+
+- `supervisor-message.v2` executions, under legacy and deployment ids, are
+  held, not failed. A deployed worker that gets one of their workflow tasks
+  fails the task with `unknown workflow type supervisor-message.v2`, and a
+  query fails with the same message. The execution stays RUNNING. The
+  TypeScript SDK fails only the task because the dispatcher throws a plain
+  `Error` subclass and no worker sets `workflowFailureErrorTypes`; with
+  `{"*": ["Error"]}` set, the test fails.
+- Expect noise for the whole rollback. History records one
+  WorkflowTaskFailed per held execution, but Temporal keeps retrying the
+  workflow task (the test checks that the pending task's attempt passes 1),
+  and each attempt logs a "workflow task failed" warning on the server and
+  the worker. Observed once on 2026-10-07, not asserted: with retries under
+  way, a query on a held execution sometimes waited 30 s and failed with
+  "Failed to query Workflow", and sometimes failed
+  at once; a reviewer saw about 10 s. A monitor or operator that queries
+  these executions sees errors or stalls, not answers.
+- Rolled forward, this build replays the history, applies any command that
+  arrived meanwhile (the test's cancel is recorded as `canceled`), and no
+  execution failed.
+- `task-graph.v1` (result graphs under `supervisor-result-graph:v3:` ids
+  included) and `supervisor-message.v1` run on both builds: the deployed
+  worker answers the same inspection this build did, applies a command, and
+  this build replays that history after rolling forward.
+- dde60215 has no `governess-beat.v1`. A beat execution on the same queue
+  would be held by the same mechanism (not separately tested). The live
+  service (455ccc32) commits the launcher lineage's bundle blob, so the
+  launcher lineage's run stands for it.
+
+Only the deployed builds' config parsers and workflow dispatchers ran. Their
+HTTP routes, bridge, mailbox and deadline code are stated below from code
+reading. The committed-bundle runs need a full clone: they read
+4439b2e7, ea968d82 and dde60215 from git, all ancestors of this line
+(test "each deployed commit commits the pinned generated workflow bundle
+blob"). 455ccc32 is on no remote, so its bundle blob (cebd34d4, checked
+with `git rev-parse` on 2026-10-07) is not pinned by a test.
+
+#### Rollback A: the live service to loop-ed33f43f (455ccc32)
+
+This is the full-function rollback for the live service: it keeps mailbox
+delivery and deadlines. The activation packet's own rollback to the
+launcher lineage remains available as a degraded alternative (Rollback B1).
+
+1. Check the binary: `shasum -a 256 /Users/amgad/.loop/bin/candidates/loop-ed33f43f`
+   prints `ed33f43f30e0b909ac30668e1084bf8d20d427beb44010acb6d565df3277c4e2`.
+2. Config: restore the pre-upgrade copy from the checklist:
+   `cp -p ~/.loop/orchestration/config.json.pre-v2-<UTC> ~/.loop/orchestration/config.json`.
+   Without a copy, edit the V2 config: delete top-level `a2aV2` and `wake`;
+   delete `seat` and `wakeSession` from every supervisor. Keep `deadlines`,
+   every `mailbox` and every mailbox-only supervisor. A supervisor with a
+   `manifestPath` added for the V2 recipient may stay. Each deletion is
+   needed and none more (tests "each rollback step is needed by 455ccc32 …"
+   and "455ccc32 … refuses to start on each key this line added that it does
+   not know, and only those"); 455ccc32 and this build read the result the
+   same way (test "455ccc32 … starts on the rolled-back config, which this
+   build reads the same way").
+3. Binary: rewrite, do not delete, the `LOOP_BIN` line, without printing the
+   file (it holds tokens):
+   `sed -i '' 's#^LOOP_BIN=.*#LOOP_BIN=/Users/amgad/.loop/bin/candidates/loop-ed33f43f#' ~/.config/loop/orchestration.env`,
+   then `grep -c '^LOOP_BIN=/Users/amgad/.loop/bin/candidates/loop-ed33f43f$' ~/.config/loop/orchestration.env`
+   prints 1. The V2 variables (database URL, result graph key) may stay in
+   that file for a later roll forward; 455ccc32 reads only each supervisor's
+   `tokenEnv`.
+4. Restart: `launchctl kickstart -k gui/$(id -u)/com.harness.loop-orchestration`.
+   It ends the V2 process before 455ccc32 starts, so the two never poll the
+   task queue together. Steps 2 and 3 come first: KeepAlive restarts the job
+   at once.
+5. Verify: `pgrep -fl 'orchestration serve'` names `loop-ed33f43f`, and
+   `lsof -p <pid>` shows that file's inode as text; `GET /healthz` answers
+   `{"schema":"loop-orchestration-health.v1","state":"ready"}`, with no
+   counts (a monitor that reads `notEnrolledCount` must tolerate its
+   absence); `~/.loop/logs/loop-orchestration.err` has no "has invalid
+   fields".
+6. Database: leave it. Do not drop, migrate or edit it. Whether a
+   decommissioned V2 deployment's rows may be closed by hand is an open owner
+   question; no override exists.
+7. V2 executions: leave them running. Do not terminate them: an execution the
+   engine closed while its message was open is recorded `terminated` at the
+   next V2 sweep (test "a sweep records terminated for an execution the
+   engine closed while its message was open",
+   supervisor-message-v2-temporal-retention.test.ts), so that message would
+   never be delivered after a roll forward. Do not signal or query them
+   while 455ccc32 runs: each attempt fails a workflow task or a query, and
+   a query may stall before it fails. Their workflow task retries and
+   "workflow task failed" warnings continue for as long as 455ccc32 runs
+   (see (c)); that noise is expected, not a new fault.
+   V1 messages and task graphs, result graphs included, keep running.
+8. A2A V2 senders: 455ccc32 mounts no route at `a2aV2.routePath`. A request
+   it does not authenticate answers 401 `{"error":{"code":"unauthorized"}}`;
+   one it does answers 404 `not-found` (400 `invalid-request` for a body
+   that is not JSON). Nothing is recorded, so a sender must retry after the
+   roll forward with the same dedupe key. By code reading
+   (supervisor-orchestration-http.ts:357-410 at 4439b2e7, the same blob at
+   455ccc32).
+9. What changes while rolled back, by code reading: no waking (`wake`,
+   `wakeSession` are gone); a supervisor whose `seat` named a pane other than
+   its run's `primaryAgent` is delivered to `primaryAgent`; /healthz carries
+   no counts; V1 delivery uses 455ccc32's bridge port, which lacks this line's
+   per-message bridge dedupe (`supervisor-delivery:<workflowId>`), so a V1
+   delivery in flight at the switch may reach the pane twice (untested).
+
+Roll forward again: put the V2 config back, point `LOOP_BIN` at the V2
+candidate, and kickstart. Held V2 executions resume (tested). How the V2
+runtime treats claim, retry and escalation deadlines that passed during the
+rollback is unverified.
+
+#### Rollback B: to the launcher lineage or origin/main
+
+Both cases end on a build without mailboxes, deadlines or V2 code: 678e2fde
+(4439b2e7), ba3671b6 (ea968d82) or a dde60215 build.
+
+##### B1: the live service, by the activation packet's own rollback (degraded)
+
+The packet's rollback (§8, §8a, §11), done whole: the launcher lineage
+binary with the pre-activation config. It starts (test "the activation
+packet's pre-activation config shape starts on every deployed build, which
+read it as this build does"), and the service ran on this config until
+2026-09-20, under an older image. Use it only when Rollback A is unavailable, for example when
+`loop-ed33f43f` is lost or is itself the suspect: it gives up mailbox
+delivery and deadlines.
+
+1. Keep what a later step needs: copy the V2 config for the roll forward,
+   `cp -p ~/.loop/orchestration/config.json ~/.loop/orchestration/config.json.v2-<UTC>`,
+   and keep the checklist's pre-V2 copy (`config.json.pre-v2-<UTC>`) for a
+   later move to Rollback A.
+2. Check the pre-activation config is still the one described above:
+   `shasum -a 256 ~/.loop/orchestration/config.json.bak-20260920T004032Z`
+   starts with `98bab79bf70c`; its three manifest paths exist; each of its
+   three `tokenEnv` names has one line in the env file
+   (`grep -c '^<NAME>=' ~/.config/loop/orchestration.env`, which prints a
+   count, not the value). Every deployed build refuses to start when a
+   configured `tokenEnv` is unset ("missing orchestration token
+   environment", vendored loop-orchestration-server.ts at each commit).
+3. Binary. The packet deletes the `LOOP_BIN` line, so the wrapper runs
+   `~/.local/bin/loop`. That path is shared with every other project and
+   changes on any install: on 2026-10-07 it is ba3671b6
+   (`ba3671b6a21b21159f5a639103c504a29251385eedcfac8b9932210666abf600`,
+   ea968d82). Pin the packet's floor explicitly instead, so the rollback
+   does not depend on what was installed last:
+   `sed -i '' 's#^LOOP_BIN=.*#LOOP_BIN=/Users/amgad/.loop/release-backups/loop.pre-no-session-pressure.678e2fde.20261004T195614Z#' ~/.config/loop/orchestration.env`,
+   after `shasum -a 256` of that file prints
+   `678e2fde4101ab93e50cb596adeedc4ab97460676e0a0e2a13f7fc8c5adb738a`.
+   Deleting the line, as the packet says, is equivalent only while
+   `~/.local/bin/loop` hashes as ba3671b6 or 678e2fde.
+4. Config: `cp -p ~/.loop/orchestration/config.json.bak-20260920T004032Z ~/.loop/orchestration/config.json`.
+   Steps 3 and 4 both come before step 5. Either one alone leaves a pair
+   that refuses to start: the launcher lineage refuses the mailbox config,
+   and KeepAlive restarts the refusing process every 10 seconds.
+5. Restart: `launchctl kickstart -k gui/$(id -u)/com.harness.loop-orchestration`.
+6. Verify: `pgrep -fl 'orchestration serve'` and `lsof -p <pid>` name the
+   pinned file as text; `GET /healthz` answers
+   `{"schema":"loop-orchestration-health.v1","state":"ready"}`;
+   `~/.loop/logs/loop-orchestration.err` has neither "has invalid fields"
+   nor "missing orchestration token environment".
+7. What is lost while rolled back, by code reading of the vendored
+   launcher-lineage server (it has no mailbox, deadline or mailbox-ack code
+   at all) unless a test is named:
+   - Mailbox delivery. `supervisor:harness-desktop` and
+     `supervisor:portfolio-coordinator` are not in the pre-activation
+     config, so their tokens no longer authenticate (401), and the 12 grants
+     predate them. An open V1 message addressed to either has no route: it
+     makes no progress unless a client ticks it, and each ticked attempt
+     fails transiently until `maxDeliveryAttempts`, when it is
+     dead-lettered (as in B2, step 2).
+   - Deadlines. No deadline driver runs, so claim, retry and escalation
+     deadlines apply only when a client ticks a message.
+   - Mailbox acknowledgments. Nothing reads the mailboxes, so an ack a
+     recipient writes there is not reported to its workflow until a build
+     with mailbox consumption runs again. Mailbox files and cursors are left
+     as they are: this build has no code that opens them.
+   - The three retired identities get their `manifestPath` back, which the
+     packet's §4.1 removed so that they "cannot route however their dead
+     runs change state". That protection is gone while rolled back.
+   - Everything in Rollback A, steps 6 to 9: the database is left as is,
+     V2 executions are held (with the retry noise in (c)), A2A V2 senders
+     get 401 or 404 and must retry after the roll forward, no waking, no
+     counts on /healthz.
+8. Leave it: roll forward to V2 with the `config.json.v2-<UTC>` copy and
+   `LOOP_BIN` on the V2 candidate, or move to Rollback A with the
+   `config.json.pre-v2-<UTC>` copy and `LOOP_BIN` on `loop-ed33f43f`. Each
+   is a config copy, a `LOOP_BIN` rewrite, then a kickstart. Messages
+   dead-lettered while rolled back stay dead-lettered.
+
+##### B2: another host on the launcher lineage or origin/main
+
+For a host whose pre-V2 build was one of those builds, and whose config
+therefore never had mailboxes or `deadlines`. No such orchestration host is
+known on 2026-10-07.
+
+1. Binary: 678e2fde is retained (path above); ba3671b6 is the installed
+   `~/.local/bin/loop`, and becomes a rollback target only if a copy is kept
+   before it is replaced; a dde60215 binary must be rebuilt from that commit.
+2. Config: restore the pre-upgrade copy. Without one, delete top-level
+   `a2aV2`, `deadlines` and `wake`; delete `mailbox`, `seat` and
+   `wakeSession` from every supervisor; delete every supervisor without
+   `manifestPath`. Each step is needed (tests "each rollback step is needed by
+   4439b2e7 = ea968d82 …" and "… by dde60215 …"). Also delete the grants that
+   name a deleted supervisor: the parser does not check them, so this is
+   hygiene, not a start condition. A V1 message to a deleted mailbox-only
+   recipient has no route on that build: each delivery attempt fails
+   transiently, and after `maxDeliveryAttempts` the message is dead-lettered
+   (by code reading of its bridge port and supervisor-message-workflow.ts).
+   These builds have no deadline driver, so attempts happen only when a
+   client ticks the message.
+3. Restart with the build's own service mechanism; the same database,
+   Temporal and A2A sender facts as in Rollback A, steps 6 to 9, apply.
+
+#### Pre-upgrade checklist
+
+Before the V2 line replaces the live service:
+
+1. Identify what runs, by inode and hash, not by name: `pgrep -fl
+   'orchestration serve'`, `lsof -p <pid>` (text entry), `shasum -a 256 <that
+   path>`. Map the hash to its source through its install record. On
+   2026-10-07 that is `loop-ed33f43f` from 455ccc32. Keep that file; do not
+   delete `~/.loop/bin/candidates/`. Keep the degraded fallback too
+   (Rollback B1): the retained 678e2fde binary in `~/.loop/release-backups`
+   and `~/.loop/orchestration/config.json.bak-20260920T004032Z`, each
+   checked against the sha256 given above.
+2. Copy the config byte for byte, and record the copy's sha256:
+   `cp -p ~/.loop/orchestration/config.json ~/.loop/orchestration/config.json.pre-v2-<UTC>`.
+   This copy, not an edited V2 config, is the Rollback A config.
+3. Check that the pin exists without printing the env file:
+   `grep -c '^LOOP_BIN=' ~/.config/loop/orchestration.env` prints 1. The
+   upgrade rewrites that line; a rollback rewrites it back.
+4. Back up the config's `stateDir` (`threads.jsonl`, `governance.jsonl`)
+   and each supervisor's mailbox file and cursor. The V2 line reads and
+   writes them with the same code as 455ccc32: supervisor-thread-store.ts,
+   supervisor-message-governance.ts, supervisor-mailbox-delivery.ts,
+   supervisor-mailbox-cursor.ts, supervisor-bridge-consumption.ts and
+   supervisor-deadline-driver.ts have the same blob at both, and
+   supervisor-mailbox-consumption.ts differs only in comment text
+   (`git diff 455ccc32 <V2 head>`: +8/-2, all inside one doc comment).
+5. Temporal: record the config's namespace and task queue. `temporal
+   task-queue describe --namespace <ns> --task-queue <queue>` lists only the
+   service's own poller. No other build may poll that queue while the V2
+   line runs: a deployed worker fails every V2 workflow task and query it
+   receives (test above). Record the open executions by type for comparison
+   afterwards.
+6. Config for the V2 line: the live config needs no change to run on it
+   (test "the live service's config shape needs no change to upgrade, and
+   this build reads it as the service does"). Adding `a2aV2` needs more than
+   the `a2aV2` object: its `recipient` must be a supervisor with a
+   `manifestPath`, a Loop pane binding, and the live config has none (test
+   "a2aV2 on the live service's config shape is refused: its recipient must
+   be a Loop pane binding"). Its `principal` must be a configured
+   supervisor's. Leave `workflowIdFormat` unset.
+7. Database and secrets: a database for the ledger, with a backup plan; its
+   URL and, if `resultArtifacts` is used, the result graph key in the 0600
+   env file through the secret procedure, never in the config or a command
+   line.
+8. Before any later step that blocks rollback (the format flip, owner
+   question Q1), take this checklist again: after the flip, a return to
+   legacy ids is refused while deployment-format intents are unsettled, but
+   a return to 455ccc32 is not affected, since 455ccc32 never opens the
+   database.
 
 ### Result graph key rotation on r4
 
@@ -791,3 +1168,27 @@ message under a deployment-scoped id. Quarantine files: orchestration-command
 supervisor-message-v2-delivery-ledger 45, loop-orchestration-server-postgres
 16, supervisor-a2a-v2-service 13, supervisor-a2a-result-binding 11, all
 pass.
+
+Rollback to the deployed builds, 2026-10-07 on claude/fix5-rollback-to-deployed
+with a real local Temporal dev server: orchestration-rollback-to-deployed 20
+tests, all pass. The vendored fixtures are `tests/fixtures/deployed-455ccc32`,
+`deployed-4439b2e7` and `deployed-dde60215`, each file pinned to its blob id.
+Mutations, each run and reverted: the deployed worker configured with
+`workflowFailureErrorTypes: {"*": ["Error"]}` (2 fail); the deployed phase
+run on this build's bundle instead of the vendored one (2 fail); a newline
+appended to a vendored workflow file (its blob test fails); `wake` dropped
+from the
+launcher-lineage rollback steps (6 fail); `wake` dropped from the live
+service's rollback steps (3 fail); `deadlines` added to them (2 fail).
+
+After review, 2026-10-07: 25 tests, all pass. Added: the pre-activation
+config shape test, the bundle pin and decoder tests, and the Temporal test
+run once more per deployed build on its committed generated bundle;
+workers now carry `buildId` and `debugMode`, and the Temporal test checks
+that held executions keep retrying. Mutations, each run and reverted
+byte for byte: `deadlines` added to the pre-activation shape (its test
+fails); the vendored dde60215 parser refusing `tokenEnv` (its test fails);
+the bundle decoder dropping its last chunk (3 fail: the decoder test and
+both committed-bundle Temporal runs); the launcher lineage pinned to
+dde60215's bundle blob (the pin test fails); `workflowFailureErrorTypes:
+{"*": ["Error"]}` on the deployed worker (all 4 Temporal runs fail).
