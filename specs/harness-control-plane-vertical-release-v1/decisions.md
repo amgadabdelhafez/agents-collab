@@ -493,3 +493,87 @@ or replaces it.
   This supersedes the 2026-10-05 corrections entry's statement that the
   exposure "stands until that branch lands": on r4 it has landed. ef570282
   still exposes the IDs, so rolling back to r3 would expose them again.
+
+## 2026-10-06: round-5 base status and record corrections
+
+This is a status entry, not an owner decision. It supersedes the statements
+named below; the decisions themselves are unchanged. The owner has not
+reviewed the quarantine (decision 7 follow-up entry above).
+
+Line: claude/fix5-base-2026-10-06 ("round-5 base"), from
+claude/fix4-runbook-docs (fc8cd748, which is r4 00094c66 plus docs). It adds
+claude/fix4-recovery-escape-path (4d3668fd to 26f91ac5), approved in round 4,
+in merge 0ea648f9, and the test-fixture fix de5e019d. It is not merged into
+main and is not installed. Still not merged anywhere:
+claude/fix4-key-rotation (a54a21f4).
+
+Test evidence: on 2026-10-06 the whole suite ran file by file at de5e019d
+and at r4 00094c66, with task-owned PostgreSQL and a local Temporal test
+server. Every test named below passed at de5e019d. No test fails there that
+passes at r4; the 17 failures it has fail at r4 too and are outside the A2A
+V2 area (status.md, "Open defects at the round-5 base").
+
+Corrections to earlier entries:
+
+- Branch pointers, observed 2026-10-06. claude/fix4-peer-degrade-healthz is
+  at d6392ce9; f3f8c2e1 is its first commit, not its head. The 2026-10-05
+  corrections entry names the branch as "f3f8c2e1, not merged, review
+  pending": the branch was reviewed and merged into r4 at 5f147810, so
+  /healthz carries `notEnrolledCount` and no seat IDs on r4 and on the
+  round-5 base. claude/fix4-deployment-rollback-safety (f50edf18), which the
+  decision 6 follow-up and its corrections entry call "not merged", was
+  merged into r4 at 6be93679. Neither branch is installed.
+- The 2026-10-06 r4 status entry says claude/fix4-recovery-escape-path points
+  at ef570282 with no commits of its own. It now points at 26f91ac5, the
+  same commit as claude/fix4-recovery-escape-path-r4.
+
+Status on the round-5 base, where it differs from r4:
+
+7. **Recovery skip narrowed to conflicts: implemented, both r4 limits
+   addressed.** A refused start names each failing record and its exact
+   quarantine command, and is logged; the service reports
+   `SupervisorMessageV2RecoveryStartupError`. An operator can quarantine the
+   record (`loop orchestration v2-quarantine`, `v2-quarantine-release`,
+   `v2-quarantine-list`). Only an execution on another task queue is
+   foreign; another workflow type on the host's own queue refuses startup,
+   running or closed, and a closed one records no outcome. The merge adapted
+   the quarantine command to r4's ledger: it opens the ledger with the
+   config's buildId and workflowIdFormat, as the server does, and prints a
+   workflow id format refusal verbatim. Tests (round-5 base):
+   supervisor-message-v2-delivery-ledger "an operator quarantine lets every
+   start skip a persistently failing record loudly, and its release returns
+   it to recovery" and "a quarantine records who, when and why durably,
+   refuses records that are not this deployment's open ones, and keeps
+   release history"; supervisor-message-v2-recovery "another workflow type
+   under the ID on this deployment's own queue is failed, not foreign", "a
+   CLOSED execution of another workflow type on this deployment's own queue
+   is failed, and records no outcome" and "a ledger row that fails the whole
+   initial sweep refuses startup naming its workflow and quarantine
+   command"; loop-orchestration-server-postgres "the orchestration server
+   refuses to start while its own queue holds another workflow type under a
+   recorded V2 id, names the quarantine command, and starts once an
+   operator quarantines it"; orchestration-command "v2-quarantine records,
+   lists and releases a quarantine in the configured deployment's PostgreSQL
+   ledger, printing no secret" and "v2-quarantine opens the ledger as the
+   server does: the config's build and workflow id format";
+   a2a-supervisor-assignment-http "assignment route reports quarantined
+   recovery records only to the authenticated control principal, for its
+   tenant".
+   - Limit: a build without the quarantine (r4 or older) ignores it and
+     handles a same-queue conflict the r3 way. See the runbook's rollback
+     procedure.
+   - Limit: quarantines are listed only on the authenticated assignment GET
+     and by `v2-quarantine-list`; nothing is added to /healthz while owner
+     question Q2 is open.
+9. **Session leftovers: implemented; the r4 failing test is fixed.**
+   de5e019d gives the supervisor-a2a-v2-service test "every V2 delivery path
+   of one service defers a not-enrolled recipient under one shared bound,
+   log line, and counters" a host buildId and opts the service in to
+   workflowIdFormat "deployment", because the test runs its message under a
+   deployment-scoped id. Both changes were needed: with a buildId alone the
+   test still failed at recordStartIntent. The ledger's build id guard and
+   the legacy-write default are unchanged.
+
+Owner questions Q1, Q2 and the hand-recorded terminal outcome remain
+unanswered; the round-5 base keeps the conservative choices recorded above
+(legacy write by default, no seat IDs on /healthz, no override).

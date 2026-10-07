@@ -134,20 +134,25 @@ One beat workflow per run is a single long-running execution, so its Temporal
 history grows without bound over a long run. Event-count limits and a
 `ContinueAsNew` boundary need a decision in the cutover slice.
 
-## A2A V2 control plane (r4 integration)
+## A2A V2 control plane (r4 integration and round-5 base)
 
 Written 2026-10-06 against claude/fix-integration-r4-2026-10-05 at
-00094c661fe6c1923737318d5e39d885d993b11c ("r4"). r4 is not merged into main
-and is not installed anywhere. Every `file:line` below is a path under
-`loop-fork/` at that commit. The owner decisions this section refers to are in
-`specs/harness-control-plane-vertical-release-v1/decisions.md` (repository
-root). Earlier lines it names: 40097564 ("r2", the last line before the
-keyed graph id and the deployment discriminator) and ef570282 ("r3").
+00094c661fe6c1923737318d5e39d885d993b11c ("r4"). Updated the same day for
+the round-5 base, claude/fix5-base-2026-10-06: r4, plus this runbook
+(fc8cd748), plus claude/fix4-recovery-escape-path (26f91ac5, the recovery
+quarantine) merged at 0ea648f9, plus the test-fixture fix de5e019d. Neither
+r4 nor the round-5 base is merged into main or installed anywhere. A
+`file:line` below is a path under `loop-fork/` at 00094c66 unless it is marked
+"(round-5 base)", which means at de5e019d. The owner decisions this section
+refers to are in `specs/harness-control-plane-vertical-release-v1/decisions.md`
+(repository root). Earlier lines it names: 40097564 ("r2", the last line
+before the keyed graph id and the deployment discriminator) and ef570282
+("r3").
 
-Not on r4, so not described here as available: result graph key rotation with
-previous keys (claude/fix4-key-rotation, 226e40c2 and a54a21f4) and the
-recovery quarantine CLI (claude/fix4-recovery-escape-path-r4, 4d3668fd to
-26f91ac5). Neither branch is merged into r4.
+Not on r4 or the round-5 base, so not described here as available: result
+graph key rotation with previous keys (claude/fix4-key-rotation, 226e40c2 and
+a54a21f4). The recovery quarantine CLI is on the round-5 base only; it is
+described under "Recovery quarantine (round-5 base)" below and is not on r4.
 
 ### Configuration keys added in rounds 3 and 4
 
@@ -322,6 +327,14 @@ Authenticated `GET <routePath>/assignment`, control principal only, returns
 derived (`body-chosen-graph`) or unreadable (`malformed`). It does not list a
 binding stranded by a key change (see rotation below).
 
+On the round-5 base the same GET also carries `"recoveryQuarantine": [...]`:
+this tenant's records an operator quarantined from recovery, each as
+`{"at", "by", "reason", "recipient", "workflowId"}` (round-5 base:
+a2a-supervisor-assignment-http.ts:72-128; supervisor-a2a-v2-service.ts:633-675).
+A quarantine never appears on /healthz, not even as a count (owner question Q2
+is open). A failing read of any section answers 503
+`{"code": "status-unavailable"}` with no cause.
+
 Readiness outage semantics (d6392ce9, supervisor-message-v2-runtime.ts:145-171):
 the bound is measured from the first failure a delivery observed for that
 recipient. An outage ends when the store answers for that recipient, or when
@@ -355,24 +368,109 @@ startup after every other record was recovered
 sweep retries a failing record with backoff min(interval x 2^(n-1), 10 min)
 and logs each transition (supervisor-message-v2-runtime.ts:697-733).
 
-Two limits on r4:
+Two limits on r4, both fixed on the round-5 base (next subsection):
 
 - The refusal reaches the operator only as `Supervisor A2A V2 service initialization failed at runtime-host (unclassified)`.
   `SupervisorMessageV2RecoveryStartupError` names every failing record, but it
   is not on the service's list of reportable error names and the runner does
   not log it (supervisor-a2a-v2-service.ts:316-327, 939-942;
   supervisor-message-v2-runtime.ts:652-661). r4 has no way to start past such
-  a record; the quarantine on claude/fix4-recovery-escape-path-r4 is not
-  merged. Find the record by its own symptom (database or Temporal error)
-  and repair it before restarting.
+  a record. On r4, find the record by its own symptom (database or Temporal
+  error) and repair it before restarting.
 - A conflict at start counts as foreign whatever its cause. That includes an
   execution of another workflow type on this host's own task queue: the port
   raises `WorkflowError (conflict): workflow <id> already exists as <type>`
-  (temporal-workflow-port.ts:150-156), and recovery skips it. The test "the
-  orchestration server starts when a recorded V2 workflow ID is held by a
-  foreign execution" (tests/loop/loop-orchestration-server-postgres.test.ts)
+  (temporal-workflow-port.ts:150-156), and recovery skips it. On r4 the test
+  "the orchestration server starts when a recorded V2 workflow ID is held by
+  a foreign execution" (tests/loop/loop-orchestration-server-postgres.test.ts)
   pins that skip for a running `supervisor-message.v1` execution on the same
   queue.
+
+### Recovery quarantine (round-5 base)
+
+On the round-5 base (merge 0ea648f9 of claude/fix4-recovery-escape-path,
+26f91ac5), recovery at start changes in three ways. Paths below are at the
+round-5 base.
+
+- Only an execution on another task queue is foreign. The port raises it as
+  `WorkflowForeignExecutionError`, still a `WorkflowError (conflict)` with
+  the message `workflow <id> belongs to another task queue`
+  (temporal-workflow-port.ts; workflow-port.ts), and recovery skips only that
+  (supervisor-message-v2-runtime.ts:503-511). Another workflow type under a
+  recorded id on this host's own queue is a failure: running, the port's
+  start refuses the type; closed, the coordinator refuses any status answer
+  that is not a `supervisor-message-status.v2` projection, so the other
+  type's state is never recorded as this message's terminal outcome
+  (supervisor-message-v2-runtime.ts:1552-1564).
+- A refused start names each failing record and the exact command that
+  quarantines it, and the runner logs it as well
+  (supervisor-message-v2-runtime.ts:543-567, 777-787):
+  `V2 initial recovery failed for <n> recorded start(s): workflow <id> for <recipient>: <error> [to start without it: loop orchestration v2-quarantine <config-path> <id> --reason '<why>']`.
+  The service reports the class:
+  `Supervisor A2A V2 service initialization failed at runtime-host (SupervisorMessageV2RecoveryStartupError)`
+  (supervisor-a2a-v2-service.ts:320-331). A start intent row that cannot be
+  read at all fails the whole sweep; at start it is refused the same way, by
+  its workflow id, with the recipient shown as `an unreadable recipient`
+  (supervisor-message-v2-runtime.ts:740-757).
+- An operator can quarantine such a record explicitly and durably. Recovery
+  then leaves it alone, does not retry it, and logs at every start
+  (supervisor-message-v2-runtime.ts:789-818):
+  `V2 recovery QUARANTINED workflow <id> for <recipient>: skipped until released (quarantined by <by> at <at>: <reason>); release it with: loop orchestration v2-quarantine-release <config-path> <id> --reason '<why>'`.
+  A release is logged once, `V2 recovery quarantine of workflow <id> for <recipient> was released; recovering it again`,
+  and the record is recovered as any other from the next sweep.
+
+Commands (src/loop/orchestration-command.ts:7-16, 43-111; loop-orchestration-server.ts:1570-1664):
+
+```
+loop orchestration v2-quarantine <config-path> <workflow-id> --reason <text> [--by <operator>]
+loop orchestration v2-quarantine-release <config-path> <workflow-id> --reason <text> [--by <operator>]
+loop orchestration v2-quarantine-list <config-path>
+```
+
+- `--by` defaults to the operating-system user running the command. `by` is
+  1-200 characters and `reason` 1-1000, with no control characters.
+- The command reads the config, takes the database URL from the environment
+  variable named by `a2aV2.databaseUrlEnv`, and opens this deployment's
+  ledger (its `taskQueue`) as the server does: the config's `buildId` and
+  `a2aV2.workflowIdFormat`. It runs the server's own additive migrations, so
+  on a database with no format marker it records what the server's first
+  start would. Do not run it with a config whose `workflowIdFormat` differs
+  from the one the running hosts use: like a server start, it would record
+  the config's format. It never starts the server.
+- Output names workflow ids, recipient, who, when and why, never the database
+  URL: `quarantined <id> for <recipient> by <by> at <at>: <reason>`,
+  `already quarantined ...` (the first quarantine stands, unchanged),
+  `released <id> for <recipient> (quarantined by <by> at <at>: <reason>)`,
+  and for the list `<id> for <recipient> quarantined by <by> at <at>: <reason>`
+  or `no quarantined V2 recovery records`.
+- Refusals: `V2 workflow <id> has no start intent recorded by this deployment`
+  (another deployment's record, or none), `V2 workflow <id> already has a
+  terminal outcome; recovery leaves it alone`, `V2 workflow <id> is not
+  quarantined` (release), `missing orchestration A2A V2 database environment
+  <VAR>`, and `orchestration A2A V2 ledger is unavailable` for any connection
+  or migration failure (no cause, which may carry credentials). A workflow id
+  format refusal is printed as `orchestration A2A V2 ledger refused: ` followed
+  by the exact ledger message listed under "Workflow id formats".
+- Only an open start intent of this deployment, its own or a legacy one
+  (`deployment` NULL), can be quarantined, readable or not. A legacy row is
+  recovered by every deployment sharing the database, and each deployment
+  quarantines it separately.
+
+Storage: table `loop_supervisor_message_v2_recovery_quarantine`, one active
+row per (workflow id, deployment); a release keeps the row with who, when and
+why as history (supervisor-message-v2-delivery-ledger.ts:566-584, 1015-1110).
+Status: the authenticated assignment GET lists this tenant's quarantines (see
+"Health and status surfaces"). A deployment without an assignment route has
+only the start-time log lines and `v2-quarantine-list`, which needs the
+database credential.
+
+Rollback and mixed versions: the table is additive. A build without it (r4,
+r3) ignores it, so it refuses startup on a quarantined failing record again
+and loses the escape. It also restores the r3/r4 handling of a same-queue
+workflow-type conflict: a running one is skipped as foreign, and a closed
+one is durably recorded as `terminated` from the other type's status. That
+record is not undone by upgrading again. Before rolling back, resolve each
+same-queue conflict the round-5 base reported.
 
 ### What existing rows and bindings do on upgrade
 
@@ -387,14 +485,19 @@ All migrations run in `migrate()` on the first start and are additive
   marker existed, with no completed delivery, cannot be told from a lost
   start and is restarted.
 - A database migrated by the 3f7a70f2 build: inside one transaction holding
-  ACCESS EXCLUSIVE on `loop_supervisor_message_v2_start_intent`, any
-  `terminal_outcome` CHECK that is not the current list is dropped, stored
-  `'completed'` is rewritten to `'acknowledged'`, and the CHECK
+  ACCESS EXCLUSIVE on `loop_supervisor_message_v2_start_intent`, migrate
+  decides whether the `terminal_outcome` CHECK is current. It is current when
+  one exists, no CHECK allows `'completed'`, and every CHECK allows every
+  current outcome; a CHECK widened to a superset of the current list (for
+  example by a newer build) is therefore current. A current CHECK is left in
+  place: the step takes the lock briefly and changes nothing. Otherwise (the
+  3f7a70f2 CHECK, a missing CHECK, or one missing a current outcome) every
+  `terminal_outcome` CHECK is dropped, stored `'completed'` is rewritten to
+  `'acknowledged'`, and the CHECK
   `loop_supervisor_message_v2_start_intent_terminal_outcome_check` over
   ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated') is
-  added. On a current database it takes the lock briefly and changes nothing.
-  If a stored value is outside the current list (for example a hand-widened
-  CHECK), adding the CHECK fails and migrate fails
+  added. Only in that replacement case can migrate fail: if a stored value is
+  outside the current list, adding the CHECK fails and so does migrate
   (supervisor-message-v2-delivery-ledger.ts:590-632).
 - Result bindings recorded under the unkeyed v2 graph of their own message
   are reserved once (marker `result-graph-task-backfill.v1`), keep publishing
@@ -415,10 +518,17 @@ All migrations run in `migrate()` on the first start and are additive
   seat's first rebind. The first migrate builds two seat indexes with plain
   CREATE INDEX, which blocks receipt writes while each index builds
   (supervisor-session-v2.ts:634-647).
+- Round-5 base only: migrate also creates the empty
+  `loop_supervisor_message_v2_recovery_quarantine` table and its partial
+  unique index (round-5 base: supervisor-message-v2-delivery-ledger.ts:566-584).
+  Nothing existing is rewritten.
 
 ### Upgrade procedure
 
-Conservative path: rolling back stays possible until an explicit flip.
+Conservative path: rolling back stays possible until an explicit flip. The
+steps name r4; they apply unchanged to the round-5 base, whose only additions
+are the quarantine table, the quarantine commands and the `recoveryQuarantine`
+section of the assignment GET. No config key was added after r4.
 
 1. Before: back up the ledger database. Stop every host that shares it, or
    plan one host at a time knowing that a host whose format another host
@@ -472,6 +582,14 @@ Conservative path: rolling back stays possible until an explicit flip.
   `legacy` the trigger refuses every new message r3 receives. r3 also puts
   seat ids back on unauthenticated /healthz (`notEnrolled`). Its config must
   drop `workflowIdFormat` and `notEnrolledBoundMs`.
+- From the round-5 base to r4 (or to any older build): every limit above
+  applies, plus those under "Recovery quarantine (round-5 base)": the older
+  build ignores quarantines, so a quarantined failing record refuses its
+  start again, and a closed same-queue workflow-type conflict is recorded as
+  `terminated`. Before rolling back, resolve the cause of every quarantined
+  record (`loop orchestration v2-quarantine-list <config-path>`) and every
+  same-queue conflict; a record that still fails refuses the older build's
+  start.
 
 ### Result graph key rotation on r4
 
@@ -522,3 +640,16 @@ log line, and counters". Its fixture passes `host: {taskQueue}` with no
 requirement from ae877039; they first meet on r4. It is a test-fixture
 defect: the server always passes the config's required `buildId`
 (loop-orchestration-server.ts:1321).
+
+Round-5 base, 2026-10-06 at de5e019d, whole suite file by file with
+task-owned PostgreSQL and Temporal: 2533 tests, 2516 pass, 17 fail, and all
+17 fail at r4 too, outside the A2A V2 area (loop.test, tmux,
+governed-supervisor-message, native-subagent, seat-pane-identity,
+utility-composed-release). The not-enrolled test above passes: de5e019d gives
+its fixture a host `buildId` and the `"deployment"` workflow id format; a
+`buildId` alone still failed at recordStartIntent, because the test runs its
+message under a deployment-scoped id. Quarantine files: orchestration-command
+7, a2a-supervisor-assignment-http 9, supervisor-message-v2-recovery 43,
+supervisor-message-v2-delivery-ledger 45, loop-orchestration-server-postgres
+16, supervisor-a2a-v2-service 13, supervisor-a2a-result-binding 11, all
+pass.

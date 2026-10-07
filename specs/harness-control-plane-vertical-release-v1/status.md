@@ -220,6 +220,9 @@ list claims a fix3 change.
 
 ### Open defects at r4 (added 2026-10-06)
 
+(Superseded the same day for current state by "Open defects at the round-5
+base" below. This list stays as the record of 00094c66.)
+
 State on claude/fix-integration-r4-2026-10-05 at
 00094c661fe6c1923737318d5e39d885d993b11c ("r4"), observed 2026-10-06. r4 is
 not merged into main and is not installed; nothing here has runtime evidence
@@ -249,7 +252,7 @@ The four r2 review defects:
   (d6dbd978).
 - Purge re-run: closed for executions that end after the marker exists. The
   3f7a70f2 CHECK edge case is fixed (903dfe1b). The deployment discriminator
-  exists but is off by default (item 4).
+  exists but is off by default (item 5).
 - Session re-enrollment: closed. Per-seat degrade, receipt retention and
   readiness across renewal are on r4 (c41b459d, 00845464, f3f8c2e1,
   d6392ce9). Item 1 is a failing test in this area.
@@ -310,3 +313,73 @@ Still open on r4:
 11. Body-chosen and malformed bindings recorded before 2b1b1893 stay
     unpublishable until an operator re-binds each message; they are logged
     at every start and listed by the authenticated assignment GET.
+
+### Open defects at the round-5 base (added 2026-10-06)
+
+State on claude/fix5-base-2026-10-06 ("round-5 base"), observed 2026-10-06:
+r4 (00094c66), plus the r4 runbook and decision docs (fc8cd748), plus
+claude/fix4-recovery-escape-path (26f91ac5) merged at 0ea648f9, plus the
+fixture fix de5e019d. Not merged into main and not installed; nothing here
+has runtime evidence on a live host. Decision status is in decisions.md,
+"2026-10-06: round-5 base status and record corrections". Operator
+procedures, including the quarantine commands, are in
+loop-fork/docs/RUNBOOK-LOOP.md, "A2A V2 control plane (r4 integration and
+round-5 base)".
+
+Tests: on 2026-10-06 every one of the 153 test files was run on its own
+(`LOOP_TEST_CERTIFICATION_MODE=single-file bun test <file>`), continuing
+past failures, with task-owned PostgreSQL containers and the local Temporal
+test server, at de5e019d and at r4 (00094c66, a `git archive` copy). The
+round-5 base: 2533 tests, 2516 pass, 17 fail. r4: 2514 tests, 2488 pass, 26
+fail. No test fails at the round-5 base that passes at r4; no r4 test is
+missing at the round-5 base. The 17 failures are the same tests at r4, in
+tests/loop.test.ts (7), tmux (5), governed-supervisor-message (2),
+native-subagent (1), seat-pane-identity (1) and utility-composed-release (1);
+none is in the A2A V2 area. Fixed at the round-5 base: the
+supervisor-a2a-v2-service not-enrolled test. Failing only in the r4 archive
+copy, which has no .git and a longer path: git-result-artifact (6), one
+governess board test and one memory-checkpoint test. `bun run
+typecheck:a2a` passes; `bun run check` reports only the 10 known errors in
+loop-fork/scripts/vertical-cleanup-*.ts.
+
+Closed since r4 (numbers refer to the r4 list above):
+
+- r4 item 1, the failing supervisor-a2a-v2-service test: fixed by de5e019d.
+  The fixture needed a host buildId and the deployment workflow id format,
+  not only the buildId.
+- r4 item 3, recovery refusal with no escape and no named record: the
+  refusal now names each record and its quarantine command, is logged, and
+  an operator can quarantine the record (merge 0ea648f9).
+- r4 item 4, same-queue workflow-type conflict counted as foreign: refused
+  instead, running or closed; a closed one records no outcome (merge
+  0ea648f9).
+
+Still open on the round-5 base:
+
+1. Result graph key rotation: unchanged from r4 item 2.
+   claude/fix4-key-rotation (a54a21f4) is not merged.
+2. Decision 6 off by default: unchanged from r4 item 5 (owner question Q1).
+3. Returning to legacy when deployment rows never settle: unchanged from r4
+   item 6 (owner question on hand-recorded outcomes).
+4. Rollback limits: r4 item 7, plus: a build without the quarantine ignores
+   it, so a quarantined failing record refuses that build's start, and it
+   records a closed same-queue workflow-type conflict as `terminated`.
+5. The quarantine command opens the ledger with the config's
+   workflowIdFormat and runs the server's migrations, so run against a
+   database with no format marker it records the config's format, as a
+   server start would. Running it with a config whose format differs from
+   the running hosts' can change the recorded format. Documented in the
+   runbook; whether the command should be read-only for the format is not
+   decided.
+6. r4 items 8 to 11 (purged-before-marker executions, in-memory deferral
+   state, receipt retention not configurable, pre-2b1b1893 bindings) are
+   unchanged.
+7. Full-project `tsc -p loop-fork/tsconfig.json --noEmit` reports 282
+   errors on r4 and on the round-5 base (same set). 279 of them are the
+   40097564-era baseline; the other 3 are in the vendored, blob-pinned
+   fixtures under loop-fork/tests/fixtures/base-era-40097564: two are the
+   same errors 40097564's own supervisor-message-v2-runtime.ts has at the
+   same lines, and one is the type import of ./a2a-supervisor-result, a
+   file that was not vendored. The repository has no tsc gate and no
+   precedent for excluding files from tsconfig, so the fixtures were not
+   excluded.
