@@ -337,7 +337,10 @@ missing at the round-5 base. The 17 failures are the same tests at r4, in
 tests/loop.test.ts (7), tmux (5), governed-supervisor-message (2),
 native-subagent (1), seat-pane-identity (1) and utility-composed-release (1);
 none is in the A2A V2 area. Fixed at the round-5 base: the
-supervisor-a2a-v2-service not-enrolled test. Failing only in the r4 archive
+supervisor-a2a-v2-service not-enrolled test. After the review repair
+(9c3ab4df), the same file-by-file run: 2535 tests (the two new ones
+included), 2518 pass, 17 fail, the same 17 test names that fail when those
+6 files run at r4. Failing only in the r4 archive
 copy, which has no .git and a longer path: git-result-artifact (6), one
 governess board test and one memory-checkpoint test. `bun run
 typecheck:a2a` passes; `bun run check` reports only the 10 known errors in
