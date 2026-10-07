@@ -1399,6 +1399,41 @@ describe("V2 workflow id format marker on PostgreSQL", () => {
     ).toBe(formatRefusal("legacy", "flip-back-build.v2", "deployment"));
   });
 
+  test("a quarantined deployment-format record keeps blocking a return to legacy ids: a quarantine is not a terminal outcome", async () => {
+    const { marker, open } = await sharedDatabase();
+    const flipped = await open("quarantine-flip-build.v1", "deployment");
+    await flipped.migrate();
+    const stuck = inputFor(`quarantined-flip-back-${randomUUID()}`);
+    const stuckId = workflowIdOf(stuck);
+    await flipped.recordStartIntent(stuckId, SCOPE, stuck);
+    await flipped.quarantineRecovery(stuckId, {
+      by: "operator-a",
+      reason: "fails every start",
+    });
+    const refusal =
+      'V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle';
+
+    // Quarantined: still counted, so legacy ids stay refused.
+    const whileQuarantined = await open("quarantine-flip-back.v1", "legacy");
+    expect(await refusalOf(whileQuarantined.migrate())).toBe(refusal);
+    // Released but not yet settled: still refused.
+    await flipped.releaseRecoveryQuarantine(stuckId, {
+      by: "operator-a",
+      reason: "fixed the recipient",
+    });
+    const released = await open("quarantine-flip-back.v2", "legacy");
+    expect(await refusalOf(released.migrate())).toBe(refusal);
+    expect(await marker()).toEqual([
+      { build_id: "quarantine-flip-build.v1", value: "deployment" },
+    ]);
+
+    // Only a terminal outcome, recorded by recovery, settles it.
+    await flipped.recordTerminalOutcome(stuckId, SCOPE, "acknowledged");
+    const settled = await open("quarantine-flip-back.v3", "legacy");
+    await settled.migrate();
+    expect(settled.workflowIdFormat).toBe("legacy");
+  });
+
   test("a return to legacy ids waits for a deployment-format write in flight and counts it", async () => {
     const { marker, open, sql } = await sharedDatabase();
     const flipped = await open("flip-build.v1", "deployment");

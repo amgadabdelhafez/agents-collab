@@ -395,7 +395,9 @@ test("v2-quarantine opens the ledger as the server does: the config's build and 
     expect(await run("v2-quarantine-list", configPath)).toBe(true);
     await sql.connect();
     expect(
-      await sql`SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`
+      await sql<
+        { build_id: string; value: string }[]
+      >`SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`
     ).toEqual([{ build_id: "loop-orchestration.v1", value: "deployment" }]);
     // A deployment-format record of this deployment is quarantined by id.
     ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(

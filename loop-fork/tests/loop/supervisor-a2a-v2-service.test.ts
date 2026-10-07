@@ -22,6 +22,7 @@ import {
 } from "../../src/loop/supervisor-a2a-v2-service";
 import {
   deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
+  deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
@@ -2025,7 +2026,10 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
   }
 }, 120_000);
 
-test("every V2 delivery path of one service defers a not-enrolled recipient under one shared bound, log line, and counters", async () => {
+/** The shared not-enrolled deferral, with the host writing `format` ids. */
+const deferNotEnrolledOnEveryPath = async (
+  format: "deployment" | "legacy"
+): Promise<void> => {
   const [fixture] = supervisorMessageV2ReplayFixtures;
   if (!fixture) {
     throw new Error("missing V2 fixture");
@@ -2077,9 +2081,12 @@ test("every V2 delivery path of one service defers a not-enrolled recipient unde
       peerRoutes: [{ pathname: "/a2a/seats/peer", supervisorId: PEER }],
       policy: POLICY,
       providerReadiness: { ready: () => ({}) as never },
-      // The message below runs under its deployment-scoped id: the host has
-      // opted in.
-      workflowIdFormat: "deployment",
+      // The message below runs under an id of the format this host writes:
+      // deployment ids by explicit opt-in, legacy ids by the shipping
+      // default (no format configured).
+      ...(format === "deployment"
+        ? { workflowIdFormat: "deployment" as const }
+        : {}),
       rebindAuthority: {
         decide: () => ({
           allowed: false,
@@ -2148,14 +2155,18 @@ test("every V2 delivery path of one service defers a not-enrolled recipient unde
       dedupeKey: "shared-not-enrolled",
       policy: POLICY,
     };
-    const workflowId = deriveSupervisorMessageV2WorkflowId(
-      scope,
-      input.dedupeKey,
-      "shared-not-enrolled-queue"
-    );
+    const workflowId =
+      format === "deployment"
+        ? deriveSupervisorMessageV2WorkflowId(
+            scope,
+            input.dedupeKey,
+            "shared-not-enrolled-queue"
+          )
+        : deriveSupervisorMessageV2LegacyWorkflowId(scope, input.dedupeKey);
     if (!ledger) {
       throw new Error("ledger was not connected");
     }
+    expect(ledger.workflowIdFormat).toBe(format);
     await ledger.recordStartIntent(workflowId, scope, input);
     await workflows.start({
       input: { input, trustedScope: scope },
@@ -2221,6 +2232,14 @@ test("every V2 delivery path of one service defers a not-enrolled recipient unde
     await service?.close().catch(() => undefined);
     await postgres?.close();
   }
+};
+
+test("every V2 delivery path of one service defers a not-enrolled recipient under one shared bound, log line, and counters", async () => {
+  await deferNotEnrolledOnEveryPath("deployment");
+}, 120_000);
+
+test("in the legacy-write default, every V2 delivery path of one service defers a not-enrolled recipient under one shared bound, log line, and counters", async () => {
+  await deferNotEnrolledOnEveryPath("legacy");
 }, 120_000);
 
 test("a stopped PostgreSQL session store defers a delivery with one log line until the outage bound, then fails it as a retryable attempt", async () => {
