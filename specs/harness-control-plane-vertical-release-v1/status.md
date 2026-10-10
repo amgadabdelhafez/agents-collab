@@ -412,3 +412,45 @@ Still open on the round-5 base:
    file that was not vendored. The repository has no tsc gate and no
    precedent for excluding files from tsconfig, so the fixtures were not
    excluded.
+
+### Status at r5 integration (added 2026-10-09)
+
+claude/fix-integration-r5-2026-10-06 at 9b3dca36 ("r5 integration") is the
+round-5 base (c7646ed3) plus claude/fix5-key-rotation (merge 8e965197),
+claude/fix5-rollback-to-deployed (merge 76a1fa32) and
+claude/fix5-temporal-replay (merge 9b3dca36). Not merged into main and not
+installed; nothing here has runtime evidence on a live host. Owner decisions
+of 2026-10-09 and the record corrections are in decisions.md, "2026-10-09:
+owner decisions on the round-5 open questions" and "2026-10-09: corrections
+to the round-5 records".
+
+Changes to the round-5 list above:
+
+1. Key rotation (item 1) is merged into r5 integration, not into main.
+   Two settled-check mutants survived its tests; claude/fix6-runbook-tests
+   adds the two tests that kill them.
+2. Decision 6 off by default (item 2) and no way back to legacy while
+   deployment rows stay unsettled (item 3) are now owner decisions, not
+   open questions: legacy write ships with no flip, and no terminal outcome
+   is recorded by hand. Both stay limits.
+3. New open question: the owner's 2026-10-09 decision to strip the retired
+   identities' `manifestPath` from a copy before Rollback B1 cannot start on
+   B1's builds as worded (decisions.md, decision 9 of that entry).
+4. Unchanged: whether the quarantine commands should leave the recorded
+   format alone (item 5), r4 items 8 to 11 (item 6).
+5. Full-project `tsc -p loop-fork/tsconfig.json --noEmit` reports 325 errors
+   at r5 integration with claude/fix6-runbook-tests' changes (2026-10-09),
+   against 282 at the round-5 base. None is in the test file that branch
+   changes. The difference, 43, equals the errors in the vendored
+   deployed-build fixtures claude/fix5-rollback-to-deployed added
+   (tests/fixtures/deployed-455ccc32 22, deployed-4439b2e7 11,
+   deployed-dde60215 10); matched by count only, not error by error.
+6. New open risk, pre-existing on the V2 line (found on review,
+   2026-10-09): a bridge dedupe claim file
+   (`<runDir>/bridge-dedupe-claims/<sha256>.lock`) left by a process that
+   died inside a keyed enqueue is never recovered, so every later enqueue
+   of that message answers `deferred` until someone removes the file
+   (bridge-store.ts `acquireBridgeDedupeClaim`; reproduced in a scratch run
+   directory). The runbook now has operators check for stale files around
+   an upgrade, a rollback and a roll forward. A code fix (stale-owner
+   recovery by pid or age) is not on this branch or on r5 integration.

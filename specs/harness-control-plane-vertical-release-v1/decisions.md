@@ -607,3 +607,233 @@ status entry above after review of b721681a; the decisions are unchanged.
   default: supervisor-a2a-v2-service "in the legacy-write default, every V2
   delivery path of one service defers a not-enrolled recipient under one
   shared bound, log line, and counters".
+
+## 2026-10-09: owner decisions on the round-5 open questions
+
+The user accepted these ten decisions on 2026-10-09. They answer owner
+questions Q1 and Q2 and the hand-recorded terminal outcome question, and
+supersede the 2026-10-06 entry "conservative choices pending owner
+confirmation": its choices are now decisions, not placeholders. Status is
+given at r5 integration (claude/fix-integration-r5-2026-10-06, 9b3dca36),
+plus the tests added on claude/fix6-runbook-tests. Nothing here is merged
+into main or installed, and nothing has runtime evidence on a live host.
+
+The owner's list, verbatim as the task relayed it (added on review,
+2026-10-09, so a reader can check each decision below against it): "keep
+legacy-write id format, no flip; no seat ids on unauthenticated /healthz;
+no hand-recorded terminal outcomes; legacy-write is the shipping default;
+accept the bound_by_deployment column; accept the database refusing
+40097564's re-bind on rollback; a missing task or a COMPLETED task without
+its accepted artifact stays unsettled; pin LOOP_BIN to the retained
+678e2fde binary in the activation rollback; strip retired identities'
+manifestPath from a copy before Rollback B1; replay test keeps failing (not
+skipping) on shallow clones". In that order they are decisions 1, 3, 4, 2,
+5, 6, 7, 8, 9 and 10 below.
+
+1. **Keep the legacy-write workflow id format; no flip (Q1).** Status:
+   accepted, in effect by default. A host with `a2aV2.workflowIdFormat`
+   unset writes legacy ids and the database marker records `legacy`
+   (ae877039, f50edf18), so 40097564 stays a rollback target for the
+   workflow id path. The flip to `"deployment"` remains an operator setting
+   but is not part of the shipping path. Accepted cost: decision 6's
+   isolation of hosts on different task queues sharing one ledger database
+   stays off. Runbook: upgrade procedure, step 5.
+2. **Legacy write is the shipping default.** Status: accepted, in effect.
+   Tests: supervisor-message-v2-delivery-ledger "rollback: the real base-era
+   ledger migrates, recovers, deduplicates and records over default
+   legacy-write rows, and this build reads its rows back";
+   supervisor-a2a-v2-service "in the legacy-write default, every V2
+   delivery path of one service defers a not-enrolled recipient under one
+   shared bound, log line, and counters"; temporal-bundle-replay's handoffs
+   run this line in legacy format ("the shipping default").
+3. **No seat ids on unauthenticated /healthz (Q2).** Status: accepted, in
+   effect since r4 (f3f8c2e1, merge 5f147810). /healthz carries
+   `notEnrolledCount` and counters only; seat and recipient ids are on the
+   authenticated assignment GET. Test: loop-orchestration-server
+   "unauthenticated /healthz names no seat or recipient while seats are not
+   enrolled and deliveries wait". ef570282 (r3) still exposes them, so a
+   rollback to r3 would too.
+4. **No hand-recorded terminal outcomes.** Status: accepted, in effect: no
+   command, route or override records a terminal outcome by hand. Accepted
+   with it: a return to legacy ids is refused while any deployment-format
+   start intent is unsettled; a quarantined deployment-format record blocks
+   that return until it is released and recovery records its outcome
+   (decision 7 limit); a decommissioned deployment's rows are left as they
+   are (runbook, Rollback A step 6).
+5. **Accept the `bound_by_deployment` column.** Status: accepted, on
+   claude/fix5-key-rotation and r5 integration: an additive column of
+   `loop_supervisor_message_v2_result_binding`, added only when absent
+   (supervisor-message-v2-delivery-ledger.ts:1145-1149 at 9b3dca36), naming
+   the deployment (task queue) that recorded each binding. Test:
+   supervisor-a2a-result-key-rotation "two deployments holding different
+   result graph keys on one database each classify, list and report only
+   their own bindings".
+6. **Accept that the database refuses 40097564's re-bind on rollback.**
+   Status: accepted, on claude/fix5-key-rotation and r5 integration: the
+   binding immutability trigger refuses an older build's overwrite of a
+   binding recorded under a key, including 40097564's re-bind of a keyed
+   binding to its unkeyed v2 graph. Such a result publishes only after a
+   roll forward. Tests: supervisor-message-v2-delivery-ledger "rollback
+   limit: the base-era ledger does not publish a result this build bound to
+   its keyed graph, and the database refuses its re-bind of that message to
+   its unkeyed graph"; supervisor-a2a-result-key-rotation "a binding
+   recorded under a key is immutable in the database, so an older build
+   sharing it cannot overwrite it".
+7. **A missing A2A task, or a COMPLETED task without the message's accepted
+   artifact, stays unsettled.** Status: accepted, in effect
+   (supervisor-a2a-v2-service.ts `settledResultBinding`; the ledger's
+   `#unsettled` also keeps a binding whose check fails). Tests: a missing
+   task, supervisor-a2a-result-key-rotation "a host holding no result graph
+   key names the key to configure for a binding derived under a key it does
+   not hold" and "with legacy workflow ids, whose messages name no
+   deployment, …" (both fail when a missing task counts as settled). Added
+   on claude/fix6-runbook-tests: "a COMPLETED A2A task without the message's
+   accepted artifact does not settle that message's binding: only the
+   artifact or an ending without a result does" and "a settled check that
+   cannot read the A2A task store keeps the binding listed and reported: a
+   failing read never hides a binding under a previous or removed key".
+   Mutation proof in the next entry.
+8. **Pin LOOP_BIN to the retained 678e2fde binary in the activation
+   rollback.** Status: accepted, in the runbook: Rollback B1 step 3
+   rewrites the `LOOP_BIN` line to
+   `~/.loop/release-backups/loop.pre-no-session-pressure.678e2fde.20261004T195614Z`
+   after checking its sha256, instead of deleting the line as the
+   activation packet does. A procedure only; nothing was run against live
+   state.
+9. **Strip the retired identities' `manifestPath` from a copy of the
+   config before Rollback B1.** Status: accepted, not applied; conflicts
+   with tested behaviour of B1's builds; open question for the owner. The
+   retired identities (supervisor:harness, supervisor:harvto,
+   supervisor:ai-cur) are the only supervisors of the pre-activation config
+   B1 restores. Every B1 build (4439b2e7 = ea968d82, dde60215) requires an
+   absolute `manifestPath` on every supervisor and at least one supervisor
+   (vendored loop-orchestration-server.ts, `parseLoopOrchestrationConfig`),
+   and refuses a supervisor without one (orchestration-rollback-to-deployed
+   "each rollback step is needed by 4439b2e7 = ea968d82 (installed launcher
+   lineage)" and "each rollback step is needed by dde60215 (origin/main)":
+   their step removing supervisors without `manifestPath` is needed because
+   the builds refuse such a supervisor). A stripped copy is therefore
+   refused at start, and so is a copy with the three supervisors removed
+   ("orchestration supervisors are required"). The runbook records the
+   decision and this conflict at B1 and keeps its tested steps. Options for
+   the owner, none taken: point each retired identity's `manifestPath` at a
+   manifest no run writes; keep B1 as it is; or retire B1 and rely on
+   Rollback A only.
+10. **The replay test keeps failing, not skipping, on a shallow clone.**
+    Status: accepted, in effect: tests/support/temporal-replay-builds.ts
+    extracts each earlier commit's source and fails when the commit is not
+    in the clone. Exercised on review, 2026-10-09: in a `git clone --depth
+    1` of claude/fix6-runbook-tests (fb00559b, 40097564 and ef570282
+    absent) the file reports 26 pass, 3 fail, 0 skip; the three failures
+    are the live handoffs, each with `git archive ... failed (128): fatal:
+    not a tree object`.
+
+## 2026-10-09: corrections to the round-5 records
+
+A status entry, not an owner decision. Each item names the claim, what
+holds, and the evidence, all at r5 integration (9b3dca36) on 2026-10-09
+with task-owned PostgreSQL and a local Temporal dev server, every mutation
+applied on its own and reverted byte for byte.
+
+- Runbook, upgrade procedure: "No config key was added after r4" was
+  written for the round-5 base. r5 integration adds
+  `a2aV2.previousResultGraphKeyEnvs` (claude/fix5-key-rotation, merge
+  8e965197); it is the only `a2aV2` key added since r4 (`git diff 00094c66
+  9b3dca36 -- loop-fork/src/loop/loop-orchestration-server.ts`).
+- Runbook, upgrade step 1: "all 29 pass on the round-5 base". Right about
+  the code, wrong about where the file is. The replay test is not in the
+  round-5 base commit c7646ed3; it is on claude/fix5-temporal-replay
+  (c2ea0eae) and r5 integration. c2ea0eae is c7646ed3 plus test files, the
+  history recorder script and the runbook only (`git diff --stat c7646ed3
+  c2ea0eae -- loop-fork/src` is empty), so the 29 that passed there on
+  2026-10-07 checked the round-5 base's own bundle. All 29 also pass at
+  9b3dca36 (2026-10-09). r4 (00094c66) is the build that was never
+  checked: its committed bundle and workflow port differ from c7646ed3's.
+  Corrected on review, 2026-10-09: the first version of this bullet, and
+  of the runbook step (fb00559b), said the round-5 base "was not checked
+  this way" and told operators not to upgrade to it with executions in
+  flight. That was false; the step now keeps that instruction for r4 only.
+- Runbook, upgrade step 3: "Start every host on r4" now names the candidate
+  checked in step 1.
+- Runbook, replay section: "A start or signal the new code refuses fails
+  replay". The start half reproduces; the signal half does not.
+  `temporalWorkflow` catches every error a definition throws while applying
+  a signal and records it as the command's error outcome, so the workflow
+  task succeeds. Every task graph `claim` refused, and every V2 message
+  `claim` refused, each with the bundle regenerated: all 22 histories replay
+  clean on both bundles and only the three live handoffs fail. The same
+  false claim was in the replay control's doc comment
+  (tests/fixtures/temporal-replay/refuse-last-signal-workflow.ts said it
+  fails the workflow task "as a build that refuses a recorded signal
+  would"); corrected on review, 2026-10-09. The control's behaviour and
+  the test are unchanged.
+- Mutation claim that does not reproduce: 41c4c1a2 (claude/fix5-key-rotation)
+  says thirteen mutations "of the scope, the recorded deployment, the tenant
+  limit and the settled check are each killed by these tests". At 9b3dca36,
+  with all 18 supervisor-a2a-result-key-rotation tests, two settled-check
+  mutants survive (18 pass): the ledger's failing check counted as settled
+  (`.catch(() => false)` to `.catch(() => true)`), and a COMPLETED A2A task
+  settling its bindings without the accepted artifact (COMPLETED added to
+  the ended-without-result states in `settledResultBinding`). A third, a
+  missing task counted as settled, is killed (2 fail). With the two tests
+  added on claude/fix6-runbook-tests (20 tests): the first fails "a settled
+  check that cannot read the A2A task store …", the second fails "a
+  COMPLETED A2A task without the message's accepted artifact …", the
+  missing-task mutant still fails its 2, and a fourth, any accepted
+  artifact settling every binding of its task, fails the retire test and
+  the COMPLETED test. The thirteen were never listed, so the others were
+  not re-run.
+- The task that ordered this entry calls the claim to correct "M4". No
+  record in this repository labels a mutation M4 for this line (`git grep`
+  of specs, docs and loop-fork/docs, and of commit messages since
+  2026-09-28; Pickbrain returned nothing for it). So every mutation claim
+  in the round-5 runbook records was re-run instead. Reproduced as
+  recorded: the doubled retry delay (replays clean, the three live handoffs
+  fail); the added timer (replays clean, only the rollback handoff fails;
+  the TMPRL1100 text was not re-read); the task graph limited to one node
+  (the six two-node graph replays fail, with or without regenerating the
+  bundle); and in orchestration-rollback-to-deployed, `wake` dropped from
+  the launcher lineage's refused keys (6 fail), from the live service's (3
+  fail), `deadlines` added to the live service's (2 fail), a newline
+  appended to a vendored workflow file (the blob test fails), `deadlines`
+  added to the pre-activation shape (its test fails), the bundle decoder
+  dropping its last chunk (3 fail), the launcher lineage pinned to
+  dde60215's bundle blob (the pin test fails), and
+  `workflowFailureErrorTypes: {"*": ["Error"]}` (all 4 Temporal runs fail).
+  Counts that differ from the record: the deployed phase run on this
+  build's bundle fails 4, not 2 (the record was made with 20 tests, before
+  the committed-bundle runs doubled the Temporal tests; the same holds for
+  the first record's "2 fail" for `workflowFailureErrorTypes`), and the
+  vendored dde60215 parser refusing `tokenEnv` fails 3 tests (the blob
+  pin, its rolled-back config and the pre-activation shape), not only "its
+  test". Only the refused-signal half and the settled-check claim above
+  fail to reproduce.
+- "M4", searched wider on review (2026-10-09): `git grep -w M4` over the
+  whole tracked tree of the round-5 base, every claude/fix5 branch, r5
+  integration, claude/fix6-dead-run-release, -hygiene and
+  -replay-coverage, the r4 integration line, claude/fix4-key-rotation,
+  -runbook-docs, -recovery-escape-path, -deployment-rollback-safety and
+  -compat-and-migrations, and claude/fix3-docs-decisions, plus commit
+  messages on every ref since 2026-09-20, finds one record that labels a
+  mutation M4 (besides this entry and fb00559b's message), outside
+  specs/ and docs/: runs/helper-observability-routing-v1/
+  claude-implementation-evidence.md, "M4: git reason hidden (tools, 1
+  fail)", a helper-routing claim for d2663336 (propose_patch reporting git
+  apply's reason), not part of the A2A V2 line. It reproduces at fb00559b:
+  `gitApplyReason`'s result replaced by undefined in
+  src/loop/utility-tools.ts, utility-tools goes from 51 pass to 50 pass and
+  1 fail ("refuses a corrupt patch before recording an artifact or
+  manifest"), reverted with `git checkout`. Its siblings M1, M2, M3 and M5
+  were not re-run. So no record's M4 fails to reproduce; the two claims
+  above that do not reproduce carry no M label.
+- Runbook, pre-upgrade checklist item 4, added on review (2026-10-09): the
+  first version said a bridge dedupe claim file is "removed when the
+  enqueue ends". It is removed only when the enqueue returns or throws in
+  a live process. `acquireBridgeDedupeClaim` creates it exclusively and
+  answers busy on EEXIST, and nothing recovers a stale one, so a process
+  that dies inside a keyed enqueue leaves it, and every later enqueue of
+  that message answers `deferred` until it is removed (reproduced in a
+  scratch run directory at fb00559b). The checklist and the Rollback A
+  roll-forward paragraph now tell operators to look for and remove stale
+  claim files. A pre-existing code risk on the V2 line, not introduced or
+  fixed by this branch; see status.md, "Status at r5 integration", item 6.

@@ -5,7 +5,10 @@ import { ServerCallContext } from "@a2a-js/sdk/server";
 import { SQL } from "bun";
 import { PostgresA2ATaskStore } from "../../src/loop/a2a-postgres-task-store";
 import { WORKFLOW_IDS_METADATA_KEY } from "../../src/loop/a2a-supervisor-executor";
-import type { SupervisorA2AResultBinding } from "../../src/loop/a2a-supervisor-result";
+import {
+  acceptedResultArtifactId,
+  type SupervisorA2AResultBinding,
+} from "../../src/loop/a2a-supervisor-result";
 import {
   createSupervisorA2AV2Service,
   type SupervisorA2AV2Service,
@@ -215,6 +218,8 @@ const serviceFor = async (input: {
   databaseUrl?: string;
   deployment?: string;
   log?: (line: string) => void;
+  /** While `failing` is set, every A2A task read of the service rejects. */
+  taskReads?: { failing: boolean };
   workflowIdFormat?: "deployment" | "legacy";
 }): Promise<SupervisorA2AV2Service> => {
   const service = await createSupervisorA2AV2Service({
@@ -292,7 +297,26 @@ const serviceFor = async (input: {
     dependencies: {
       connectLedger: (databaseUrl, options) =>
         PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
-      connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
+      connectTaskStore: async (options) => {
+        const store = await PostgresA2ATaskStore.connect(options);
+        const reads = input.taskReads;
+        if (!reads) {
+          return store;
+        }
+        // The real store, except that a read rejects while reads fail.
+        return new Proxy(store, {
+          get: (target, property) => {
+            if (property === "load") {
+              return (...args: Parameters<PostgresA2ATaskStore["load"]>) =>
+                reads.failing
+                  ? Promise.reject(new Error("A2A task store unavailable"))
+                  : target.load(...args);
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
       connectSessions: () =>
         Promise.resolve({
           assertReady: closed,
@@ -1513,4 +1537,139 @@ test("a previous key is no longer needed once every binding under it has settled
   expect(await fingerprintOf(third, "task:retire-ended")).toBe(
     retiring.fingerprint
   );
+}, 60_000);
+
+/** The start line of a binding under `key` on a host that does not hold it. */
+const unknownKeyLine = (
+  scope: TrustedSupervisorMessageV2Scope,
+  key: SupervisorResultGraphKey,
+  binding: SupervisorA2AResultBinding
+) =>
+  `A2A V2 result binding cannot publish (unknown-result-graph-key): tenant ${scope.tenantId} message ${binding.messageWorkflowId} A2A task ${binding.a2aTaskId}; it was derived under result graph key ${key.fingerprint}, which this host does not hold: add the environment variable holding that key to a2aV2.previousResultGraphKeyEnvs`;
+
+test("a settled check that cannot read the A2A task store keeps the binding listed and reported: a failing read never hides a binding under a previous or removed key", async () => {
+  const scope = tenant("unreadable");
+  const retiring = throwawayKey();
+  const before = await ledgerWith(retiring);
+  const message = await sendMessage(before, scope, "unreadable");
+  // Read, this task would settle the binding: it ended without a result.
+  await saveTask(
+    scope,
+    "task:unreadable",
+    [message],
+    TaskState.TASK_STATE_CANCELED
+  );
+  const binding = bindingUnder(retiring, scope, message, "task:unreadable");
+  await before.bindResult(scope, binding);
+  const reads = { failing: true };
+  const service = await serviceFor({
+    scope,
+    allow: [
+      { graphWorkflowId: binding.graphWorkflowId, graphTaskId: "result-node" },
+    ],
+    previousResultGraphKeys: [retiring],
+    resultGraphKey: NEW_KEY,
+    taskReads: reads,
+  });
+  const ofTenant = (lines: readonly string[]) =>
+    lines.filter((line) => line.includes(scope.tenantId));
+
+  // The task store cannot be read: the binding stays listed, so its key is
+  // still needed, and a host without the key reports it.
+  expect((await assignmentStatus(service)).underPreviousResultGraphKey).toEqual(
+    [listedUnder(retiring, binding)]
+  );
+  const unreadable: string[] = [];
+  await serviceFor({
+    scope,
+    allow: [],
+    log: (line) => unreadable.push(line),
+    resultGraphKey: NEW_KEY,
+    taskReads: reads,
+  });
+  expect(ofTenant(unreadable)).toEqual([
+    unknownKeyLine(scope, retiring, binding),
+  ]);
+
+  // Control: once the store reads again, the same task settles the binding.
+  reads.failing = false;
+  expect((await assignmentStatus(service)).underPreviousResultGraphKey).toEqual(
+    []
+  );
+  const readable: string[] = [];
+  await serviceFor({
+    scope,
+    allow: [],
+    log: (line) => readable.push(line),
+    resultGraphKey: NEW_KEY,
+    taskReads: reads,
+  });
+  expect(ofTenant(readable)).toEqual([]);
+}, 60_000);
+
+test("a COMPLETED A2A task without the message's accepted artifact does not settle that message's binding: only the artifact or an ending without a result does", async () => {
+  const scope = tenant("completed");
+  const retiring = throwawayKey();
+  const before = await ledgerWith(retiring);
+  // One A2A task carries two messages; only the first one's result publishes.
+  const published = await sendMessage(before, scope, "completed-published");
+  const unpublished = await sendMessage(before, scope, "completed-unpublished");
+  await saveTask(scope, "task:completed", [published, unpublished]);
+  const bindings = [
+    bindingUnder(retiring, scope, published, "task:completed"),
+    bindingUnder(retiring, scope, unpublished, "task:completed"),
+  ] as const;
+  for (const binding of bindings) {
+    await before.bindResult(scope, binding);
+  }
+  const [, unpublishedBinding] = bindings;
+  const service = await serviceFor({
+    scope,
+    allow: bindings.map(({ graphWorkflowId }) => ({
+      graphWorkflowId,
+      graphTaskId: "result-node",
+    })),
+    previousResultGraphKeys: [retiring],
+    resultGraphKey: NEW_KEY,
+  });
+  await service.publishResult(scope, {
+    recipient: RECIPIENT,
+    taskId: "task:completed",
+    workflowId: published,
+  });
+
+  // The A2A task completes holding only the first message's result.
+  const held = await tasks.load("task:completed", contextOf(scope));
+  if (!held?.status) {
+    throw new Error("missing A2A task task:completed");
+  }
+  expect(held.artifacts.map(({ artifactId }) => artifactId)).toEqual([
+    acceptedResultArtifactId(published),
+  ]);
+  await tasks.save(
+    {
+      ...held,
+      status: { ...held.status, state: TaskState.TASK_STATE_COMPLETED },
+    },
+    contextOf(scope)
+  );
+  expect(
+    (await tasks.load("task:completed", contextOf(scope)))?.status?.state
+  ).toBe(TaskState.TASK_STATE_COMPLETED);
+
+  // The second message's result never published, so its binding still needs
+  // the key: listed here, reported by a host without it.
+  expect((await assignmentStatus(service)).underPreviousResultGraphKey).toEqual(
+    [listedUnder(retiring, unpublishedBinding)]
+  );
+  const lines: string[] = [];
+  await serviceFor({
+    scope,
+    allow: [],
+    log: (line) => lines.push(line),
+    resultGraphKey: NEW_KEY,
+  });
+  expect(lines.filter((line) => line.includes(scope.tenantId))).toEqual([
+    unknownKeyLine(scope, retiring, unpublishedBinding),
+  ]);
 }, 60_000);
