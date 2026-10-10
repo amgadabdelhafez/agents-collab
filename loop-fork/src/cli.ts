@@ -36,11 +36,7 @@ import {
 } from "./loop/governess-secure-env";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { PairedLaunchClaim } from "./loop/launch-reservation";
-import {
-  defaultPidOwnershipDeps,
-  pidCanStillOwnRun,
-  runtimeAbsent,
-} from "./loop/launch-reservation";
+import { runtimeAbsent } from "./loop/launch-reservation";
 import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
@@ -52,6 +48,10 @@ import {
   promoteMemoryCheckpoint,
 } from "./loop/memory-checkpoint";
 import { runOrchestrationCommand } from "./loop/orchestration-command";
+import {
+  defaultPidOwnershipDeps,
+  pidCanStillOwnRun,
+} from "./loop/pid-ownership";
 import {
   RECON_PANE_SUBCOMMAND,
   type ReconPaneIndex,
