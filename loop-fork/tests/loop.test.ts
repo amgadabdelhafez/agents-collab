@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ImmediateInfoRequest } from "../src/loop/args";
@@ -1211,6 +1211,33 @@ test("runCli reconcile kinds refuse a run in the other terminal state without wr
       }
     });
   }
+});
+
+test("runCli reconcile probes the run's own tmux runtime and refuses when it is not provably gone", async () => {
+  await withSyntheticHome(async (home) => {
+    const storage = writeSyntheticTerminalRun(home, "33", "stopped");
+    const manifest = JSON.parse(readFileSync(storage.manifestPath, "utf8"));
+    // An unusable recorded socket is unknown targeting: it can neither be
+    // probed nor fall back to the legacy candidates, so it is never absence.
+    manifest.tmuxSocket = "relative/unusable.sock";
+    writeFileSync(storage.manifestPath, JSON.stringify(manifest, null, 2));
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const { closeGovernessBeatForTerminalRunMock, runCli } =
+        await loadRunCli();
+
+      await expect(runCli(["reconcile", "stopped-run", "33"])).rejects.toThrow(
+        "stopped-run reconciliation refused: tmux-runtime-not-absent"
+      );
+
+      expect(
+        readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+      ).toBeUndefined();
+      expect(closeGovernessBeatForTerminalRunMock).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+  });
 });
 
 test("runCli reconciles one synthetic stopped run before startup maintenance", async () => {
