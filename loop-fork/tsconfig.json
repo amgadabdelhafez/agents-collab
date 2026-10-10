@@ -9,5 +9,9 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  // Vendored, unmodified files of older builds, pinned to their git blob ids
+  // and loaded by path in the rollback tests. They type-check against their
+  // own build, not this one, so the project typecheck does not include them.
+  "exclude": ["tests/fixtures/base-era-40097564", "tests/fixtures/deployed-*"]
 }
