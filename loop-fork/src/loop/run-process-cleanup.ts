@@ -506,11 +506,13 @@ const pushGroup = (
  * - one process table snapshot is taken, and the groups of every descendant
  *   of each recorded pane process are recorded (`recordAgentDescendantGroups`:
  *   the real CLIs start their tool subprocesses in groups of their own);
- * - every recorded agent group (pane or descendant) that has a member in that
- *   snapshot becomes a termination target, with the snapshot instant as its
+ * - every recorded agent group (pane or descendant) that is provably the
+ *   recorded group in that snapshot (a member started by the record's
+ *   instant) becomes a termination target, with the snapshot instant as its
  *   reference: right before each signal the target is re-identified (some
  *   live member started by that instant), so a group id reused after the
- *   snapshot is never signalled.
+ *   snapshot is never signalled. A present group that cannot be proven is
+ *   reported `agent-group-unverified` and stays release evidence.
  *
  * Nothing is signalled here; the teardown ends the targets after the kill
  * (the hangup reaches the CLI, not a tool subprocess that ignores it). This
