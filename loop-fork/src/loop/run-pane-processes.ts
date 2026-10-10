@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   descendantsOf,
   type ProcessRow,
+  parentChainOf,
   processGroupOf,
 } from "./process-group";
 
@@ -253,6 +254,15 @@ export interface AgentGroupRecord {
   readonly paneId: string;
   readonly pgid: number;
   readonly recordedAt: string;
+  /**
+   * The first snapshot that saw this group re-parented away while its pane's
+   * agent process was provably live: no member descended from any of the
+   * run's panes, and every member's parent chain (through this group and the
+   * run's other walked groups) ended at launchd. That is a daemon that left
+   * the run; a tool orphaned by its pane's end only ever looks re-parented
+   * after the pane is gone (see `shared-process-ownership`).
+   */
+  readonly reparentedAt?: string;
   readonly runDir: string;
 }
 
@@ -272,8 +282,21 @@ export const parseAgentGroupRecord = (
     typeof record.runDir === "string" &&
     typeof record.recordedAt === "string" &&
     Number.isFinite(Date.parse(record.recordedAt))
-    ? (record as AgentGroupRecord)
+    ? withValidReparentedAt(record as AgentGroupRecord)
     : undefined;
+};
+
+/** A `reparentedAt` that is not an instant is dropped, never trusted. */
+const withValidReparentedAt = (record: AgentGroupRecord): AgentGroupRecord => {
+  if (
+    record.reparentedAt === undefined ||
+    (typeof record.reparentedAt === "string" &&
+      Number.isFinite(Date.parse(record.reparentedAt)))
+  ) {
+    return record;
+  }
+  const { reparentedAt: _dropped, ...rest } = record;
+  return rest;
 };
 
 const readAgentGroupRecord = (path: string): AgentGroupRecord | undefined => {
@@ -345,6 +368,7 @@ export const recordAgentDescendantGroups = (
   const paneGroups = new Set(panes.map((pane) => pane.pgid));
   const rows = new Map(input.table.map((row) => [row.pid, row]));
   const found = new Map<number, string>();
+  const livePaneIds = new Set<string>();
   for (const pane of panes) {
     const row = rows.get(pane.pid);
     const recordedMs = Date.parse(pane.recordedAt);
@@ -358,6 +382,7 @@ export const recordAgentDescendantGroups = (
     ) {
       continue;
     }
+    livePaneIds.add(pane.paneId);
     for (const descendant of descendantsOf([pane.pid], input.table)) {
       const pgid = descendant.pgid;
       if (
@@ -394,6 +419,7 @@ export const recordAgentDescendantGroups = (
     records.push(record);
   }
   advanceProvenRecords(input.runDir, input.table, now);
+  markReparentedRecords(input.runDir, input.table, found, livePaneIds, now);
   const live = new Set(input.table.map((row) => row.pgid));
   const pruned: number[] = [];
   for (const file of agentGroupFiles(input.runDir)) {
@@ -466,6 +492,41 @@ const advanceProvenRecords = (
       writeRecordAtomically(runDir, agentGroupFileName(group.pgid), {
         ...group,
         recordedAt: now,
+      });
+    }
+  }
+};
+
+/**
+ * Marks `reparentedAt` (once) on each walked record whose group this
+ * snapshot proves is still the recorded one, while its own pane's agent
+ * process is provably live, when no member descends from the run's panes
+ * (`found` holds every group that does) and every member's parent chain,
+ * through the group and the run's other walked groups, ends at launchd.
+ */
+const markReparentedRecords = (
+  runDir: string,
+  table: readonly ProcessRow[],
+  found: ReadonlyMap<number, string>,
+  livePaneIds: ReadonlySet<string>,
+  now: string
+): void => {
+  if (livePaneIds.size === 0) {
+    return;
+  }
+  const records = readAgentGroupRecords(runDir);
+  const walked = new Set(records.map((record) => record.pgid));
+  for (const record of records) {
+    if (
+      record.reparentedAt === undefined &&
+      !found.has(record.pgid) &&
+      livePaneIds.has(record.paneId) &&
+      groupProvenAt(record.pgid, record.recordedAt, table) &&
+      parentChainOf(record.pgid, table, walked).kind === "launchd"
+    ) {
+      writeRecordAtomically(runDir, agentGroupFileName(record.pgid), {
+        ...record,
+        reparentedAt: now,
       });
     }
   }

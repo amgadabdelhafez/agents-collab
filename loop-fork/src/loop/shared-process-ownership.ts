@@ -2,12 +2,17 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  ancestorsOf,
   descendantsOf,
   type ProcessRow,
+  parentChainOf,
   readProcessTable,
   type TerminationTarget,
 } from "./process-group";
-import { readRunPaneProcessRecords } from "./run-pane-processes";
+import {
+  readAgentGroupRecords,
+  readRunPaneProcessRecords,
+} from "./run-pane-processes";
 import {
   buildManifestPath,
   isActiveRunState,
@@ -37,20 +42,38 @@ import {
  *    manifest is active, or unreadable) records the process or its group (its
  *    pid, launch attempt, Codex app-server, bridge worker, `run-processes/`
  *    records or utility worker claims), or a member's command line names that
- *    run's directory, tmux socket, tmux session or `--run-id`. Never
- *    signalled. Release evidence only while a member's cwd is inside this
- *    run's workspace (or cannot be read).
+ *    run's directory, tmux socket, tmux session or `--run-id`. For a walked
+ *    group the same holds for every ancestor of a member below this run's
+ *    pane processes (a child that another run's app-server started in a
+ *    group of its own is that run's too). Never signalled. Release evidence
+ *    only while a member's cwd is inside this run's workspace (or cannot be
+ *    read). For the run's own explicit records (its pane groups, its
+ *    manifest's app-server, its worker targets) another run's ppid-walk
+ *    records (`agent-group-*`) do not count: that run only saw the process
+ *    descend from its panes, and the owner's own teardown must still end it.
+ *    This run's own tmux session, socket and run id never count as naming
+ *    another run.
  * 2. `ownership-unknown`: the other runs cannot all be read, or the group is
- *    not in the process table. Never signalled; release evidence.
+ *    not in the process table. A walked group is never signalled; release
+ *    evidence. An explicit record of the run's own is judged by rule 1 alone:
+ *    the only other-run record that could name it is a walk record, which
+ *    rule 1 ignores for it.
  * 3. `run-owned`: a recorded process of the run's own (an agent pane group,
  *    its manifest's app-server), or a walked group that still has a member
  *    descending from one of the run's live pane processes.
- * 4. A walked group with no member attached to the run's pane processes
- *    (re-parented away, to launchd): `reparented-in-workspace` when a member's
- *    cwd is inside the workspace (signalled and release evidence, as before);
- *    `reparented-outside-workspace` when every member's cwd is readable and
- *    outside it (never signalled, not release evidence); `ownership-unknown`
- *    when a cwd cannot be read.
+ * 4. A walked group with no member attached to the run's pane processes is
+ *    re-parented away only when every member's parent chain ends at launchd
+ *    (pid 1), passing only through the group itself and the run's other
+ *    walked groups. A group with any other parent is `ownership-unknown`
+ *    (never signalled, release evidence). A re-parented group is
+ *    `reparented-in-workspace` when a member's cwd is inside the workspace
+ *    (signalled and release evidence, as before); `ownership-unknown` when a
+ *    cwd cannot be read; and `reparented-outside-workspace` (never signalled,
+ *    not release evidence) when every member's cwd is readable and outside it
+ *    AND it was seen re-parented while its pane's agent process lived (now,
+ *    or by a snapshot that recorded `reparentedAt`). Seen re-parented only
+ *    after its pane ended, it may be a tool orphaned by that end (or a group
+ *    the teardown could not end), so it is `ownership-unknown`.
  */
 
 export type GroupOwnershipRule =
@@ -343,21 +366,36 @@ const namesPath = (command: string, path: string): boolean =>
     `${path.replace(REGEX_META_RE, "\\$&")}(?=$|[\\s'"/,;:=\\])])`
   ).test(command);
 
+/** What a command line may name without naming another run. */
+export interface SelfIdentity {
+  readonly runId?: string;
+  readonly session?: string;
+  readonly socket?: string;
+}
+
+const samePath = (left: string, right: string): boolean =>
+  left === right || resolve(left) === resolve(right);
+
 /**
  * What of another run a command line names, or `undefined`: its run
  * directory, tmux socket, tmux session (as a whole word or `session:target`),
- * or its run id after `--run-id`. A session or run id this run shares is
- * never a match (run ids repeat across repositories).
+ * or its run id after `--run-id`. A session, socket or run id this run shares
+ * is never a match (runs on one tmux server share its socket; run ids repeat
+ * across repositories).
  */
 export const commandNamesRun = (
   command: string,
   run: OtherRunIdentity,
-  self: { readonly runId?: string; readonly session?: string } = {}
+  self: SelfIdentity = {}
 ): string | undefined => {
   if (namesPath(command, run.runDir)) {
     return "run directory";
   }
-  if (run.socket && namesPath(command, run.socket)) {
+  if (
+    run.socket &&
+    !(self.socket && samePath(self.socket, run.socket)) &&
+    namesPath(command, run.socket)
+  ) {
     return "tmux socket";
   }
   const session = run.session;
@@ -423,6 +461,16 @@ const referenceNames = (
   );
 };
 
+/** Whether another run's record names one ancestor process. */
+const referenceNamesAncestor = (
+  reference: RecordedRunPid,
+  ancestor: ProcessRow
+): boolean =>
+  (reference.group
+    ? reference.pid === ancestor.pgid
+    : reference.pid === ancestor.pid) &&
+  startedByReference(ancestor, reference.reference);
+
 export type SharedWith =
   | { readonly kind: "none" }
   | { readonly kind: "unknown"; readonly reason: string }
@@ -434,49 +482,102 @@ export type SharedWith =
     };
 
 export interface SharedCheckInput {
+  /**
+   * The members' ancestors (see `ancestorsOf`): a process another run
+   * records or names makes every descendant group shared too.
+   */
+  readonly ancestors?: readonly ProcessRow[];
   readonly commands: () => ReadonlyMap<number, string> | undefined;
+  /**
+   * For an explicit record of this run's own: other runs' ppid-walk records
+   * (`run-processes/agent-group-*`) do not make it shared.
+   */
+  readonly ignoreWalkRecords?: boolean;
   readonly index: () => OtherRunIndex;
   readonly members: readonly ProcessRow[];
   readonly pgid: number;
-  readonly self: { readonly runId?: string; readonly session?: string };
+  readonly self: SelfIdentity;
 }
 
-/** Whether another live run records or names the group. */
+/** The `source` of another run's ppid-walk record. */
+export const WALK_RECORD_SOURCE_RE = /^run-processes\/agent-group-\d+\.json$/;
+
+/**
+ * Whether another live run records or names the group, one of its members,
+ * or one of their `ancestors`.
+ */
 export const sharedWithOtherRun = (input: SharedCheckInput): SharedWith => {
   const index = input.index();
   if (index.kind === "unknown") {
     return index;
   }
-  for (const reference of index.references) {
-    if (referenceNames(reference, input.pgid, input.members)) {
+  return (
+    recordedByOtherRun(index.references, input) ??
+    namedByOtherRun(index.runs, input)
+  );
+};
+
+/** The first other-run record naming the group, a member or an ancestor. */
+const recordedByOtherRun = (
+  references: readonly OtherRunReference[],
+  input: SharedCheckInput
+): SharedWith | undefined => {
+  const ancestors = input.ancestors ?? [];
+  for (const reference of references) {
+    if (
+      input.ignoreWalkRecords &&
+      WALK_RECORD_SOURCE_RE.test(reference.source)
+    ) {
+      continue;
+    }
+    const recorded = `recorded by run ${reference.runId} as ${reference.source} (pid ${reference.pid})`;
+    const direct = referenceNames(reference, input.pgid, input.members);
+    const ancestor = direct
+      ? undefined
+      : ancestors.find((row) => referenceNamesAncestor(reference, row));
+    if (direct || ancestor) {
       return {
         kind: "shared",
         otherRunDir: reference.runDir,
         otherRunId: reference.runId,
-        source: `recorded by run ${reference.runId} as ${reference.source} (pid ${reference.pid})`,
+        source: ancestor
+          ? `ancestor pid ${ancestor.pid}: ${recorded}`
+          : recorded,
       };
     }
   }
-  if (index.runs.length === 0 || input.members.length === 0) {
+  return undefined;
+};
+
+/** The first other run a member's or an ancestor's command line names. */
+const namedByOtherRun = (
+  runs: readonly OtherRunIdentity[],
+  input: SharedCheckInput
+): SharedWith => {
+  const named = [
+    ...input.members.map((row) => ({ label: "pid", row })),
+    ...(input.ancestors ?? []).map((row) => ({ label: "ancestor pid", row })),
+  ];
+  if (runs.length === 0 || named.length === 0) {
     return { kind: "none" };
   }
   const commands = input.commands();
   if (!commands) {
     return { kind: "unknown", reason: "command lines unavailable" };
   }
-  for (const member of input.members) {
-    const command = commands.get(member.pid);
+  for (const { label, row } of named) {
+    const command = commands.get(row.pid);
     if (!command) {
       continue;
     }
-    for (const run of index.runs) {
-      const named = commandNamesRun(command, run, input.self);
-      if (named) {
+    for (const run of runs) {
+      const names = commandNamesRun(command, run, input.self);
+      if (names) {
         return {
           kind: "shared",
           otherRunDir: run.runDir,
           otherRunId: run.runId,
-          source: `pid ${member.pid}'s command names run ${run.runId}'s ${named}`,
+          source: `${label} ${row.pid}'s command names run ${run.runId}'s ${names}`,
         };
       }
     }
@@ -521,14 +622,29 @@ export const workspacePresence = (
   return unknown ? "unknown" : "outside";
 };
 
+/** What the run's own ppid walk recorded about one group. */
+export interface WalkedGroup {
+  readonly paneId: string;
+  readonly reparentedAt?: string;
+}
+
 export interface OwnershipContext {
   readonly commands: () => ReadonlyMap<number, string> | undefined;
   readonly cwdOfPid: (pid: number) => string | undefined;
   readonly index: () => OtherRunIndex;
+  /** The panes (by id) whose agent process is live and proven in `table`. */
+  readonly livePaneIds: ReadonlySet<string>;
   /** This run's live, proven agent pane processes in `table`. */
   readonly paneRoots: readonly number[];
-  readonly self: { readonly runId?: string; readonly session?: string };
+  /**
+   * Where an ancestor walk stops: every pane process this run recorded
+   * (proven or not), so the walk never climbs into the tmux server.
+   */
+  readonly paneStops: ReadonlySet<number>;
+  readonly self: SelfIdentity;
   readonly table: readonly ProcessRow[];
+  /** This run's own walk records, by group id. */
+  readonly walked: ReadonlyMap<number, WalkedGroup>;
   readonly workspaceRoot?: string;
 }
 
@@ -555,6 +671,9 @@ export const classifyGroup = (
 ): GroupOwnershipVerdict => {
   const members = membersOf(id, options.kind ?? "group", ctx.table);
   const shared = sharedWithOtherRun({
+    ...(options.inferred
+      ? { ancestors: ancestorsOf(members, ctx.table, ctx.paneStops) }
+      : { ignoreWalkRecords: true }),
     commands: ctx.commands,
     index: ctx.index,
     members,
@@ -597,37 +716,64 @@ export const classifyGroup = (
   if (members.some((row) => attached.has(row.pid))) {
     return { count: true, kill: true, rule: "run-owned" };
   }
+  // Re-parented away means to launchd, reached only through the group and
+  // the run's own other walked groups; any other parent may be another run's
+  // or a stranger's, so its ownership is unknown.
+  const chain = parentChainOf(id, ctx.table, new Set(ctx.walked.keys()));
+  if (chain.kind !== "launchd") {
+    return {
+      count: true,
+      detail:
+        chain.kind === "parent"
+          ? `parent ${chain.pid} is neither this run's pane tree nor launchd`
+          : "no member in the process table",
+      kill: false,
+      rule: "ownership-unknown",
+    };
+  }
   const where = workspacePresence(members, ctx.workspaceRoot, ctx.cwdOfPid);
-  const parents = [...new Set(members.map((row) => row.ppid))].join(",");
   if (where === "inside") {
     return {
       count: true,
-      detail: `re-parented (ppid ${parents}); cwd inside the workspace`,
+      detail: "re-parented to launchd; cwd inside the workspace",
       kill: true,
       rule: "reparented-in-workspace",
     };
   }
-  if (where === "outside") {
+  if (where === "unknown") {
     return {
-      count: false,
-      detail: `re-parented (ppid ${parents}); cwd outside the workspace`,
+      count: true,
+      detail: "re-parented to launchd; cwd unknown",
       kill: false,
-      rule: "reparented-outside-workspace",
+      rule: "ownership-unknown",
+    };
+  }
+  const walked = ctx.walked.get(id);
+  const seenWhilePaneLived =
+    walked !== undefined &&
+    (walked.reparentedAt !== undefined || ctx.livePaneIds.has(walked.paneId));
+  if (!seenWhilePaneLived) {
+    return {
+      count: true,
+      detail:
+        "re-parented to launchd, cwd outside the workspace, but never seen re-parented while its pane lived (it may be a tool its pane's end orphaned)",
+      kill: false,
+      rule: "ownership-unknown",
     };
   }
   return {
-    count: true,
-    detail: `re-parented (ppid ${parents}); cwd unknown`,
+    count: false,
+    detail: `re-parented to launchd${walked.reparentedAt ? ` (seen at ${walked.reparentedAt})` : ""} while its pane lived; cwd outside the workspace`,
     kill: false,
-    rule: "ownership-unknown",
+    rule: "reparented-outside-workspace",
   };
 };
 
-/** This run's agent pane processes that are provably the recorded ones. */
-export const provenPaneRoots = (
+/** This run's agent pane records whose process is provably live in `table`. */
+const provenPanes = (
   runDir: string,
   table: readonly ProcessRow[]
-): number[] => {
+): Array<{ paneId: string; pid: number }> => {
   const rows = new Map(table.map((row) => [row.pid, row]));
   return readRunPaneProcessRecords(runDir).flatMap((pane) => {
     const row = rows.get(pane.pid);
@@ -637,10 +783,32 @@ export const provenPaneRoots = (
       Number.isFinite(recordedMs) &&
       row.startedAtMs !== undefined &&
       row.startedAtMs <= recordedMs
-      ? [pane.pid]
+      ? [{ paneId: pane.paneId, pid: pane.pid }]
       : [];
   });
 };
+
+/** This run's agent pane processes that are provably the recorded ones. */
+export const provenPaneRoots = (
+  runDir: string,
+  table: readonly ProcessRow[]
+): number[] => provenPanes(runDir, table).map((pane) => pane.pid);
+
+/** Every pane process this run recorded: where an ancestor walk stops. */
+const paneStopsOf = (runDir: string): Set<number> =>
+  new Set(readRunPaneProcessRecords(runDir).map((pane) => pane.pid));
+
+/** This run's own walk records, by group id. */
+const walkedGroupsOf = (runDir: string): Map<number, WalkedGroup> =>
+  new Map(
+    readAgentGroupRecords(runDir).map((record) => [
+      record.pgid,
+      {
+        paneId: record.paneId,
+        ...(record.reparentedAt ? { reparentedAt: record.reparentedAt } : {}),
+      },
+    ])
+  );
 
 const COMMAND_ROW_RE = /^\s*(\d+)\s+(.*)$/;
 
@@ -721,12 +889,18 @@ export const workspaceRootOf = (
 ): string | undefined =>
   manifest?.workspaceBinding?.root || manifest?.cwd || undefined;
 
-/** The run id and session a command may name without naming another run. */
+/**
+ * The run id, tmux session and tmux socket a command may name without naming
+ * another run.
+ */
 export const selfOf = (
-  manifest: Pick<RunManifest, "runId" | "tmuxSession"> | undefined
-): { runId?: string; session?: string } => ({
+  manifest:
+    | Pick<RunManifest, "runId" | "tmuxSession" | "tmuxSocket">
+    | undefined
+): SelfIdentity => ({
   ...(manifest?.runId ? { runId: manifest.runId } : {}),
   ...(manifest?.tmuxSession ? { session: manifest.tmuxSession } : {}),
+  ...(manifest?.tmuxSocket ? { socket: manifest.tmuxSocket } : {}),
 });
 
 /** An ownership context over one table snapshot, with lazy probes. */
@@ -735,19 +909,23 @@ export const ownershipContext = (input: {
   probes: OwnershipProbes;
   runDir: string;
   table: readonly ProcessRow[];
-}): OwnershipContext => ({
-  commands: memo(input.probes.commandTable),
-  cwdOfPid: input.probes.cwdOfPid,
-  index: memo(() => input.probes.otherRunIndex(input.runDir)),
-  paneRoots: provenPaneRoots(input.runDir, input.table),
-  self: selfOf(input.manifest),
-  table: input.table,
-  ...(workspaceRootOf(input.manifest)
-    ? { workspaceRoot: workspaceRootOf(input.manifest) }
-    : {}),
-});
-
-const AGENT_GROUP_SOURCE_RE = /^run-processes\/agent-group-\d+\.json$/;
+}): OwnershipContext => {
+  const panes = provenPanes(input.runDir, input.table);
+  return {
+    commands: memo(input.probes.commandTable),
+    cwdOfPid: input.probes.cwdOfPid,
+    index: memo(() => input.probes.otherRunIndex(input.runDir)),
+    livePaneIds: new Set(panes.map((pane) => pane.paneId)),
+    paneRoots: panes.map((pane) => pane.pid),
+    paneStops: paneStopsOf(input.runDir),
+    self: selfOf(input.manifest),
+    table: input.table,
+    walked: walkedGroupsOf(input.runDir),
+    ...(workspaceRootOf(input.manifest)
+      ? { workspaceRoot: workspaceRootOf(input.manifest) }
+      : {}),
+  };
+};
 
 export interface RecordedProcessVerdict {
   readonly count: boolean;
@@ -778,7 +956,7 @@ export const recordedProcessClassifier =
     });
     return (entry: RecordedRunPid): RecordedProcessVerdict => {
       const appServer = entry.source === "codexAppServerPid";
-      const inferred = AGENT_GROUP_SOURCE_RE.test(entry.source);
+      const inferred = WALK_RECORD_SOURCE_RE.test(entry.source);
       if (!(appServer || inferred)) {
         return { count: true, rule: "recorded" };
       }
@@ -815,7 +993,9 @@ export interface SharedTargetSkip {
 /**
  * The pre-signal shared-process check of a teardown: on a fresh table and a
  * fresh read of the other runs, every target another live run records or
- * names is skipped, and so is every `inferred` target when the other runs
+ * names is skipped (for an `inferred` target, also when it names one of its
+ * members' ancestors; for any other target, never by another run's walk
+ * record alone), and so is every `inferred` target when the other runs
  * cannot be read. Keys are `kind:id`. Without a table every inferred target
  * is skipped (its ownership cannot be judged) and the others pass.
  */
@@ -831,12 +1011,17 @@ export const sharedTargetCheck =
     const commands = memo(probes.commandTable);
     const index = memo(() => probes.otherRunIndex(runDir));
     const self = selfOf(manifest());
+    const stops = memo(() => paneStopsOf(runDir));
     for (const target of targets) {
+      const members = table ? membersOf(target.id, target.kind, table) : [];
       const shared: SharedWith = table
         ? sharedWithOtherRun({
+            ...(target.ownership === "inferred"
+              ? { ancestors: ancestorsOf(members, table, stops()) }
+              : { ignoreWalkRecords: true }),
             commands,
             index,
-            members: membersOf(target.id, target.kind, table),
+            members,
             pgid: target.id,
             self,
           })

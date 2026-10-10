@@ -816,9 +816,12 @@ const cleanupRunOwnedProcessesWithDeps = (
 
 /**
  * Another live run that records the run's Codex app-server (its pid or
- * group) or whose run directory, socket, session or run id its command line
- * names, or `undefined`. The app-server is the run's own record, so other runs
- * that cannot be read do not stop its cleanup; one that is shared does.
+ * group) in a record other than its ppid walk, or whose run directory,
+ * socket, session or run id its command line names, or `undefined`. The
+ * app-server is the run's own explicit record: the only other-run record
+ * that can name it too is a walk record (`agent-group-*`), which does not
+ * count for it, so other runs that cannot be read do not stop its cleanup;
+ * one that is shared does.
  * Without a process table the recorded pid itself is compared (as a process
  * of unknown start, which errs toward shared).
  */
@@ -835,6 +838,10 @@ const appServerSharedWith = (
   let index: ReturnType<OwnershipProbes["otherRunIndex"]> | undefined;
   const shared = sharedWithOtherRun({
     commands: deps.commandTable,
+    // The app-server is this run's explicit record: another run's walk only
+    // saw it descend from that run's panes (this run was launched from one
+    // of them), and must not stop its owner's teardown from ending it.
+    ignoreWalkRecords: true,
     index: () => {
       index ??= deps.otherRunIndex(runDir);
       return index;

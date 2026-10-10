@@ -13,9 +13,11 @@
 //
 // Most tests fake the process table, command lines and cwds. The tests named
 // "real" start their own detached perl / sleep processes and end them. No tmux
-// server is started or contacted in this file.
+// server is started or contacted in this file. HOME points at a fresh empty
+// directory for the whole file, so the default probes (which read the other
+// runs under HOME's storage root) never read the machine's own runs.
 
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import {
   chmodSync,
   mkdirSync,
@@ -44,6 +46,7 @@ import {
   terminateTargets,
 } from "../../src/loop/process-group";
 import {
+  readAgentGroupRecords,
   recordAgentDescendantGroups,
   recordRunPaneProcesses,
 } from "../../src/loop/run-pane-processes";
@@ -85,6 +88,21 @@ const PANE = 501;
 const originalCleanupDeps = { ...runProcessCleanupInternals.deps };
 afterEach(() => {
   Object.assign(runProcessCleanupInternals.deps, originalCleanupDeps);
+});
+
+const originalHome = process.env.HOME;
+let isolatedHome = "";
+beforeAll(() => {
+  isolatedHome = mkdtempSync(join(tmpdir(), "loop-shared-home-"));
+  process.env.HOME = isolatedHome;
+});
+afterAll(() => {
+  if (originalHome === undefined) {
+    Reflect.deleteProperty(process.env, "HOME");
+  } else {
+    process.env.HOME = originalHome;
+  }
+  rmSync(isolatedHome, { force: true, recursive: true });
 });
 
 const row = (
@@ -780,6 +798,442 @@ test("the storage roots are HOME's and, for a run in the storage layout, its own
   ]);
   expect(defaultStorageRoots("/tmp/loop-run-abc", "/h")).toEqual([
     "/h/.loop/runs",
+  ]);
+});
+
+// --- Descendants of a shared process; what "re-parented" means -----------------
+
+test("a walked group whose parent is a process live B records is shared, though no run records the group itself (a child B's app-server started in a group of its own)", async () => {
+  await withTwoRuns(
+    "working",
+    { codexAppServerPid: APP_SERVER },
+    async ({ a, storage }) => {
+      const CHILD = 7800;
+      recordWalkedGroup(a.runDir, CHILD);
+      // The child's parent is B's app-server, which re-parented to launchd
+      // when B's launcher exited; both kept the launcher's cwd, inside A's
+      // workspace.
+      const detached = [
+        row(PANE, 1, PANE),
+        row(APP_SERVER, 1, APP_SERVER),
+        row(CHILD, APP_SERVER, CHILD),
+      ];
+      // The same while B's launcher (650) still runs in A's tool shell.
+      const attached = [
+        row(PANE, 1, PANE),
+        row(601, PANE, 601),
+        row(650, 601, 601),
+        row(APP_SERVER, 650, APP_SERVER),
+        row(CHILD, APP_SERVER, CHILD),
+      ];
+      for (const table of [detached, attached]) {
+        const probes = fakeProbes(storage, table, {
+          [APP_SERVER]: a.workspace,
+          [CHILD]: a.workspace,
+        });
+        const ctx = ownershipContext({
+          manifest: readRunManifest(a.manifestPath),
+          probes,
+          runDir: a.runDir,
+          table,
+        });
+        expect(classifyGroup(CHILD, ctx, { inferred: true })).toMatchObject({
+          detail: expect.stringContaining(`ancestor pid ${APP_SERVER}`),
+          kill: false,
+          otherRunId: "2",
+          rule: "shared-process-skipped",
+        });
+        useCleanupProbes(probes);
+        const collected = collectRunAgentGroups(
+          a.runDir,
+          readRunManifest(a.manifestPath)
+        );
+        expect(collected.groups?.map((target) => target.id)).not.toContain(
+          CHILD
+        );
+        expect(collected.skipped).toContainEqual(
+          expect.objectContaining({
+            otherRunId: "2",
+            pid: CHILD,
+            reason: "shared-process-skipped",
+          })
+        );
+        // Re-checked on a fresh table right before every signal round.
+        const signals: string[] = [];
+        const ended = await terminateTargets(
+          [inferredTarget(CHILD)],
+          fakeTermination(signals, {
+            sharedSkips: sharedTargetCheck(
+              a.runDir,
+              () => readRunManifest(a.manifestPath),
+              probes
+            ),
+          })
+        );
+        expect(signals).toEqual([]);
+        expect(ended.shared).toMatchObject([
+          { otherRunId: "2", reason: "shared-process-skipped" },
+        ]);
+      }
+    }
+  );
+});
+
+test("a walked group is re-parented only when its parent is launchd: one whose parent is any other process no run records is ownership-unknown (never signalled, counted) whatever its cwd, unless that parent is in a group A's own walk recorded", async () => {
+  await withTwoRuns("working", {}, async ({ a, storage }) => {
+    const GROUP = 7900;
+    const STRANGER = 4444;
+    recordWalkedGroup(a.runDir, GROUP);
+    const table = [
+      row(PANE, 1, PANE),
+      row(STRANGER, 1, STRANGER),
+      row(GROUP, STRANGER, GROUP),
+    ];
+    const probes = fakeProbes(storage, table, {
+      [GROUP]: a.workspace,
+      [STRANGER]: a.workspace,
+    });
+    const context = () =>
+      ownershipContext({
+        manifest: readRunManifest(a.manifestPath),
+        probes,
+        runDir: a.runDir,
+        table,
+      });
+    expect(classifyGroup(GROUP, context(), { inferred: true })).toMatchObject({
+      count: true,
+      detail: expect.stringContaining(`parent ${STRANGER}`),
+      kill: false,
+      rule: "ownership-unknown",
+    });
+    useCleanupProbes(probes);
+    const collected = collectRunAgentGroups(
+      a.runDir,
+      readRunManifest(a.manifestPath)
+    );
+    expect(collected.groups?.map((target) => target.id)).toEqual([PANE]);
+    expect(collected.skipped).toMatchObject([
+      { pid: GROUP, reason: "ownership-unknown" },
+    ]);
+    expect(
+      await reconcileA(a.manifestPath, recordedProcessClassifier(probes), [
+        GROUP,
+      ])
+    ).toMatchObject({ status: "refused" });
+    // The parent leads a group A's walk recorded too (a daemon A's tool
+    // started, which started GROUP): the chain reaches launchd through A's
+    // own walked groups, so the re-parented rules apply.
+    writeFileSync(
+      join(a.runDir, "run-processes", `agent-group-${STRANGER}.json`),
+      `${JSON.stringify({
+        kind: "agent-descendant-group",
+        paneId: "%1",
+        pgid: STRANGER,
+        recordedAt: RECORDED_AT,
+        runDir: a.runDir,
+      })}\n`
+    );
+    expect(classifyGroup(GROUP, context(), { inferred: true })).toMatchObject({
+      kill: true,
+      rule: "reparented-in-workspace",
+    });
+  });
+});
+
+test("the app-server's owner B tears down first while live A's walk records it too: B's cleanup ends its own app-server (even with another run unreadable), and B's release counts it as B's own", async () => {
+  await withTwoRuns(
+    "stopped",
+    { codexAppServerPid: APP_SERVER, codexRemoteUrl: "ws://127.0.0.1:4500" },
+    async ({ a, b, storage }) => {
+      // A is live, and its walk recorded B's app-server (B was launched
+      // from A's tool shell).
+      writeRunManifest(a.manifestPath, {
+        ...(readRunManifest(a.manifestPath) as RunManifest),
+        state: "working",
+        status: "running",
+      });
+      recordWalkedGroup(a.runDir, APP_SERVER);
+      const table = [row(PANE, 1, PANE), row(APP_SERVER, 1, APP_SERVER)];
+      const probes = fakeProbes(storage, table, {
+        [APP_SERVER]: "/elsewhere",
+      });
+      useCleanupProbes(probes);
+      const signals: string[] = [];
+      const deps = runProcessCleanupInternals.deps;
+      deps.commandForPid = () =>
+        "codex app-server --listen ws://127.0.0.1:4500";
+      deps.listeningPids = () => [APP_SERVER];
+      deps.signal = (pid, signal) => {
+        signals.push(`${pid}:${signal}`);
+      };
+      const result = cleanupRunOwnedProcesses(
+        b.runDir,
+        readRunManifest(b.manifestPath)
+      );
+      expect(signals).toEqual(["7000:SIGTERM"]);
+      expect(
+        result.skipped.filter(
+          (entry) => entry.reason === "shared-process-skipped"
+        )
+      ).toEqual([]);
+      // Pre-signal check: a target of B's own record ignores A's walk
+      // record; a walked target of B's that A's walk records too is shared.
+      const check = sharedTargetCheck(
+        b.runDir,
+        () => readRunManifest(b.manifestPath),
+        probes
+      );
+      expect(
+        check([
+          {
+            id: APP_SERVER,
+            kind: "group",
+            reference: SNAPSHOT_AT,
+            source: "agent pane %1",
+          },
+        ]).size
+      ).toBe(0);
+      expect(
+        check([inferredTarget(APP_SERVER)]).get(`group:${APP_SERVER}`)
+      ).toMatchObject({ otherRunId: "1", reason: "shared-process-skipped" });
+      // Release: B's own app-server counts as B's while it lives, wherever
+      // its cwd, and stops counting once it is gone.
+      const reconcileB = (alive: readonly number[]) =>
+        reconcileLegacyStoppedRun(b.manifestPath, "2", {
+          classifyRecordedProcess: recordedProcessClassifier(probes),
+          groupCanStillOwnRun: (pgid) => alive.includes(pgid),
+          now: () => SNAPSHOT_AT,
+          pidCanStillOwnRun: (pid) => alive.includes(pid),
+          runtimeAbsent: () => Promise.resolve(true),
+          terminalState: "stopped",
+        });
+      expect(await reconcileB([APP_SERVER])).toMatchObject({
+        reason: expect.stringContaining("codexAppServerPid pid 7000"),
+        status: "refused",
+      });
+      // Another run's state unreadable: the app-server is B's own explicit
+      // record, which only another run's walk could name too, so B's
+      // cleanup still ends it.
+      const c = join(storage, "repo-shared", "3");
+      mkdirSync(c, { recursive: true });
+      writeFileSync(join(c, "manifest.json"), "{ torn");
+      expect(readOtherRunIndex(b.runDir, [storage])).toMatchObject({
+        kind: "unknown",
+      });
+      cleanupRunOwnedProcesses(b.runDir, readRunManifest(b.manifestPath));
+      expect(signals).toEqual(["7000:SIGTERM", "7000:SIGTERM"]);
+      rmSync(c, { force: true, recursive: true });
+      expect(await reconcileB([])).toMatchObject({ status: "changed" });
+    }
+  );
+});
+
+test("this run's own tmux socket on a command line never makes a process shared with another run on the same tmux server", async () => {
+  const SOCKET = "/private/tmp/tmux-501/default";
+  await withTwoRuns("working", { tmuxSocket: SOCKET }, ({ a, b, storage }) => {
+    writeRunManifest(a.manifestPath, {
+      ...(readRunManifest(a.manifestPath) as RunManifest),
+      tmuxSocket: SOCKET,
+    });
+    const other = {
+      runDir: b.runDir,
+      runId: "2",
+      session: "repo-shared-loop-2",
+      socket: SOCKET,
+    };
+    const command = `tmux -S ${SOCKET} capture-pane -p -t repo-shared-loop-1:0`;
+    expect(
+      commandNamesRun(command, other, {
+        runId: "1",
+        session: "repo-shared-loop-1",
+        socket: SOCKET,
+      })
+    ).toBeUndefined();
+    // A socket that is not this run's still names the other run.
+    expect(commandNamesRun(command, other, { runId: "1" })).toBe("tmux socket");
+    recordWalkedGroup(a.runDir, 7100);
+    const table = [row(PANE, 1, PANE), row(7100, PANE, 7100)];
+    const probes = fakeProbes(
+      storage,
+      table,
+      { 7100: a.workspace },
+      { 7100: command }
+    );
+    useCleanupProbes(probes);
+    const collected = collectRunAgentGroups(
+      a.runDir,
+      readRunManifest(a.manifestPath)
+    );
+    expect(collected.groups?.map((target) => target.id)).toEqual([PANE, 7100]);
+    expect(collected.skipped).toEqual([]);
+    expect(
+      sharedTargetCheck(
+        a.runDir,
+        () => readRunManifest(a.manifestPath),
+        probes
+      )([inferredTarget(7100)]).size
+    ).toBe(0);
+  });
+});
+
+test("a walked group whose ancestor's command line names live B's run directory (B's tmux proxy, say) is shared, though nothing records either", async () => {
+  await withTwoRuns("working", {}, async ({ a, b, storage }) => {
+    const PROXY = 7860;
+    const CHILD = 7861;
+    recordWalkedGroup(a.runDir, CHILD);
+    const table = [
+      row(PANE, 1, PANE),
+      row(PROXY, 1, PROXY),
+      row(CHILD, PROXY, CHILD),
+    ];
+    const probes = fakeProbes(
+      storage,
+      table,
+      { [CHILD]: a.workspace, [PROXY]: a.workspace },
+      { [PROXY]: `loop __codex-tmux-proxy ${b.runDir} %2` }
+    );
+    useCleanupProbes(probes);
+    const collected = collectRunAgentGroups(
+      a.runDir,
+      readRunManifest(a.manifestPath)
+    );
+    expect(collected.skipped).toContainEqual(
+      expect.objectContaining({
+        detail: expect.stringContaining(
+          `ancestor pid ${PROXY}'s command names run 2's run directory`
+        ),
+        otherRunId: "2",
+        pid: CHILD,
+        reason: "shared-process-skipped",
+      })
+    );
+    const signals: string[] = [];
+    await terminateTargets(
+      [inferredTarget(CHILD)],
+      fakeTermination(signals, {
+        sharedSkips: sharedTargetCheck(
+          a.runDir,
+          () => readRunManifest(a.manifestPath),
+          probes
+        ),
+      })
+    );
+    expect(signals).toEqual([]);
+  });
+});
+
+test("the ancestor walk stops at this run's pane processes: the shared tmux server above them, started by another run's session, never makes this run's tool groups shared", async () => {
+  await withTwoRuns("working", {}, ({ a, storage }) => {
+    const SERVER = 400;
+    recordWalkedGroup(a.runDir, 7150);
+    const table = [
+      row(SERVER, 1, SERVER),
+      row(PANE, SERVER, PANE),
+      row(601, PANE, 601),
+      row(7150, 601, 7150),
+    ];
+    const probes = fakeProbes(
+      storage,
+      table,
+      { 7150: a.workspace },
+      { [SERVER]: "tmux new-session -d -s repo-shared-loop-2" }
+    );
+    useCleanupProbes(probes);
+    const collected = collectRunAgentGroups(
+      a.runDir,
+      readRunManifest(a.manifestPath)
+    );
+    expect(collected.groups?.map((target) => target.id)).toContain(7150);
+    expect(collected.skipped).toEqual([]);
+    expect(
+      sharedTargetCheck(
+        a.runDir,
+        () => readRunManifest(a.manifestPath),
+        probes
+      )([inferredTarget(7150)]).size
+    ).toBe(0);
+  });
+});
+
+test("after the run's panes end, a live walked group working outside the workspace stops counting only if a snapshot saw it re-parented while its pane lived; a group the teardown targeted and could not end still blocks", async () => {
+  await withTwoRuns("working", {}, async ({ a, storage }) => {
+    const GROUP = 7450;
+    recordWalkedGroup(a.runDir, GROUP);
+    // The teardown's collection, while the pane lives and the group hangs
+    // off it: a target (run-owned), and never marked re-parented.
+    const live = [
+      row(PANE, 1, PANE),
+      row(601, PANE, 601),
+      row(GROUP, 601, GROUP),
+    ];
+    useCleanupProbes(
+      fakeProbes(storage, live, { [GROUP]: "/Users/someone/.cache" })
+    );
+    const collected = collectRunAgentGroups(
+      a.runDir,
+      readRunManifest(a.manifestPath)
+    );
+    expect(collected.groups?.map((target) => target.id)).toContain(GROUP);
+    expect(
+      readAgentGroupRecords(a.runDir).find((record) => record.pgid === GROUP)
+        ?.reparentedAt
+    ).toBeUndefined();
+    // The kill did not end it (EPERM, or it survived SIGKILL's wait); the
+    // pane is gone and the group re-parented to launchd.
+    const gone = [row(GROUP, 1, GROUP)];
+    const reconcile = () =>
+      reconcileA(
+        a.manifestPath,
+        recordedProcessClassifier(
+          fakeProbes(storage, gone, { [GROUP]: "/Users/someone/.cache" })
+        ),
+        [GROUP]
+      );
+    expect(await reconcile()).toMatchObject({
+      reason: expect.stringContaining(`agent-group-${GROUP}.json`),
+      status: "refused",
+    });
+    // A snapshot without the pane cannot tell a daemon from an orphan.
+    recordAgentDescendantGroups({
+      groupAlive: () => true,
+      now: () => SNAPSHOT_AT,
+      runDir: a.runDir,
+      table: gone,
+    });
+    expect(await reconcile()).toMatchObject({ status: "refused" });
+    // Nor can a snapshot whose table hangs the group off a process that is
+    // neither the run's nor launchd, even while the pane lives.
+    recordAgentDescendantGroups({
+      groupAlive: () => true,
+      now: () => SNAPSHOT_AT,
+      runDir: a.runDir,
+      table: [row(PANE, 1, PANE), row(4444, 1, 4444), row(GROUP, 4444, GROUP)],
+    });
+    expect(
+      readAgentGroupRecords(a.runDir).find((record) => record.pgid === GROUP)
+        ?.reparentedAt
+    ).toBeUndefined();
+    expect(await reconcile()).toMatchObject({ status: "refused" });
+    // A snapshot while the pane lived saw it re-parented to launchd: a
+    // daemon that left the run; outside the workspace it does not count.
+    recordAgentDescendantGroups({
+      groupAlive: () => true,
+      now: () => SNAPSHOT_AT,
+      runDir: a.runDir,
+      table: [row(PANE, 1, PANE), row(GROUP, 1, GROUP)],
+    });
+    expect(
+      readAgentGroupRecords(a.runDir).find((record) => record.pgid === GROUP)
+        ?.reparentedAt
+    ).toBe(SNAPSHOT_AT);
+    expect(await reconcile()).toMatchObject({ status: "changed" });
+  });
+});
+
+test("this file's HOME is an isolated empty directory, so the default probes never read the machine's own runs", () => {
+  expect(isolatedHome).not.toBe("");
+  expect(defaultStorageRoots("/tmp/loop-run-x")).toEqual([
+    join(isolatedHome, ".loop", "runs"),
   ]);
 });
 

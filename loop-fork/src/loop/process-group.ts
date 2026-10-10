@@ -184,6 +184,84 @@ export const descendantsOf = (
   return found;
 };
 
+/** How far a parent chain is followed before it is judged unknown. */
+const MAX_CHAIN_DEPTH = 64;
+
+/**
+ * Every ancestor of `members` in one table snapshot, nearest first: each
+ * member's parent chain is followed up to (not including) launchd (pid 1 or
+ * 0), a pid in `stops`, a pid missing from the table, or a cycle. Members
+ * themselves are not included.
+ */
+export const ancestorsOf = (
+  members: readonly ProcessRow[],
+  table: readonly ProcessRow[],
+  stops: ReadonlySet<number> = new Set()
+): ProcessRow[] => {
+  const rows = new Map(table.map((row) => [row.pid, row]));
+  const memberPids = new Set(members.map((row) => row.pid));
+  const seen = new Set<number>();
+  const found: ProcessRow[] = [];
+  for (const member of members) {
+    let ppid = member.ppid;
+    for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
+      if (ppid <= 1 || stops.has(ppid) || seen.has(ppid)) {
+        break;
+      }
+      const parent = rows.get(ppid);
+      if (!parent) {
+        break;
+      }
+      seen.add(ppid);
+      if (!memberPids.has(ppid)) {
+        found.push(parent);
+      }
+      ppid = parent.ppid;
+    }
+  }
+  return found;
+};
+
+export type ParentChain =
+  | { readonly kind: "absent" }
+  | { readonly kind: "launchd" }
+  | { readonly kind: "parent"; readonly pid: number };
+
+/**
+ * Whether group `pgid` hangs off launchd: every member's parent chain,
+ * followed only through members of the group itself or of `viaGroups`, ends
+ * at pid 1 (or 0). Otherwise the first parent outside them (`parent`), which
+ * may also be a pid missing from the snapshot or a chain too long to follow.
+ */
+export const parentChainOf = (
+  pgid: number,
+  table: readonly ProcessRow[],
+  viaGroups: ReadonlySet<number> = new Set()
+): ParentChain => {
+  const rows = new Map(table.map((row) => [row.pid, row]));
+  const members = table.filter((row) => row.pgid === pgid);
+  if (members.length === 0) {
+    return { kind: "absent" };
+  }
+  for (const member of members) {
+    let ppid = member.ppid;
+    let depth = 0;
+    while (ppid > 1) {
+      const parent = rows.get(ppid);
+      if (
+        !parent ||
+        depth >= MAX_CHAIN_DEPTH ||
+        !(parent.pgid === pgid || viaGroups.has(parent.pgid))
+      ) {
+        return { kind: "parent", pid: ppid };
+      }
+      ppid = parent.ppid;
+      depth += 1;
+    }
+  }
+  return { kind: "launchd" };
+};
+
 /**
  * Whether a live process that `ps` reports started at `startedAtMs` (truncated
  * to the second) may have existed at `referenceMs`. A start in the same second
