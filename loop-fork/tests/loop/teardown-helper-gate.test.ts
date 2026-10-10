@@ -11,8 +11,10 @@
 //    kill, and release wiring of `defaultGovernessDeps` (nothing of it is
 //    injected), against real child processes standing in for the run's
 //    detached bridge and utility workers. No live tmux server is contacted:
-//    `TMUX_TMPDIR` points at an empty scratch directory for the kill, and the
-//    run's recorded socket does not exist.
+//    the session kill is a plain `tmux kill-session`, whose child sees the
+//    launch environment (Bun.spawn ignores later `process.env` edits), so it
+//    goes to the empty scratch `TMUX_TMPDIR` of `scripts/test-hermetic.sh`;
+//    and the run's recorded socket does not exist.
 
 import { afterEach, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
@@ -381,7 +383,8 @@ productionWiringTest(
       TMUX_TMPDIR: process.env.TMUX_TMPDIR,
     };
     try {
-      // The kill goes to an empty scratch tmux directory, never a live server.
+      // Children spawned through node:child_process see this scratch tmux
+      // directory; Bun.spawn children (the kill) see the launcher's.
       process.env.TMUX_TMPDIR = tmuxTmp;
       Reflect.deleteProperty(process.env, "TMUX");
       Reflect.deleteProperty(process.env, "LOOP_TMUX_SOCKET");
