@@ -792,7 +792,7 @@ describe("governess-beat close on a real Temporal test server", () => {
       });
       // The beat workflow exists, as it does once the governess journaled.
       await startBeat(runId);
-      expect(await statusOf(runId)).toBe("RUNNING");
+      expect(await statusOf(ownedId(runId))).toBe("RUNNING");
       const config = {
         agents: [],
         epoch: 1,
@@ -820,7 +820,9 @@ describe("governess-beat close on a real Temporal test server", () => {
           },
           closeBeatWorkflow: async (closing, reason) => {
             const closed = await base.closeBeatWorkflow?.(closing, reason);
-            order.push(`closed:${closed?.outcome}:${await statusOf(runId)}`);
+            order.push(
+              `closed:${closed?.outcome}:${await statusOf(ownedId(runId))}`
+            );
             return closed;
           },
           collectAgentGroups: () => {
@@ -846,7 +848,7 @@ describe("governess-beat close on a real Temporal test server", () => {
           },
           now: () => Date.parse("2026-10-10T00:00:00.000Z"),
           releaseWorkspaceAfterTeardown: async () => {
-            order.push(`release:${await statusOf(runId)}`);
+            order.push(`release:${await statusOf(ownedId(runId))}`);
             return { detail: "changed", released: true };
           },
           terminateRunProcessGroups: (_ending, targets) => {
@@ -875,7 +877,7 @@ describe("governess-beat close on a real Temporal test server", () => {
       // The teardown's later journal transitions stay in the file and never
       // reopen the closed workflow.
       expect(config.journalBackend).toBeUndefined();
-      expect(await statusOf(runId)).toBe("TERMINATED");
+      expect(await statusOf(ownedId(runId))).toBe("TERMINATED");
     } finally {
       rmSync(runDir, { force: true, recursive: true });
     }
