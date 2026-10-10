@@ -11,6 +11,11 @@ import { join } from "node:path";
 import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import { serve } from "bun";
+import {
+  a2aV2EnvFilePath,
+  probeA2AV2Database,
+  withA2AV2EnvFile,
+} from "./a2a-v2-env";
 import { readBridgeStatus } from "./bridge-store";
 import {
   BridgeSupervisorMessageDeliveryPort,
@@ -231,6 +236,8 @@ interface ServerConfig {
  */
 export interface LoopOrchestrationServerOptions {
   a2aV2Service?: SupervisorA2AV2Service;
+  /** Test seam: the start-time ledger database probe (decideA2AV2Plane). */
+  probeA2AV2Database?: (databaseUrl: string) => Promise<boolean>;
   /**
    * Stops the server as SIGINT or SIGTERM would, for an embedding caller or a
    * test driving the whole composition. The signals still stop it.
@@ -250,6 +257,14 @@ export interface LoopOrchestrationFetchHandlerOptions {
     | "assignmentRoute"
     | "resultGraphRoute"
   >;
+  /**
+   * fix8: whether the A2A V2 plane is mounted ("ready"), not configured
+   * ("off": the config has no a2aV2 section) or configured but disabled at
+   * start ("disabled": its ledger database is unset or unreachable). /healthz
+   * reports it as `a2aV2`; it does not change `state`, which V1 owns. The
+   * server always supplies it; the field is left out only when it is not.
+   */
+  a2aV2State?: () => A2AV2PlaneState;
   authenticator: SupervisorControlSurfaceAuthenticator;
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
   /**
@@ -275,6 +290,7 @@ const orchestrationHealth = (
   options: LoopOrchestrationFetchHandlerOptions
 ): Response =>
   Response.json({
+    ...(options.a2aV2State ? { a2aV2: options.a2aV2State() } : {}),
     ...(options.notEnrolledSeats
       ? { notEnrolledCount: options.notEnrolledSeats().length }
       : {}),
@@ -1638,14 +1654,53 @@ const validateConfiguredRuntimeEnvironment = (
       );
     }
   }
-  if (config.a2aV2 && !env[config.a2aV2.databaseUrlEnv]) {
-    throw new Error(
-      `missing orchestration A2A V2 database environment ${config.a2aV2.databaseUrlEnv}`
-    );
-  }
+  // fix8: an unset database variable no longer refuses start; it disables V2
+  // (decideA2AV2Plane). A missing or short result graph key still refuses:
+  // that is a secret misconfiguration, not an outage.
   if (config.a2aV2) {
     resolveResultGraphKeys(config.a2aV2, env);
   }
+};
+
+/** Whether the configured A2A V2 plane is mounted; see `a2aV2State`. */
+export type A2AV2PlaneState = "disabled" | "off" | "ready";
+
+/**
+ * fix8: V2 is on whenever the config has an a2aV2 section, and never at the
+ * price of V1. No section: one line naming `a2a-v2 init`. A section whose
+ * ledger database variable is unset, or whose database does not answer within
+ * the probe bound: one line saying V2 is disabled, and the server starts V1
+ * alone. Lines name variables and paths, never a URL.
+ */
+export const decideA2AV2Plane = async (input: {
+  config: ServerConfig;
+  configPath: string;
+  env: NodeJS.ProcessEnv;
+  log: (line: string) => void;
+  probe?: (databaseUrl: string) => Promise<boolean>;
+}): Promise<{ config: ServerConfig; state: A2AV2PlaneState }> => {
+  const a2aConfig = input.config.a2aV2;
+  if (!a2aConfig) {
+    input.log(
+      `A2A V2 off: run loop orchestration a2a-v2 init ${input.configPath}`
+    );
+    return { config: input.config, state: "off" };
+  }
+  const { a2aV2: _section, ...v1Only } = input.config;
+  const databaseUrl = input.env[a2aConfig.databaseUrlEnv];
+  if (!databaseUrl) {
+    input.log(
+      `A2A V2 disabled: ledger database variable ${a2aConfig.databaseUrlEnv} is not set (neither in the environment nor in ${a2aV2EnvFilePath(input.configPath)}); V1 continues`
+    );
+    return { config: v1Only, state: "disabled" };
+  }
+  if (!(await (input.probe ?? probeA2AV2Database)(databaseUrl))) {
+    input.log(
+      `A2A V2 disabled: the ledger database named by ${a2aConfig.databaseUrlEnv} is unreachable; V1 continues. Restart the service once it answers.`
+    );
+    return { config: v1Only, state: "disabled" };
+  }
+  return { config: input.config, state: "ready" };
 };
 
 /**
@@ -1662,7 +1717,10 @@ export const resultGraphKeyFingerprintsForConfig = (
   if (!config.a2aV2) {
     throw new Error("orchestration config has no a2aV2 route");
   }
-  const keys = resolveResultGraphKeys(config.a2aV2, env);
+  const keys = resolveResultGraphKeys(
+    config.a2aV2,
+    withA2AV2EnvFile(configPath, env)
+  );
   if (keys.length === 0) {
     throw new Error("orchestration a2aV2 has no resultGraphKeyEnv");
   }
@@ -1688,7 +1746,10 @@ export const resultGraphWorkflowIdForConfig = (
   if (!config.a2aV2) {
     throw new Error("orchestration config has no a2aV2 route");
   }
-  const key = resolveResultGraphKey(config.a2aV2, env);
+  const key = resolveResultGraphKey(
+    config.a2aV2,
+    withA2AV2EnvFile(configPath, env)
+  );
   if (!key) {
     throw new Error("orchestration a2aV2 has no resultGraphKeyEnv");
   }
@@ -1730,7 +1791,9 @@ export const recoveryQuarantineForConfig = async (
   if (!config.a2aV2) {
     throw new Error("orchestration config has no a2aV2 route");
   }
-  const databaseUrl = env[config.a2aV2.databaseUrlEnv];
+  const databaseUrl = withA2AV2EnvFile(configPath, env)[
+    config.a2aV2.databaseUrlEnv
+  ];
   if (!databaseUrl) {
     throw new Error(
       `missing orchestration A2A V2 database environment ${config.a2aV2.databaseUrlEnv}`
@@ -1796,11 +1859,28 @@ export const recoveryQuarantineForConfig = async (
 
 export const runLoopOrchestrationServer = async (
   configPath: string,
-  env: NodeJS.ProcessEnv = process.env,
+  inputEnv: NodeJS.ProcessEnv = process.env,
   options: LoopOrchestrationServerOptions = {}
 ): Promise<void> => {
-  const config = parseLoopOrchestrationConfig(readConfigFile(configPath));
-  validateConfiguredRuntimeEnvironment(config, env, options);
+  const log = (line: string) => console.error(line);
+  // fix8: the secrets `a2a-v2 init` wrote next to the config, under whatever
+  // the process environment already sets.
+  const env = withA2AV2EnvFile(configPath, inputEnv, log);
+  const parsed = parseLoopOrchestrationConfig(readConfigFile(configPath));
+  validateConfiguredRuntimeEnvironment(parsed, env, options);
+  const plane: { config: ServerConfig; state: A2AV2PlaneState } =
+    options.a2aV2Service
+      ? { config: parsed, state: "ready" }
+      : await decideA2AV2Plane({
+          config: parsed,
+          configPath,
+          env,
+          log,
+          ...(options.probeA2AV2Database
+            ? { probe: options.probeA2AV2Database }
+            : {}),
+        });
+  const config = plane.config;
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
   const directory = new LoopSupervisorDirectory(config.supervisors);
   const mailboxes = new Map(
@@ -1958,6 +2038,7 @@ export const runLoopOrchestrationServer = async (
     }, 250);
     const handler = createLoopOrchestrationFetchHandler({
       a2aV2Service,
+      a2aV2State: () => plane.state,
       authenticator: authenticator(config, env),
       host,
       notEnrolledSeats: () => notEnrolled,

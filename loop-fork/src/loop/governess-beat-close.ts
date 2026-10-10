@@ -1,7 +1,8 @@
 // Close a finished run's governess-beat workflow.
 //
-// A run launched with LOOP_GOVERNESS_TEMPORAL_ADDRESS and
-// LOOP_GOVERNESS_TEMPORAL_NAMESPACE journals into workflow
+// A run whose journal resolves to Temporal (the LOOP_GOVERNESS_TEMPORAL_*
+// settings, or since fix8 the default derived from the orchestration config;
+// see resolveGovernessTemporalConfig) journals into workflow
 // `governess-beat:v2:<repoId>:<runId>:<taskQueue>` (governess-beat-identity.ts;
 // before fix7, `governess-beat:<runId>`). Nothing in the workflow ever
 // returns, so without this module every stopped, failed or abandoned run
@@ -35,7 +36,7 @@ import {
 } from "./governess-beat-identity";
 import {
   type GovernessTemporalConfig,
-  governessTemporalConfigFromEnv,
+  governessTemporalConfigOrDefault,
 } from "./governess-temporal-journal";
 import { runProcessCleanupInternals } from "./run-process-cleanup";
 import {
@@ -268,8 +269,8 @@ type ConnectControl = (
 
 /**
  * Close the beat workflow of one run a launcher-side path has just made
- * terminal. A no-op, without loading the SDK, when the Temporal settings are
- * unset.
+ * terminal. A no-op, without loading the SDK, when the journal resolves off
+ * (resolveGovernessTemporalConfig: opted out, or no orchestration config).
  */
 export const closeGovernessBeatForTerminalRun = async (input: {
   connect?: ConnectControl;
@@ -280,7 +281,7 @@ export const closeGovernessBeatForTerminalRun = async (input: {
   reason: string;
   runId: string;
 }): Promise<GovernessBeatCloseResult | undefined> => {
-  const config = governessTemporalConfigFromEnv(input.env);
+  const config = governessTemporalConfigOrDefault(input.env);
   if (!config) {
     return undefined;
   }
@@ -428,7 +429,7 @@ const reconcileConfig = (
   log: (line: string) => void
 ): GovernessTemporalConfig | undefined => {
   try {
-    return governessTemporalConfigFromEnv(env);
+    return governessTemporalConfigOrDefault(env);
   } catch (error) {
     log(`[loop] governess-beat reconcile skipped: ${errorText(error)}`);
     return undefined;
@@ -440,7 +441,7 @@ const reconcileConfig = (
  * manifest is terminal and whose tmux session is gone. Idempotent by
  * construction, because it reads the server's status each time and closing a
  * closed workflow is a no-op. Never throws; problems are logged. With the
- * Temporal settings unset it reads nothing and dials nothing.
+ * journal resolved off it reads nothing and dials nothing.
  */
 export const reconcileGovernessBeatWorkflows = async (
   options: {

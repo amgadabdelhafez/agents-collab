@@ -30,7 +30,10 @@ import {
 } from "./governess-journal";
 import { decideGovernessPolicy } from "./governess-policy";
 import { driverLeaseIsCurrent } from "./governess-runtime";
-import { GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE } from "./governess-temporal-journal";
+import {
+  governessHostTaskQueue,
+  resolveGovernessTemporalConfig,
+} from "./governess-temporal-journal";
 import { migrateLegacyGovernessState } from "./legacy-governess-compat";
 import { loadRunState, readRunManifestHandle } from "./run-state";
 import { collectSeatSignals, type SeatSignals } from "./seat-signals";
@@ -503,11 +506,15 @@ export const runGovernessUtilityCommand = (
     const records = governessJournalFromHistory(
       readGovernessJournal(join(storage.runDir, "governess-control.jsonl"))
     );
-    // The id this repo's journal writes on the configured (or default) task
-    // queue, and the pre-fix7 id an older build may have left in flight.
+    // The id this repo's journal writes on the configured (or, since fix8,
+    // the per-host default) task queue, and the pre-fix7 id an older build
+    // may have left in flight.
+    const resolution = resolveGovernessTemporalConfig(process.env);
     const taskQueue =
-      process.env.LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE?.trim() ||
-      GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE;
+      resolution.kind === "configured"
+        ? resolution.config.taskQueue
+        : process.env.LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE?.trim() ||
+          governessHostTaskQueue();
     process.stdout.write(
       `${JSON.stringify(
         {

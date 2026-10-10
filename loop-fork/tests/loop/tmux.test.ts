@@ -6787,6 +6787,29 @@ test("governess env carries the gov-6 Temporal journal settings, and only when s
   ).toBe(false);
 });
 
+test("governess env carries the fix8 journal opt-out and orchestration config override, and only when set", () => {
+  const optedOut = tmuxInternals.governessEnv(
+    makePairedOptions(),
+    {
+      LOOP_GOVERNESS_TEMPORAL: "off",
+      LOOP_ORCHESTRATION_CONFIG: "/scratch/orchestration.json",
+    },
+    "/repo"
+  );
+  expect(optedOut).toContain("LOOP_GOVERNESS_TEMPORAL=off");
+  expect(optedOut).toContain(
+    "LOOP_ORCHESTRATION_CONFIG=/scratch/orchestration.json"
+  );
+  const without = tmuxInternals.governessEnv(makePairedOptions(), {}, "/repo");
+  expect(
+    without.some(
+      (entry) =>
+        entry.startsWith("LOOP_GOVERNESS_TEMPORAL=") ||
+        entry.startsWith("LOOP_ORCHESTRATION_CONFIG=")
+    )
+  ).toBe(false);
+});
+
 test("every LOOP_GOVERNESS_TEMPORAL_* variable read by source reaches the Governess pane", () => {
   const names = new Set<string>();
   const walk = (directory: string): void => {
@@ -6805,7 +6828,17 @@ test("every LOOP_GOVERNESS_TEMPORAL_* variable read by source reaches the Govern
   };
   walk(join(import.meta.dir, "..", "..", "src"));
   expect([...names].sort()).toEqual(
-    [...tmuxInternals.governessTemporalEnvKeys].sort()
+    [...tmuxInternals.governessTemporalEnvKeys]
+      .filter((key) => key.startsWith("LOOP_GOVERNESS_TEMPORAL_"))
+      .sort()
+  );
+  // fix8: the journal is on by default, so the opt-out switch and the
+  // orchestration config override must reach the pane too.
+  expect(tmuxInternals.governessTemporalEnvKeys).toContain(
+    "LOOP_GOVERNESS_TEMPORAL"
+  );
+  expect(tmuxInternals.governessTemporalEnvKeys).toContain(
+    "LOOP_ORCHESTRATION_CONFIG"
   );
 });
 

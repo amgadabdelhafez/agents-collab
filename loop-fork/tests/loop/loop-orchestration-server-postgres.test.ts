@@ -716,6 +716,8 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
     // /healthz stays ready for the live recipient and counts the peer,
     // without naming it: the seat id is for the control principal only.
     expect(await health(fixture)).toEqual({
+      // fix8: V2 is mounted, so /healthz says so.
+      a2aV2: "ready",
       a2aV2NotEnrolledDeferral: {
         boundMs: 900_000,
         deferredDeliveries: 0,
@@ -760,6 +762,8 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
       )
     );
     expect(await health(fixture)).toEqual({
+      // fix8: V2 is mounted, so /healthz says so.
+      a2aV2: "ready",
       a2aV2NotEnrolledDeferral: {
         boundMs: 900_000,
         deferredDeliveries: 0,
@@ -1664,6 +1668,7 @@ test("the orchestration server reports its configured deferral bounds and counte
       await fetch(`http://127.0.0.1:${fixture.port}/healthz`)
     ).json();
     expect(body).toEqual({
+      a2aV2: "ready",
       a2aV2NotEnrolledDeferral: {
         boundMs: 60_000,
         deferredDeliveries: 0,

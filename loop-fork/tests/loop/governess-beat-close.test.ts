@@ -23,7 +23,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultPayloadConverter } from "@temporalio/client";
@@ -58,6 +58,7 @@ import {
   attachGovernessJournalBackend,
   createGovernessTemporalJournalClient,
   type GovernessTemporalJournalClient,
+  governessHostTaskQueue,
 } from "../../src/loop/governess-temporal-journal";
 import {
   createRunManifest,
@@ -1068,6 +1069,72 @@ describe("governess-beat close without a server", () => {
       workflowId: ownedId("6", REPO, DEFAULT_QUEUE),
     });
     expect(dialled).toBe(0);
+  });
+
+  test("default (fix8): the close reads its server from the orchestration config, uses the per-host queue, and leaves the legacy execution on the old queue alone", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beat-close-default-"));
+    const configPath = join(root, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        address: "192.0.2.10:7233",
+        namespace: "harness",
+        schema: "loop-orchestration-server.v1",
+      })
+    );
+    const hostQueue = governessHostTaskQueue();
+    const owned = ownedId("7", REPO, hostQueue);
+    const legacy = governessBeatLegacyWorkflowId("7");
+    const control = fakeControl({
+      // A pre-fix8 run of this repo journalled on the old default queue.
+      [legacy]: { memo: { loopRepoId: REPO }, status: "RUNNING" },
+      [owned]: {
+        memo: ownerMemo("7", REPO, hostQueue),
+        status: "RUNNING",
+        taskQueue: hostQueue,
+      },
+    });
+    const dialled: string[] = [];
+    try {
+      const closed = await closeGovernessBeatForTerminalRun({
+        connect: (config) => {
+          dialled.push(
+            `${config.address}/${config.namespace}/${config.taskQueue}`
+          );
+          return Promise.resolve(control);
+        },
+        env: { LOOP_ORCHESTRATION_CONFIG: configPath },
+        manifest: manifestFor("7", "stopped"),
+        manifestPath: "/nonexistent/manifest.json",
+        reason: "test",
+        runId: "7",
+      });
+      expect(dialled).toEqual([`192.0.2.10:7233/harness/${hostQueue}`]);
+      expect(closed).toMatchObject({
+        legacy: { outcome: "refused-foreign", workflowId: legacy },
+        outcome: "terminated",
+        workflowId: owned,
+      });
+      expect(control.calls).not.toContain(
+        `terminate:${legacy}@run-of-${legacy}`
+      );
+      // Opted out: nothing is dialled even with the config present.
+      expect(
+        await closeGovernessBeatForTerminalRun({
+          connect: () => Promise.reject(new Error("must not dial")),
+          env: {
+            LOOP_GOVERNESS_TEMPORAL: "off",
+            LOOP_ORCHESTRATION_CONFIG: configPath,
+          },
+          manifest: manifestFor("7", "stopped"),
+          manifestPath: "/nonexistent/manifest.json",
+          reason: "test",
+          runId: "7",
+        })
+      ).toBeUndefined();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 
   test("launcher: a failed run's owned workflow, and its owned legacy one, are terminated by exact run", async () => {

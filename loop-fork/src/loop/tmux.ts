@@ -1877,12 +1877,17 @@ const usageTrackerEnvFromFiles = (
   ];
 };
 
-// gov-6: the Governess writes its beat journal through Temporal only when these
-// reach its pane. governessEnv is an allowlist, so they must be listed here.
+// gov-6: the Governess's beat journal settings. governessEnv is an allowlist,
+// so they must be listed here. fix8: the journal is on by default (derived
+// from the orchestration config), so the opt-out switch and the config path
+// override must reach the pane too, or the pane would journal where the
+// launcher would not.
 const GOVERNESS_TEMPORAL_ENV_KEYS = [
+  "LOOP_GOVERNESS_TEMPORAL",
   "LOOP_GOVERNESS_TEMPORAL_ADDRESS",
   "LOOP_GOVERNESS_TEMPORAL_NAMESPACE",
   "LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE",
+  "LOOP_ORCHESTRATION_CONFIG",
 ] as const;
 
 const governessEnv = (
