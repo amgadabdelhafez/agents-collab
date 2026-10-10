@@ -158,13 +158,26 @@ before the keyed graph id and the deployment discriminator) and ef570282
 Not on r4 or the round-5 base: result graph key rotation with previous keys.
 It is on claude/fix5-key-rotation, the round-5 base plus a port of
 claude/fix4-key-rotation (226e40c2, a54a21f4) and the fixes for its two
-round-4 review majors, not merged and not installed. It is described under
+round-4 review majors. It is described under
 "Result graph key rotation (claude/fix5-key-rotation)" below; a `file:line`
 there is a path under `loop-fork/` on that branch. The recovery quarantine
 CLI is on the round-5 base only; it is described under "Recovery quarantine
 (round-5 base)" below and is not on r4.
 
-### Configuration keys added in rounds 3 and 4
+The round-5 integration line, claude/fix-integration-r5-2026-10-06 at
+9b3dca36 ("r5 integration"), is the round-5 base (c7646ed3) plus three
+merges: claude/fix5-key-rotation (41c4c1a2, merge 8e965197),
+claude/fix5-rollback-to-deployed (f148d386, merge 76a1fa32) and
+claude/fix5-temporal-replay (c2ea0eae, merge 9b3dca36). It is not merged
+into main and not installed. On it, everything said below of
+claude/fix5-key-rotation holds: `loop-fork/src` is identical at 41c4c1a2 and
+9b3dca36 (`git diff --stat 41c4c1a2 9b3dca36 -- loop-fork/src` is empty), so
+the `file:line` references of that branch apply. The replay test
+(`tests/loop/temporal-bundle-replay.test.ts`) and the rollback test
+(`tests/loop/orchestration-rollback-to-deployed.test.ts`) exist only on their
+branches and on r5 integration, not on the round-5 base.
+
+### Configuration keys added in rounds 3 to 5
 
 All are optional fields of the `a2aV2` object of the orchestration config.
 `a2aV2` keys are checked exactly, so a build that does not know a key refuses
@@ -177,7 +190,7 @@ to start with "orchestration a2aV2 has invalid fields"
 | `readinessOutageBoundMs` | r3 (11b71513) | Whole ms, 1000..86400000. How long a session readiness-store outage may defer a recipient's deliveries before each one fails as a normal retryable attempt. | 900000 (15 min) | loop-orchestration-server.ts:147-152, 560-568; supervisor-message-v2-runtime.ts:84 |
 | `workflowIdFormat` | r4 (ae877039) | `"legacy"` or `"deployment"`. The V2 workflow id format new messages are written in. | The format the ledger database records, or `"legacy"` when none is recorded. `"deployment"` is always an explicit opt-in. | loop-orchestration-server.ts:162-175, 578-597; supervisor-message-v2-delivery-ledger.ts:513-562 |
 | `notEnrolledBoundMs` | r4 (f3f8c2e1) | Whole ms, 1000..86400000. How long a recipient that is not enrolled may defer its deliveries, measured from when enrollment first failed. | 900000 (15 min) | loop-orchestration-server.ts:132-139, 550-559; supervisor-message-v2-runtime.ts:275 |
-| `previousResultGraphKeyEnvs` | claude/fix5-key-rotation only | One to eight distinct names of environment variables, each holding a result graph key this host held before `resultGraphKeyEnv` (at least 32 bytes each). Requires `resultGraphKeyEnv`; none may be its name, and no two variables may hold the same key. | No previous key. | that branch: loop-orchestration-server.ts:416-447, 703-744 |
+| `previousResultGraphKeyEnvs` | claude/fix5-key-rotation (41c4c1a2) and r5 integration (merge 8e965197); not on r4 or the round-5 base | One to eight distinct names of environment variables, each holding a result graph key this host held before `resultGraphKeyEnv` (at least 32 bytes each). Requires `resultGraphKeyEnv`; none may be its name, and no two variables may hold the same key. | No previous key. | that branch: loop-orchestration-server.ts:416-447, 703-744 |
 
 Changed in r3: a non-empty `resultArtifacts` without `resultGraphKeyEnv`
 refuses startup with "orchestration a2aV2 resultArtifacts requires
@@ -345,9 +358,10 @@ On the round-5 base the same GET also carries `"recoveryQuarantine": [...]`:
 this tenant's records an operator quarantined from recovery, each as
 `{"at", "by", "reason", "recipient", "workflowId"}` (round-5 base:
 a2a-supervisor-assignment-http.ts:72-128; supervisor-a2a-v2-service.ts:633-675).
-A quarantine never appears on /healthz, not even as a count (owner question Q2
-is open). A failing read of any section answers 503
-`{"code": "status-unavailable"}` with no cause.
+A quarantine never appears on /healthz, not even as a count. (Owner decision
+2026-10-09, Q2: unauthenticated /healthz carries no seat ids. A quarantine
+count there was not part of that decision; none is added.) A failing read of
+any section answers 503 `{"code": "status-unavailable"}` with no cause.
 
 Readiness outage semantics (d6392ce9, supervisor-message-v2-runtime.ts:145-171):
 the bound is measured from the first failure a delivery observed for that
@@ -481,9 +495,10 @@ deployment-format record therefore counts as unsettled, and every start with
 `a2aV2.workflowIdFormat` `"legacy"` (or none) is refused with "cannot return
 to legacy workflow ids" until the record is released and recovery records
 its outcome; releasing it is not enough. No outcome can be recorded by hand
-(owner question). So while a deployment-format record is quarantined, a
-return to legacy ids, including a rollback to the legacy-write default, is
-blocked. Plan the release before planning that rollback.
+(owner decision 2026-10-09: no hand-recorded terminal outcomes). So while a
+deployment-format record is quarantined, a return to legacy ids, including a
+rollback to the legacy-write default, is blocked. Plan the release before
+planning that rollback.
 
 Storage: table `loop_supervisor_message_v2_recovery_quarantine`, one active
 row per (workflow id, deployment); a release keeps the row with who, when and
@@ -611,8 +626,23 @@ What Temporal's own replay check cannot see here (mutation runs on
   contradict. Only the rollback handoff failed, with `[TMPRL1100]
   Nondeterminism error: No command scheduled for event ... TimerStarted`. An
   added command makes rollback across it unsafe for executions it touched.
-- A start or signal the new code refuses fails replay (a task graph limited to
-  one node failed the six two-node graph histories).
+- A start the new code refuses fails replay (a task graph limited to one
+  node failed the six two-node graph histories, with or without the bundle
+  regenerated).
+- A signal the new code refuses does not. Corrected 2026-10-09: this bullet
+  said a refused signal fails replay too, which no mutation run had tested.
+  `temporalWorkflow` applies every signal inside a try/catch and records a
+  refusal (any error the workflow definition throws) as that command's error
+  outcome (src/loop/temporal-workflow.ts, `applyCommand`), so the workflow
+  task succeeds and the history replays. Mutation runs on 2026-10-09 at
+  9b3dca36, each reverted: every task graph `claim` refused, and every V2
+  message `claim` refused, each with the bundle regenerated. All 22
+  histories replayed clean on both bundles; only the three live handoffs
+  failed, because the command outcome and the state differ. In-flight state
+  would change silently. The test's control fails replay only because its
+  signal handler throws out of the workflow task
+  (tests/fixtures/temporal-replay/refuse-last-signal-workflow.ts), which
+  this line's workflow never does.
 
 Draining is not available as a fallback: these executions never complete, so
 emptying them means terminating them, which V2 recovery records as
@@ -634,18 +664,30 @@ installed launcher lineage or origin/main) starts with the "Pre-upgrade
 checklist" below, which keeps that build a working rollback target.
 
 Conservative path: rolling back stays possible until an explicit flip. The
-steps name r4; they apply unchanged to the round-5 base, whose only additions
-are the quarantine table, the quarantine commands and the `recoveryQuarantine`
-section of the assignment GET. No config key was added after r4.
+steps apply to r4, the round-5 base and r5 integration; "the candidate" is
+the one build every host is upgraded to. The round-5 base adds to r4 the
+quarantine table, the quarantine commands and the `recoveryQuarantine`
+section of the assignment GET, and no config key. r5 integration adds one
+config key, `a2aV2.previousResultGraphKeyEnvs` (claude/fix5-key-rotation,
+merge 8e965197; see "Configuration keys added in rounds 3 to 5"). It is
+optional: leave it unset for the upgrade, and set it only for a key
+rotation (see "Result graph key rotation (claude/fix5-key-rotation)").
+Corrected 2026-10-09: this paragraph said no config key was added after r4,
+which was written before key rotation was merged.
 
 1. Before: back up the ledger database. Stop every host that shares it, or
    plan one host at a time knowing that a host whose format another host
    changed refuses to record until it restarts. On the candidate checkout run
-   `bun run test:file tests/loop/temporal-bundle-replay.test.ts`; all 29 pass
-   on the round-5 base, so in-flight V2 messages and task graphs need no
-   drain. If the candidate is not the round-5 base and any of them fails, do
-   not upgrade with executions in flight (see "In-flight Temporal executions
-   across a bundle change").
+   `bun run test:file tests/loop/temporal-bundle-replay.test.ts`. The file
+   is not on r4 or the round-5 base (c7646ed3): it is on
+   claude/fix5-temporal-replay (c2ea0eae) and r5 integration (merge
+   9b3dca36). All 29 pass on r5 integration (2026-10-09, at 9b3dca36 with
+   only test files changed), so in-flight V2 messages and task graphs need
+   no drain when upgrading to it from 40097564 or ef570282. A candidate
+   without the file (r4, the round-5 base) was not checked this way: do not
+   upgrade to it with V2 executions in flight. If any of the 29 fails on the
+   candidate, do not upgrade with executions in flight (see "In-flight
+   Temporal executions across a bundle change").
 2. Config, on every host: if `resultArtifacts` has entries, add
    `resultGraphKeyEnv` and provide the key through the secret store.
    Recompute each entry's `graphWorkflowId` with `loop orchestration
@@ -655,16 +697,20 @@ section of the assignment GET. No config key was added after r4.
    Exception: from an r3-written database, set `workflowIdFormat`
    `"deployment"` now, or start is refused while its deployment rows are
    unsettled.
-3. Start every host on r4.
+3. Start every host on the candidate checked in step 1, the same build on
+   every host that shares the database. (Corrected 2026-10-09: this step
+   said "on r4" whatever the candidate.)
 4. Verify on each host: the legacy-format start line; `GET /healthz` reports
    `state` "ready" and `notEnrolledCount`; the authenticated `GET
    <routePath>/assignment` answers; any "will never publish" lines are
    expected and listed. In the database:
    `SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`
    returns `legacy` and this build's id.
-5. Flip, optional and pending owner question Q1: only after every host that
-   shares the database runs r4, set `workflowIdFormat` `"deployment"` on every
-   one of them and restart each. Verify the deployment-format start line and
+5. Flip, optional and not part of the shipping path (owner decision
+   2026-10-09: legacy write is the shipping default, no flip): only after
+   every host that shares the database runs the candidate (r4 or later), set
+   `workflowIdFormat` `"deployment"` on every one of them and restart each.
+   Verify the deployment-format start line and
    the marker value `deployment`. From then on 40097564 can record nothing
    on this database and its recovery refuses deployment-format rows.
 
@@ -716,7 +762,8 @@ below.
   record (`loop orchestration v2-quarantine-list <config-path>`) and every
   same-queue conflict; a record that still fails refuses the older build's
   start.
-- From claude/fix5-key-rotation to the round-5 base, r4 or 40097564: remove
+- From claude/fix5-key-rotation or r5 integration to the round-5 base, r4
+  or 40097564: remove
   `previousResultGraphKeyEnvs` first (an older build refuses the unknown
   field and does not start). An older build holds only the primary key, so
   every binding still listed under `underPreviousResultGraphKey` stops
@@ -914,9 +961,9 @@ launcher lineage remains available as a degraded alternative (Rollback B1).
    counts (a monitor that reads `notEnrolledCount` must tolerate its
    absence); `~/.loop/logs/loop-orchestration.err` has no "has invalid
    fields".
-6. Database: leave it. Do not drop, migrate or edit it. Whether a
-   decommissioned V2 deployment's rows may be closed by hand is an open owner
-   question; no override exists.
+6. Database: leave it. Do not drop, migrate or edit it. A decommissioned V2
+   deployment's rows are not closed by hand (owner decision 2026-10-09: no
+   hand-recorded terminal outcomes); no override exists.
 7. V2 executions: leave them running. Do not terminate them: an execution the
    engine closed while its message was open is recorded `terminated` at the
    next V2 sweep (test "a sweep records terminated for an execution the
@@ -978,8 +1025,8 @@ delivery and deadlines.
    `~/.local/bin/loop`. That path is shared with every other project and
    changes on any install: on 2026-10-07 it is ba3671b6
    (`ba3671b6a21b21159f5a639103c504a29251385eedcfac8b9932210666abf600`,
-   ea968d82). Pin the packet's floor explicitly instead, so the rollback
-   does not depend on what was installed last:
+   ea968d82). Pin the packet's floor explicitly instead (owner decision
+   2026-10-09), so the rollback does not depend on what was installed last:
    `sed -i '' 's#^LOOP_BIN=.*#LOOP_BIN=/Users/amgad/.loop/release-backups/loop.pre-no-session-pressure.678e2fde.20261004T195614Z#' ~/.config/loop/orchestration.env`,
    after `shasum -a 256` of that file prints
    `678e2fde4101ab93e50cb596adeedc4ab97460676e0a0e2a13f7fc8c5adb738a`.
@@ -1014,6 +1061,19 @@ delivery and deadlines.
    - The three retired identities get their `manifestPath` back, which the
      packet's §4.1 removed so that they "cannot route however their dead
      runs change state". That protection is gone while rolled back.
+     Owner decision 2026-10-09: strip the retired identities'
+     `manifestPath` from a copy of the pre-activation config before B1.
+     Not yet a step here, because as worded it cannot start: the three
+     retired identities are the pre-activation config's only supervisors,
+     and every B1 build requires an absolute `manifestPath` on every
+     supervisor and at least one supervisor (vendored
+     loop-orchestration-server.ts at 4439b2e7 and dde60215,
+     `parseLoopOrchestrationConfig`; tests "each rollback step is needed by
+     4439b2e7 = ea968d82 …" and "… by dde60215 …", whose step removing
+     supervisors without `manifestPath` is needed because those builds
+     refuse them). A stripped copy is refused at start, and KeepAlive
+     restarts it every 10 seconds. How to honour the decision is an open
+     question for the owner (decisions.md, 2026-10-09 entry).
    - Everything in Rollback A, steps 6 to 9: the database is left as is,
      V2 executions are held (with the retry noise in (c)), A2A V2 senders
      get 401 or 404 and must retry after the roll forward, no waking, no
@@ -1074,6 +1134,41 @@ Before the V2 line replaces the live service:
    supervisor-deadline-driver.ts have the same blob at both, and
    supervisor-mailbox-consumption.ts differs only in comment text
    (`git diff 455ccc32 <V2 head>`: +8/-2, all inside one doc comment).
+   Two files that touch the same state do differ (checked 2026-10-09,
+   455ccc32 against r5 integration 9b3dca36; added because this item used
+   to list only the files that match):
+   - bridge-store.ts (blob 1aff02cb at 455ccc32, 68848f7d at 9b3dca36),
+     with bridge-supervisor-message-delivery.ts, bridge-runtime.ts and
+     bridge.ts. These write each run's `bridge.jsonl`, the queue a V1
+     message to a supervisor with a `manifestPath` goes through. The
+     record format is unchanged; the enqueue is not. The V2 line keys a
+     supervisor delivery `supervisor-delivery:<workflowId>` and deduplicates
+     it against the run's whole bridge history, not only pending messages,
+     and reuses an earlier enqueue of the same message instead of adding
+     another; 455ccc32 keys each attempt by its idempotency key and
+     deduplicates pending messages only. Every keyed enqueue on the V2 line
+     holds a claim file `<runDir>/bridge-dedupe-claims/<sha256>.lock`
+     (0600, removed when the enqueue ends) and answers `deferred` while
+     another holds it; 455ccc32 has no claim files and ignores the
+     directory. By code reading, the live config has no `manifestPath`
+     supervisor, so this path is idle there until an `a2aV2` recipient is
+     added (item 6). Back up, with the state above, the run directory
+     (`bridge.jsonl`) of any supervisor that has a `manifestPath`. The
+     reverse direction is Rollback A, step 9.
+   - mailbox-command.ts (blob 98a01a2d at 455ccc32, d6193278 at 9b3dca36),
+     the `loop mailbox` command recipients run against the mailbox files.
+     The V2 line adds `loop mailbox send`, a peer note between sessions:
+     it appends an envelope with workflow id `peer-message:<message-id>`
+     and idempotency key `<sender>:<message-id>:peer:1` to the recipient's
+     mailbox file, and refuses a different body under the same message id.
+     455ccc32's `loop mailbox` has no `send` and refuses it as an unknown
+     action. The consumption reconciler (same code at both, see above)
+     counts an acknowledged envelope whose workflow id is not
+     `supervisor-message:<sha256>` as unmatched
+     (supervisor-mailbox-consumption.ts, `WORKFLOW_ID_RE`), so on either
+     build a peer note is read and acknowledged like other mail and
+     advances no workflow. `status`, `receive` and `ack` are unchanged.
+     The mailbox backup above covers peer notes too.
 5. Temporal: record the config's namespace and task queue. `temporal
    task-queue describe --namespace <ns> --task-queue <queue>` lists only the
    service's own poller. No other build may poll that queue while the V2
@@ -1092,8 +1187,9 @@ Before the V2 line replaces the live service:
    URL and, if `resultArtifacts` is used, the result graph key in the 0600
    env file through the secret procedure, never in the config or a command
    line.
-8. Before any later step that blocks rollback (the format flip, owner
-   question Q1), take this checklist again: after the flip, a return to
+8. Before any later step that blocks rollback (the format flip, which the
+   owner decided on 2026-10-09 not to take: legacy write is the shipping
+   default), take this checklist again: after the flip, a return to
    legacy ids is refused while deployment-format intents are unsettled, but
    a return to 455ccc32 is not affected, since 455ccc32 never opens the
    database.
@@ -1129,9 +1225,10 @@ Procedure, if a rotation cannot wait for claude/fix5-key-rotation:
 
 ### Result graph key rotation (claude/fix5-key-rotation)
 
-Not on r4 or the round-5 base. Verified on 2026-10-07 by
-tests/loop/supervisor-a2a-result-key-rotation.test.ts (18 tests) on real
-PostgreSQL 17, and loop-orchestration-server-postgres "the orchestration
+Not on r4 or the round-5 base; on r5 integration (merge 8e965197). Verified
+on 2026-10-07 by tests/loop/supervisor-a2a-result-key-rotation.test.ts (18
+tests; 20 with the two settled-check tests claude/fix6-runbook-tests adds)
+on real PostgreSQL 17, and loop-orchestration-server-postgres "the orchestration
 server holds its configured previous result graph keys" with Temporal.
 
 What a host does with its keys:
@@ -1181,9 +1278,16 @@ When a binding settles (round-4 major 2). A binding needs no key any more
 once its result was published (its A2A task holds the message's
 `accepted:<messageWorkflowId>` artifact) or its A2A task ended without a
 result (failed, canceled or rejected), since publication is then refused
-forever. A missing task, or a task-store read that fails, counts as not
-settled, so nothing is hidden (supervisor-a2a-v2-service.ts:644-673;
-supervisor-message-v2-delivery-ledger.ts:661-686). Settled bindings are left
+forever. A missing task, a COMPLETED task that does not hold the message's
+accepted artifact, or a task-store read that fails, counts as not settled,
+so nothing is hidden (supervisor-a2a-v2-service.ts:644-673;
+supervisor-message-v2-delivery-ledger.ts:661-686; owner decision
+2026-10-09). Tests: "a host holding no result graph key names the key …"
+and "with legacy workflow ids, …" (a missing task), and, added 2026-10-09
+on claude/fix6-runbook-tests, "a COMPLETED A2A task without the message's
+accepted artifact does not settle that message's binding: …" and "a settled
+check that cannot read the A2A task store keeps the binding listed and
+reported: …". Settled bindings are left
 out of `underPreviousResultGraphKey`, and out of the `unknown-result-graph-key`
 start lines and listing once their key is removed. A settled binding stays
 recorded under its key; after that key is removed, re-publishing its
@@ -1288,3 +1392,47 @@ dde60215's bundle blob (the pin test fails); `workflowFailureErrorTypes:
 tests), with a task-owned Temporal dev server: temporal-bundle-replay 29 tests,
 all pass (2 fixture checks, 22 history replays, 2 replay controls, 3 live
 handoffs).
+
+r5 integration, 2026-10-09, on claude/fix6-runbook-tests (9b3dca36 plus two
+tests in supervisor-a2a-result-key-rotation and these docs; no source
+change), each file run on its own (`bun run test:file`) with task-owned
+PostgreSQL and the local Temporal dev server: orchestration-command 8,
+supervisor-orchestration-http 10, a2a-supervisor-assignment-http 9,
+loop-orchestration-server 37, bridge-result-reply-dedupe 16,
+supervisor-message-v2-runtime 32, supervisor-message-v2-recovery 43,
+supervisor-session-v2 7, supervisor-session-v2-postgres 13,
+supervisor-a2a-result-binding 11, supervisor-message-v2-delivery-ledger 46,
+supervisor-message-v2-temporal-retention 14,
+loop-orchestration-server-postgres 17, temporal-orchestration-e2e 2,
+temporal-workflow-port 12, temporal-supervisor-runtime 8,
+supervisor-a2a-v2-service 14, supervisor-a2a-result-key-rotation 20 (18 at
+9b3dca36), temporal-bundle-replay 29 and orchestration-rollback-to-deployed
+25: 373 tests in 20 files, all pass. The rest of the suite was not run on
+r5 integration; the last whole-suite run is the round-5 base record above.
+`bun run typecheck:a2a` passes; `bun run check` reports only the 10 known
+errors in loop-fork/scripts/vertical-cleanup-*.ts.
+
+Mutations on 2026-10-09, each applied alone and reverted byte for byte, at
+r5 integration:
+
+- Key rotation's settled check, against the 18 tests of 9b3dca36: a
+  failing task-store read counted as settled (ledger `.catch(() => true)`)
+  and a COMPLETED task settling without its accepted artifact both
+  survived (18 pass); a missing task counted as settled was killed (2
+  fail). Against the 20 tests: the read-failure mutant fails "a settled
+  check that cannot read the A2A task store …", the COMPLETED mutant fails
+  "a COMPLETED A2A task without the message's accepted artifact …", the
+  missing-task mutant still fails 2, and any accepted artifact settling
+  every binding of its task fails 2 (the retire test and the COMPLETED
+  test).
+- Replay claims re-run (see "In-flight Temporal executions across a bundle
+  change"): a doubled retry delay and an added timer reproduce as recorded;
+  a one-node task graph limit fails the six two-node graph replays with or
+  without the bundle regenerated; a refused `claim` signal (task graph, and
+  V2 message), with the bundle regenerated, replays clean and fails only
+  the three live handoffs, which corrects the earlier claim.
+- Rollback-to-deployed claims above re-run on 25 tests: all reproduce,
+  except two counts made on 20 tests (the deployed phase on this build's
+  bundle and `workflowFailureErrorTypes` each fail all 4 Temporal runs now)
+  and the vendored dde60215 parser refusing `tokenEnv`, which fails 3 tests
+  (the blob pin, its rolled-back config and the pre-activation shape).
