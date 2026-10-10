@@ -44,6 +44,9 @@ export const DEFAULT_USAGE_TRACKER_TIMEOUT_MS = 1500;
 export const RECONCILE_USAGE =
   "loop reconcile stopped-run|failed-start|failed-terminal <run-id>";
 
+/** The one usage line `loop stop` enforces and `--help` shows. */
+export const STOP_USAGE = "loop stop <run-id> [--yes]";
+
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
 
@@ -56,6 +59,8 @@ Usage:
   loop upgrade                             Alias for update
   ${RECONCILE_USAGE}
                                            Hand back a dead stopped or failed run's workspace, only once its tmux session and every recorded process are gone
+  ${STOP_USAGE}
+                                           Tear a run down like the Governess does: mark it stopped, end its own verified processes, kill its session, release its workspace (--yes skips the prompt)
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only

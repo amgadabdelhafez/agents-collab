@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "bun";
 import type { ImmediateInfoRequest } from "../src/loop/args";
-import { HELP, RECONCILE_USAGE } from "../src/loop/constants";
+import { HELP, RECONCILE_USAGE, STOP_USAGE } from "../src/loop/constants";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
 import { recordRunPaneProcesses } from "../src/loop/run-pane-processes";
 import {
@@ -1098,6 +1098,39 @@ test("--help lists the reconcile command with exactly the usage it enforces", as
     `Usage: ${RECONCILE_USAGE}`
   );
   expect(HELP).toContain(`\n  ${RECONCILE_USAGE}\n`);
+});
+
+test("runCli routes `loop stop` before startup maintenance, with exactly the usage --help shows", async () => {
+  const priorHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "loop-stop-cli-"));
+  process.env.HOME = home;
+  try {
+    const {
+      applyStagedMock,
+      gcAbandonedRunProcessesMock,
+      parseArgsMock,
+      runCli,
+    } = await loadRunCli();
+    expect(STOP_USAGE).toBe("loop stop <run-id> [--yes]");
+    expect(HELP).toContain(`\n  ${STOP_USAGE}\n`);
+    await expect(runCli(["stop"])).rejects.toThrow(`Usage: ${STOP_USAGE}`);
+    await expect(runCli(["stop", "../22", "--yes"])).rejects.toThrow(
+      `Usage: ${STOP_USAGE}`
+    );
+    await expect(runCli(["stop", "23", "--yes"])).rejects.toThrow(
+      "run 23 does not exist in this repository"
+    );
+    expect(parseArgsMock).not.toHaveBeenCalled();
+    expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
+    expect(applyStagedMock).not.toHaveBeenCalled();
+  } finally {
+    if (priorHome === undefined) {
+      process.env.HOME = undefined;
+    } else {
+      process.env.HOME = priorHome;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
 });
 
 test("runCli leaves the beat workflow alone when stopped-run reconciliation refuses", async () => {

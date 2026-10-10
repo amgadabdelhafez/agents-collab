@@ -60,6 +60,7 @@ import {
   runReconPane,
 } from "./loop/recon-pane";
 import { reconcileLegacyStoppedRun, resolveRunStorage } from "./loop/run-state";
+import { runStopCommand } from "./loop/run-stop";
 import {
   defaultOwnershipProbes,
   recordedProcessClassifier,
@@ -443,6 +444,7 @@ const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   runMailboxCliCommand(argv) ||
   (await runOrchestrationCommand(argv)) ||
   (await runStoppedRunReconcileCommand(argv)) ||
+  (await runStopCommand(argv)) ||
   (await runSecureAgentSubcommand(argv)) ||
   runWorldCommand(argv) ||
   runImmediateInfoCommand(argv) ||
