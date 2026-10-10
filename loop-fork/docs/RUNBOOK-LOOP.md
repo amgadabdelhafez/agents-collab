@@ -1777,11 +1777,24 @@ their command line names their run directory), and whatever a tool starts
 `lms server start`, `docker` clients). The governess pane, which runs the
 governess helpers, is never walked.
 
+Another run is provably dead (and then ignored) only on the release's own
+evidence, never on its manifest alone: its manifest is readable and terminal
+(stopped, failed, completed), AND its pid, launch attempt and every process
+and group it records (`codexAppServerPid`, `bridge-worker.json`,
+`run-processes/` records, utility worker claims) are gone from one process
+table snapshot or are provably later processes (started after the later of
+its handback and its last update, or after the record's own instant; a group
+with its leader gone is live while any member lives), AND its tmux runtime is
+positively gone by the release rule (`tmuxRuntimeAbsentForManifestSync`; a
+never-bound launch has none). A terminal run that fails any of these, or
+whose records cannot be read, is live for these rules: what it records is
+never ended by another run's teardown. Since 2026-10-10 (after 688da14f);
+before that a terminal manifest alone made a run dead.
+
 The rules (`src/loop/shared-process-ownership.ts`), first match wins:
 
-1. `shared-process-skipped`: another run that is not provably dead (its
-   manifest is active, or present but not a valid manifest) records the
-   process or its group (manifest pid, launch attempt, `codexAppServerPid`,
+1. `shared-process-skipped`: another run that is not provably dead records
+   the process or its group (manifest pid, launch attempt, `codexAppServerPid`,
    `bridge-worker.json`, `run-processes/` records, utility worker claims), or
    a member's command line names that run's directory, tmux socket, tmux
    session or `--run-id`. For a walked group (`agent-group-*`) the same test
@@ -1806,16 +1819,38 @@ The rules (`src/loop/shared-process-ownership.ts`), first match wins:
    inside this run's workspace root (binding root, else cwd) or cannot be
    read.
 2. `ownership-unknown`: the other runs cannot all be read (a run directory,
-   a manifest or a run's records unreadable), or the walked group is not in
-   the process table. A walked group is then never signalled and stays
-   release evidence. The run's own explicit records (pane groups, manifest
-   app-server, worker targets) are still judged by rule 1 alone and are
-   signalled: the only other-run record that could name them too is a walk
-   record, which rule 1 ignores for them, so an unreadable other run cannot
-   hide a record that would change the verdict.
-3. `run-owned`: a pane group, the run's own manifest app-server, or a walked
-   group with a member still descending from one of the run's live, proven
-   pane processes. As before: signalled after the kill, release evidence.
+   a manifest or a run's records unreadable, in a run that is not provably
+   dead), or the walked group is not in the process table. A walked group is
+   then never signalled and stays release evidence. The run's own explicit
+   records are judged by rule 1 on the runs that CAN be read (a readable
+   live run that records or names one still makes it shared), and are
+   signalled only when a positive identity binds them to this run, never
+   because the other runs say nothing:
+   - the manifest app-server (`codexAppServerPid`): the manifest records its
+     exact listen URL (`codexRemoteUrl`); the live command line is
+     `app-server --listen <that URL>` (whole arguments, or `--listen=<URL>`);
+     the process holds that port's listener (`lsof -iTCP:<port>
+     -sTCP:LISTEN`); and it started no later than the manifest's last update,
+     on one process table snapshot. A manifest without `codexRemoteUrl`
+     (runs recorded before it) is unproven. An unbound app-server is never
+     signalled, whether or not the other runs can be read; the cleanup logs
+     it as `app-server-identity-mismatch` with `detail: identity not proven:
+     <why>` and, when other runs were unreadable, `; other runs unreadable:
+     <reason>`;
+   - a pane group: the run's own recorded pane, proven at collection (a
+     member started by the record's instant) and re-identified against the
+     snapshot instant before every signal round;
+   - a utility worker target: its instant and its exact run directory,
+     epoch and job command, re-checked before every signal round;
+   - the bridge worker and bridge MCP processes: their command names this
+     run's exact directory (checked right before their one SIGTERM).
+   In the pre-signal check, an explicit target that carries no identity (no
+   reference instant, no worker identity) is skipped as `ownership-unknown`
+   while the other runs cannot be read.
+3. `run-owned`: a pane group, the run's own manifest app-server (bound as
+   above), or a walked group with a member still descending from one of the
+   run's live, proven pane processes. As before: signalled after the kill,
+   release evidence.
 4. A walked group none of whose members descends from the run's panes is
    re-parented away only when every member's parent chain ends at launchd
    (pid 1), passing only through the group itself and the run's other walked
@@ -1840,12 +1875,19 @@ The release evidence applies rules 1, 2 and 4 only to the run's
 startup GC). The teardown's `workspace-released` detail lists each live
 record it did not count and the rule.
 
-Utility worker targets are re-verified right before every signal round:
+Utility worker targets are re-verified right before every signal round, in
+the teardown and in stale-worker recovery (`terminateUtilityWorker`) alike:
 each carries the instant it was identified at (its group is still the
 worker's only while a member started by then lives) and its identity (while
 the leader lives, its command must still be the worker command of exactly
 that run directory, epoch and job). One that fails is reported `unverified`
-and never signalled.
+and never signalled; that includes the SIGKILL escalation after the grace.
+
+Each signal round (`terminateTargets`) reads ONE process snapshot: one
+`ps -axo pid,ppid,pgid,lstart` table and the command lines of that moment
+(`ps -axww -o pid,command`, read only if a check needs them). The identity
+re-check and the shared-process check of the round both judge that snapshot;
+the SIGKILL round after the grace takes a new one.
 
 Accepted and remaining risks of these rules (for the owner):
 
@@ -1853,6 +1895,17 @@ Accepted and remaining risks of these rules (for the owner):
   everything it records or names "shared" for every other run: never ended
   by them, and counted by them only while it works in their workspace. Its
   own reconcile ends this.
+- The same now holds for a terminal run that is not provably dead (since
+  2026-10-10): one whose teardown could not end a recorded process (EPERM,
+  a SIGKILL survivor, an `unverified` or `agent-group-unverified` group), a
+  run whose recorded pid or group id was reused by a process that started
+  before its last update, or one whose tmux runtime cannot be proven gone
+  (a reachable socket that does not answer about the session; a legacy
+  socket-less run on any candidate server). Everything it records or names
+  stays "shared" for every other run: never ended by them. It costs no
+  release of its own (its release evidence is unchanged), but another run's
+  walked group that it also records is left running until it is provably
+  dead or the operator ends that process.
 - One unreadable state anywhere under the storage root, in a run that is
   not provably dead (a torn `utility/jobs.jsonl` tail under 60 s old, a
   malformed `run-processes/` record, which is never pruned, a malformed
@@ -1862,13 +1915,26 @@ Accepted and remaining risks of these rules (for the owner):
   reconcile` ever signals a walked group, so a moment of unreadability at
   the teardown leaves those tool processes running and the workspace held
   until they exit or the operator ends them. This fails closed by design.
+  Since terminal runs are no longer dead on their manifest alone, a
+  malformed record in an OLD terminal run whose processes are gone also
+  counts (it is not provably dead), so the exposure is wider than before.
   The live storage root was not inspected for such directories (the repair
   never reads live state); before relying on a release, the operator can
-  check with a read-only scan, for example `bun -e 'import {
+  check with a scan, for example `bun -e 'import {
   readOtherRunIndex } from "./src/loop/shared-process-ownership"; const r =
   readOtherRunIndex("/nonexistent", [process.env.HOME + "/.loop/runs"]);
   console.log(r.kind, r.kind === "unknown" ? r.reason : r.runs.length)'`
-  from `loop-fork/`.
+  from `loop-fork/`. It writes nothing, but it reads the process table and
+  asks each terminal run's recorded tmux socket (`has-session`) whether its
+  session is gone, which for a socket-less legacy run includes the default
+  tmux server.
+- Cost: every read of the other runs (each teardown signal round, each
+  release judgement that meets a shared or walked process) now also checks
+  every terminal run under the storage roots: its record files, and, for
+  each run whose recorded processes are all gone, one tmux probe (a `stat`
+  and a bounded `tmux -S <socket> has-session`; every candidate socket for a
+  legacy run). Not measured on the live storage root; with hundreds of
+  terminal runs this adds seconds to a teardown.
 - Command-line matching is textual. A tool of this run that merely names
   another live run (`tail -f <other runDir>/governess.jsonl`, `loop status
   --run-id 7`) is treated as shared, and so is every walked group below it
@@ -1901,17 +1967,39 @@ Accepted and remaining risks of these rules (for the owner):
   another run, a stranger) is never signalled and blocks the release while
   it lives.
 - An explicit record of the run's own (pane group, manifest app-server,
-  worker target) is signalled even while the other runs cannot be read, and
-  another run's walk record of it never stops that. This departs from the
-  letter of "never kill when ownership is unknown" for these records, on
-  the evidence that each launcher spawns its own app-server and nothing
-  records one run's app-server in another run's manifest; the only way for
-  another run to hold such a record is its walk (ignored for explicit
-  records, see rule 1) or a recycled pid (rejected by the start-time check).
+  worker target) is still signalled while some other runs cannot be read,
+  but only when a positive identity binds it to this run (rule 2) and no
+  readable live run records or names it; another run's walk record of it
+  never stops that. An unreadable run could still hold a non-walk record
+  of it (it would have to record this run's exact app-server pid, or pane
+  group id, in its own manifest or records); nothing in the code writes
+  one, and a recycled id is rejected by the start-time binding.
+- An app-server recorded without `codexRemoteUrl` (runs from before the
+  URL was recorded) is never ended by its run's teardown or by GC: its
+  identity cannot be proven. It counts as release evidence while it lives,
+  so the run is not released until it exits or the operator ends it. (The
+  code before this repair required the URL's port too, so such an
+  app-server was not ended before either.)
+- The app-server's start-time binding compares against the manifest's LAST
+  update, not the moment the pid was recorded, at `ps`'s one-second
+  resolution. A different process would have to hold the same pid, run
+  `app-server --listen` on the same recorded URL and hold that port's
+  listener, and have started before the manifest's last update, to pass.
+- The bridge worker and bridge MCP processes are signalled on their exact
+  run-directory command line alone; the other runs are not consulted for
+  them (a command naming this run's directory is this run's by rule 1).
 - Walk records go both ways: while A (whose walk recorded B's app-server)
   is live, a walked group of B that A's walk recorded too is shared for B as
-  well, so neither teardown ends it until the other run is terminal. B's own
-  app-server is not affected (explicit record).
+  well, so neither teardown ends it until the other run is provably dead.
+  B's own app-server is not affected (explicit record).
+- The real-Codex smoke (2026-10-10, codex-cli 0.162.1, scratch
+  `CODEX_HOME`, no login) showed the app-server starting a configured MCP
+  server in a group of its own, and ending it by itself when the app-server
+  got its run's SIGTERM. The teardown relies on that for MCP servers the
+  app-server starts (they are not recorded by any run); other Codex
+  versions are not verified. In one of two smoke runs the cwd probe
+  (`lsof`) answered unknown for the app-server; unknown counts as release
+  evidence, so that fails closed.
 - cwd is read once per judgement; a process can `chdir` later. `lsof` is
   slow (tens of ms per pid): it runs only for shared or re-parented groups.
 - Other runs are read from the storage root under `HOME` and, for a run
@@ -1921,3 +2009,47 @@ Accepted and remaining risks of these rules (for the owner):
   launcher are not recorded by that run; they (and their descendants) are
   recognised as shared only by their command lines naming its run directory
   or socket.
+
+## Verifying a build (provenance, 2026-10-10)
+
+The compiled `loop` binary is not byte-reproducible, so its sha256 names one
+build, not a commit. Measured on 1fee206e (bun 1.4.2, macOS arm64): two
+builds from the same checkout had different sha256 (d1c4380c..., 6b77492a...),
+and a build from a `git archive` copy of the same commit at another path
+(own `bun install --frozen-lockfile`) had a third (457edf4c...). The build
+embeds the checkout's absolute paths, and bun's bundler sometimes inlines
+`__require.resolve("watchpack")` as the resolved
+`<checkout>/node_modules/watchpack/lib/index.js` and sometimes not. The
+build itself is unchanged; provenance is checked by comparing path-normalised
+strings instead:
+
+1. Check out the claimed commit cleanly (`git worktree add --detach <dir>
+   <sha>`, or `git archive <sha> loop-fork | tar -x -C <dir>`), run
+   `bun install --frozen-lockfile` in `<dir>/loop-fork`, and build with
+   `LOOP_BUILD_OUTFILE=<scratch>/loop bun run build` (no install).
+2. For each binary `BIN`, with `ROOT` the absolute `loop-fork` path it was
+   built from (for an installed binary, the build record's checkout path):
+
+   ```sh
+   strings -a -n 8 "$BIN" | LC_ALL=C sed \
+     -e "s#$ROOT#<root>#g" -e "s#$(dirname "$BIN")#<outdir>#g" \
+     -e 's#__require.resolve("<root>/node_modules/watchpack/lib/index.js")#__require.resolve("watchpack")#g' \
+     | shasum -a 256
+   ```
+
+   (the first expression replaces the checkout path with the token
+   `<root>`, the second the output directory, and the third undoes the
+   watchpack variance).
+3. The binary is the claimed commit's build when the two normalised digests
+   are equal. Any other difference is real: list it with `diff` of the two
+   normalised outputs before accepting anything.
+
+Evidence for the method: the three 1fee206e builds above normalise to the
+same digest (prefix a6039da1e21c6653), and a control build of 688da14f
+from a clean copy differs from them in 204 normalised lines (the source
+change). Limits: the comparison sees printable runs of 8 or more bytes, not
+code bytes or Mach-O metadata; it does not prove the same bun version or
+dependency tree (both shape the strings, so a different one usually shows
+as a difference, but not always); the build record must name the checkout
+path. Comparing against the installed binary reads `~/.local/bin/loop`,
+which this repair never did.
