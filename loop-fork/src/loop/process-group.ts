@@ -376,7 +376,8 @@ export const terminateTargets = async (
   const killed = new Set(afterGrace);
   const skipped = new Set(unverified);
   return {
-    exited: termTargets
+    // Gone within the grace, or already gone when re-identified.
+    exited: unique
       .filter((target) => !(killed.has(target) || skipped.has(target)))
       .map(label),
     failed,

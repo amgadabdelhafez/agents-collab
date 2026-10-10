@@ -365,7 +365,10 @@ test("termination re-identifies each target before SIGTERM and again before SIGK
       round += 1;
       const still = new Set<string>();
       for (const target of targets) {
-        const reused = target.id === 6001 || (target.id === 6002 && round > 1);
+        const reused =
+          target.id === 6001 ||
+          target.id === 6005 ||
+          (target.id === 6002 && round > 1);
         if (!reused) {
           still.add(`${target.kind}:${target.id}`);
         }
@@ -379,6 +382,8 @@ test("termination re-identifies each target before SIGTERM and again before SIGK
       { id: 6002, kind: "group", reference: SNAPSHOT_AT, source: "b" },
       { id: 6003, kind: "group", reference: SNAPSHOT_AT, source: "c" },
       { id: 6004, kind: "group", source: "d" },
+      // Already gone when re-identified: reported exited, never signalled.
+      { id: 6005, kind: "group", reference: SNAPSHOT_AT, source: "e" },
     ],
     deps
   );
@@ -390,7 +395,7 @@ test("termination re-identifies each target before SIGTERM and again before SIGK
     "-6004:SIGKILL",
   ]);
   expect(result).toEqual({
-    exited: [],
+    exited: ["e process group 6005"],
     failed: [],
     killed: ["c process group 6003", "d process group 6004"],
     survivors: [],
