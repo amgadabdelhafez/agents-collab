@@ -13,12 +13,29 @@
 // Writes use signalWithStart, so the history is durable even when no worker is
 // polling the task queue. Reads fold the signal events out of the history
 // directly, so recovery needs the server and nothing else.
+//
+// OWNERSHIP (fix7): the journal of run R in repo P on task queue Q lives in
+// `governess-beat:v2:<P>:<R>:<Q>` (governess-beat-identity.ts). Every read and
+// every write first describes that id and refuses, with
+// GovernessBeatForeignJournalError, an execution that does not run on Q or
+// whose memo does not name P, R and Q; it then addresses the exact run it
+// verified. The legacy `governess-beat:<R>` id is never read or written here:
+// its history may hold another repo's records (the P1 collision), so the local
+// file journal, which is always complete, is backfilled into the new id
+// instead. The close path (governess-beat-close.ts) still closes an owned
+// legacy execution.
 
 import type { WorkflowClient } from "@temporalio/client";
 import {
-  GOVERNESS_BEAT_WORKFLOW_TYPE,
-  governessBeatWorkflowId,
-} from "./governess-beat-workflow";
+  GOVERNESS_BEAT_MEMO,
+  type GovernessBeatExecution,
+  type GovernessBeatOwner,
+  governessBeatOwnedWorkflowId,
+  governessBeatOwner,
+  governessBeatOwnerMemo,
+  governessBeatOwnership,
+} from "./governess-beat-identity";
+import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "./governess-beat-workflow";
 import {
   readGovernessJournal,
   readGovernessJournalWithArchive,
@@ -33,10 +50,9 @@ import {
 
 export const GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE = "loop-governess";
 export const GOVERNESS_APPEND_RECORD_SIGNAL = "append_record";
-// Memo written when a run's beat workflow is created, naming the owning repo.
-// Run ids are per-repo integers, so the close path (governess-beat-close.ts)
-// checks it before terminating a workflow another repo's run may own.
-export const GOVERNESS_BEAT_OWNER_MEMO_KEY = "loopRepoId";
+// Memo key naming the owning repo: the one key the legacy journal wrote, and
+// one of the four the owned journal writes (governess-beat-identity.ts).
+export const GOVERNESS_BEAT_OWNER_MEMO_KEY = GOVERNESS_BEAT_MEMO.repoId;
 // Must match temporalCommandSignal in temporal-workflow.ts. Kept literal so the
 // file-only path never imports the Temporal SDK.
 const WORKFLOW_PORT_COMMAND_SIGNAL = "workflow-port-command";
@@ -210,75 +226,185 @@ const readSettledHistory = async (
 type HistoryPayloadDecoder = (payload: HistoryPayload) => unknown;
 
 /**
+ * An execution under this run's journal id that this owner did not create:
+ * another repo's, another deployment's, or one with no owner memo. Nothing is
+ * read from or written to it.
+ */
+export class GovernessBeatForeignJournalError extends Error {
+  constructor(workflowId: string, detail: string) {
+    super(`governess beat ${workflowId} is not this run's journal: ${detail}`);
+    this.name = "GovernessBeatForeignJournalError";
+  }
+}
+
+type ExecutionDescription = Awaited<
+  ReturnType<ReturnType<WorkflowClient["getHandle"]>["describe"]>
+>;
+
+export const governessBeatExecutionOf = (
+  workflowId: string,
+  description: ExecutionDescription
+): GovernessBeatExecution => ({
+  executionRunId: description.runId,
+  memo: description.memo,
+  status: description.status.name,
+  taskQueue: description.taskQueue,
+  workflowId,
+});
+
+/** The described execution under `workflowId`, or undefined when none. */
+const describeExecution = async (
+  client: WorkflowClient,
+  workflowId: string
+): Promise<ExecutionDescription | undefined> => {
+  try {
+    return await client.getHandle(workflowId).describe();
+  } catch (error) {
+    if (isWorkflowNotFound(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+};
+
+const requireOwned = (
+  owner: GovernessBeatOwner,
+  workflowId: string,
+  description: ExecutionDescription
+): void => {
+  const ownership = governessBeatOwnership(
+    governessBeatExecutionOf(workflowId, description),
+    owner,
+    "v2"
+  );
+  if (!ownership.owned) {
+    throw new GovernessBeatForeignJournalError(workflowId, ownership.detail);
+  }
+};
+
+const appendCommand = (record: GovernessControlRecord) => ({
+  at: record.at,
+  kind: "signal" as const,
+  name: GOVERNESS_APPEND_RECORD_SIGNAL,
+  payload: { record },
+  requestId: appendRequestId(record),
+});
+
+/**
+ * Append one record to the owner's execution. A running owned execution is
+ * signalled by the exact run that was verified. With none running (absent, or
+ * this owner's closed one) signalWithStart creates it with the owner memo;
+ * the created run is then verified too, so a racing creator under the same id
+ * is reported rather than silently shared.
+ */
+const appendOwned = async (
+  client: WorkflowClient,
+  owner: GovernessBeatOwner,
+  record: GovernessControlRecord
+): Promise<void> => {
+  const workflowId = governessBeatOwnedWorkflowId(owner);
+  const existing = await describeExecution(client, workflowId);
+  if (existing) {
+    requireOwned(owner, workflowId, existing);
+  }
+  if (existing?.status.name === "RUNNING") {
+    await client
+      .getHandle(workflowId, existing.runId)
+      .signal(WORKFLOW_PORT_COMMAND_SIGNAL, appendCommand(record));
+    return;
+  }
+  const started = await client.signalWithStart("temporalWorkflow", {
+    args: [
+      {
+        at: record.at,
+        input: { runId: owner.runId },
+        requestId: `start:${owner.runId}`,
+        workflowId,
+        workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
+      },
+    ],
+    memo: governessBeatOwnerMemo(owner),
+    signal: WORKFLOW_PORT_COMMAND_SIGNAL,
+    signalArgs: [appendCommand(record)],
+    taskQueue: owner.taskQueue,
+    workflowId,
+  });
+  requireOwned(
+    owner,
+    workflowId,
+    await client.getHandle(workflowId, started.signaledRunId).describe()
+  );
+};
+
+const readOwned = async (
+  client: WorkflowClient,
+  owner: GovernessBeatOwner,
+  decode: HistoryPayloadDecoder,
+  settleTimeoutMs: number
+): Promise<GovernessControlRecord[]> => {
+  const workflowId = governessBeatOwnedWorkflowId(owner);
+  const existing = await describeExecution(client, workflowId);
+  if (!existing) {
+    return [];
+  }
+  requireOwned(owner, workflowId, existing);
+  const handle = client.getHandle(workflowId, existing.runId);
+  const deadline = Date.now() + settleTimeoutMs;
+  for (;;) {
+    const settled = await readSettledHistory(handle);
+    if (settled) {
+      return governessJournalFromHistoryEvents(settled, decode);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `governess journal history for ${owner.runId} did not settle; a workflow task is still in flight`
+      );
+    }
+    await sleep(HISTORY_SETTLE_POLL_MS);
+  }
+};
+
+/**
  * The journal client over an already-connected WorkflowClient. Split from
  * connectGovernessTemporalJournal so tests can hand in a test-server client.
+ * `ownerRepoId` and `taskQueue` with each call's run id name the execution.
  */
 export const createGovernessTemporalJournalClient = (input: {
   client: WorkflowClient;
   close?: () => Promise<void>;
   decode: HistoryPayloadDecoder;
-  ownerRepoId?: string;
+  ownerRepoId: string;
   settleTimeoutMs?: number;
   taskQueue: string;
-}): GovernessTemporalJournalClient => ({
-  async appendRecord(runId, record) {
-    const workflowId = governessBeatWorkflowId(runId);
-    await input.client.signalWithStart("temporalWorkflow", {
-      args: [
-        {
-          at: record.at,
-          input: { runId },
-          requestId: `start:${runId}`,
-          workflowId,
-          workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
-        },
-      ],
-      ...(input.ownerRepoId
-        ? { memo: { [GOVERNESS_BEAT_OWNER_MEMO_KEY]: input.ownerRepoId } }
-        : {}),
-      signal: WORKFLOW_PORT_COMMAND_SIGNAL,
-      signalArgs: [
-        {
-          at: record.at,
-          kind: "signal",
-          name: GOVERNESS_APPEND_RECORD_SIGNAL,
-          payload: { record },
-          requestId: appendRequestId(record),
-        },
-      ],
+}): GovernessTemporalJournalClient => {
+  const ownerOf = (runId: string): GovernessBeatOwner =>
+    governessBeatOwner({
+      repoId: input.ownerRepoId,
+      runId,
       taskQueue: input.taskQueue,
-      workflowId,
     });
-  },
-  async close() {
-    await input.close?.();
-  },
-  async readRecords(runId) {
-    const handle = input.client.getHandle(governessBeatWorkflowId(runId));
-    const deadline = Date.now() + (input.settleTimeoutMs ?? HISTORY_SETTLE_MS);
-    for (;;) {
-      let settled: GovernessHistoryEvent[] | undefined;
-      try {
-        settled = await readSettledHistory(handle);
-      } catch (error) {
-        if (isWorkflowNotFound(error)) {
-          return [];
-        }
-        throw error;
-      }
-      if (settled) {
-        return governessJournalFromHistoryEvents(settled, input.decode);
-      }
-      if (Date.now() > deadline) {
-        throw new Error(
-          `governess journal history for ${runId} did not settle; a workflow task is still in flight`
-        );
-      }
-      await sleep(HISTORY_SETTLE_POLL_MS);
-    }
-  },
-  workflowId: governessBeatWorkflowId,
-});
+  // Fail at construction, not on the first record.
+  governessBeatOwner({
+    repoId: input.ownerRepoId,
+    runId: "0",
+    taskQueue: input.taskQueue,
+  });
+  return {
+    appendRecord: (runId, record) =>
+      appendOwned(input.client, ownerOf(runId), record),
+    async close() {
+      await input.close?.();
+    },
+    readRecords: (runId) =>
+      readOwned(
+        input.client,
+        ownerOf(runId),
+        input.decode,
+        input.settleTimeoutMs ?? HISTORY_SETTLE_MS
+      ),
+    workflowId: (runId) => governessBeatOwnedWorkflowId(ownerOf(runId)),
+  };
+};
 
 /**
  * Connect to the configured server. The SDK is imported here and only here, so
@@ -286,22 +412,27 @@ export const createGovernessTemporalJournalClient = (input: {
  */
 export const connectGovernessTemporalJournal = async (
   config: GovernessTemporalConfig,
-  ownerRepoId?: string
+  ownerRepoId: string
 ): Promise<GovernessTemporalJournalClient> => {
   const { Connection, WorkflowClient, defaultPayloadConverter } = await import(
     "@temporalio/client"
   );
   const connection = await Connection.connect({ address: config.address });
-  return createGovernessTemporalJournalClient({
-    client: new WorkflowClient({ connection, namespace: config.namespace }),
-    close: () => connection.close(),
-    decode: (payload) =>
-      defaultPayloadConverter.fromPayload(
-        payload as Parameters<typeof defaultPayloadConverter.fromPayload>[0]
-      ),
-    ...(ownerRepoId ? { ownerRepoId } : {}),
-    taskQueue: config.taskQueue,
-  });
+  try {
+    return createGovernessTemporalJournalClient({
+      client: new WorkflowClient({ connection, namespace: config.namespace }),
+      close: () => connection.close(),
+      decode: (payload) =>
+        defaultPayloadConverter.fromPayload(
+          payload as Parameters<typeof defaultPayloadConverter.fromPayload>[0]
+        ),
+      ownerRepoId,
+      taskQueue: config.taskQueue,
+    });
+  } catch (error) {
+    await connection.close();
+    throw error;
+  }
 };
 
 /**
@@ -459,12 +590,13 @@ export type GovernessJournalBackend =
 
 /**
  * Choose and arm the journal backend for one governess run. With no Temporal
- * config this returns the file backend without calling `connect`.
+ * config this returns the file backend without calling `connect`. With one,
+ * the run's repo id is required: it is part of the journal's workflow id.
  */
 export const attachGovernessJournalBackend = async (input: {
   connect?: (
     config: GovernessTemporalConfig,
-    ownerRepoId?: string
+    ownerRepoId: string
   ) => Promise<GovernessTemporalJournalClient>;
   journalFile: string;
   onSinkError?: (error: unknown, record: GovernessControlRecord) => void;
@@ -474,6 +606,11 @@ export const attachGovernessJournalBackend = async (input: {
 }): Promise<GovernessJournalBackend> => {
   if (!input.temporal) {
     return { close: async () => undefined, kind: "file" };
+  }
+  if (!input.ownerRepoId) {
+    throw new Error(
+      "governess Temporal journal needs the run's repo id: it names the journal's workflow"
+    );
   }
   const connect = input.connect ?? connectGovernessTemporalJournal;
   const client = await connect(input.temporal, input.ownerRepoId);

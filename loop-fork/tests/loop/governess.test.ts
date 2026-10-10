@@ -3791,8 +3791,8 @@ test("runGoverness recovers its journal from Temporal history on start when Temp
   const history = recoveryFixtureRecords();
   const connected: string[] = [];
   const signalled: GovernessControlRecord[] = [];
-  deps.connectTemporalJournal = (temporal) => {
-    connected.push(`${temporal.address}/${temporal.namespace}`);
+  deps.connectTemporalJournal = (temporal, ownerRepoId) => {
+    connected.push(`${temporal.address}/${temporal.namespace}/${ownerRepoId}`);
     return Promise.resolve({
       appendRecord: (_runId, record) => {
         signalled.push(record);
@@ -3800,7 +3800,7 @@ test("runGoverness recovers its journal from Temporal history on start when Temp
       },
       close: () => Promise.resolve(),
       readRecords: () => Promise.resolve(history),
-      workflowId: (runId) => `governess-beat:${runId}`,
+      workflowId: (runId) => `governess-beat:v2:${ownerRepoId}:${runId}:q`,
     });
   };
   const keys = ["x", "e"];
@@ -3823,11 +3823,13 @@ test("runGoverness recovers its journal from Temporal history on start when Temp
         namespace: "harness",
         taskQueue: "loop-governess",
       },
+      repoId: "repo-gov-test",
     }),
     deps
   );
 
-  expect(connected).toEqual(["192.168.1.18:7233/harness"]);
+  // fix7: the run's repo id reaches the journal, which names its workflow.
+  expect(connected).toEqual(["192.168.1.18:7233/harness/repo-gov-test"]);
   const journal = readGovernessJournal(journalFile);
   // The recovered log is the prefix; the live governess continues its sequence
   // and writes every new record through to Temporal.
@@ -3844,6 +3846,38 @@ test("runGoverness recovers its journal from Temporal history on start when Temp
       temporalRecords: history.length,
     })
   );
+});
+
+test("runGoverness refuses a Temporal journal without the run's repo id, before connecting (fix7)", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  let connects = 0;
+  deps.connectTemporalJournal = () => {
+    connects += 1;
+    return Promise.reject(new Error("must not connect"));
+  };
+  const journalFile = join(
+    mkdtempSync(join(tmpdir(), "gov7-run-")),
+    "governess-control.jsonl"
+  );
+  let refusal = "resolved";
+  try {
+    await runGoverness(
+      baseConfig({
+        journalFile,
+        journalTemporal: {
+          address: "192.168.1.18:7233",
+          namespace: "harness",
+          taskQueue: "loop-governess",
+        },
+      }),
+      deps
+    );
+  } catch (error) {
+    refusal = error instanceof Error ? error.message : String(error);
+  }
+  expect(refusal).toContain("needs the run's repo id");
+  expect(connects).toBe(0);
 });
 
 test("runGoverness keeps the file journal and never connects when Temporal is not configured", async () => {

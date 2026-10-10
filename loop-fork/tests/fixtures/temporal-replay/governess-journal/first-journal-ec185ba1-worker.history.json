@@ -1,0 +1,375 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-10-10T20:46:23.934725Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "1048677",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "temporalWorkflow"
+        },
+        "taskQueue": {
+          "name": "loop-governess-replay-worker",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDA6MDAuMDAwWiIsImlucHV0Ijp7InJ1bklkIjoiNDQifSwicmVxdWVzdElkIjoic3RhcnQ6NDQiLCJ3b3JrZmxvd0lkIjoiZ292ZXJuZXNzLWJlYXQ6NDQiLCJ3b3JrZmxvd1R5cGUiOiJnb3Zlcm5lc3MtYmVhdC52MSJ9"
+            }
+          ]
+        },
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "af8b36b6-2a76-4947-b4e7-2cd6bd6c59e3",
+        "identity": "governess-journal-fixture-recorder",
+        "firstExecutionRunId": "af8b36b6-2a76-4947-b4e7-2cd6bd6c59e3",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "governess-beat:44"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-10-10T20:46:23.934765Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048678",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDA6MDAuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6Im9ic2VydmUtcnVudGltZSIsImFnZW50IjoiY2xhdWRlIiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAwOjAwLjAwMFoiLCJjb250cm9sSWQiOiJlN2ZkMmEwZC1kNTE5LTRkNmEtODNlNy04Yzk2NDkwMDZiZmUiLCJlcG9jaCI6MSwiaWRlbXBvdGVuY3lLZXkiOiJvYnM6Y2xhdWRlOjEiLCJvYnNlcnZhdGlvblN0cmVhbSI6InBhbmU6Y2xhdWRlIiwicGF5bG9hZCI6InBhbmUgaWRsZSwgbm8gZGlmZiIsInBheWxvYWRIYXNoIjoiY2U2MTJjYTQ5NzA5OGJiMDI2ZDc2YTk5MTUzOGE1ODFlNTgwNTc2YTJjNTE4MzFjNzRjM2M5MTVlOTIxM2FkOSIsInBoYXNlIjoiY29tcGxldGVkIiwicG9saWN5Q2xhc3MiOiJvYnNlcnZlIiwic2VtYW50aWNIYXNoIjoiY2U2MTJjYTQ5NzA5OGJiMDI2ZDc2YTk5MTUzOGE1ODFlNTgwNTc2YTJjNTE4MzFjNzRjM2M5MTVlOTIxM2FkOSIsInNlcXVlbmNlIjoxfX0sInJlcXVlc3RJZCI6ImFwcGVuZDoxOmU3ZmQyYTBkLWQ1MTktNGQ2YS04M2U3LThjOTY0OTAwNmJmZTpjb21wbGV0ZWQifQ=="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "cf49a3dc-287b-461b-8715-f70206444acc"
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-10-10T20:46:23.934769Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048679",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "loop-governess-replay-worker",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-10-10T20:46:23.936384Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048683",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "3",
+        "identity": "governess-journal-fixture-recorder",
+        "requestId": "b2fdc06f-e181-4361-ae25-862426d70e65",
+        "historySizeBytes": "1254",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.23.0+1a3a99feb74fd7fc2c8476a0b3115355691217e759059128d97ec55c74be6544"
+        }
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-10-10T20:46:23.961086Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048697",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "3",
+        "startedEventId": "4",
+        "identity": "governess-journal-fixture-recorder",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.23.0+1a3a99feb74fd7fc2c8476a0b3115355691217e759059128d97ec55c74be6544"
+        },
+        "sdkMetadata": {
+          "coreUsedFlags": [1, 2, 3],
+          "langUsedFlags": [2],
+          "sdkName": "temporal-typescript",
+          "sdkVersion": "1.23.0"
+        },
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-10-10T20:46:23.936865Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048698",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDA6MjAuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6Im9ic2VydmUtcnVudGltZSIsImFnZW50IjoiY2xhdWRlIiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAwOjIwLjAwMFoiLCJjb250cm9sSWQiOiI4YmM3YWMxMy1iNWMyLTQ2NTAtODkxMi00MzMyOTlhY2Q3NzEiLCJlcG9jaCI6MSwiaWRlbXBvdGVuY3lLZXkiOiJvYnM6Y2xhdWRlOjMiLCJvYnNlcnZhdGlvblN0cmVhbSI6InBhbmU6Y2xhdWRlIiwicGF5bG9hZCI6InBhbmUgcnVubmluZyB0ZXN0cyIsInBheWxvYWRIYXNoIjoiZDRhOTcwNjZkNzk3OTk4MjU2MjBlY2FlYjIxMTg2MDJhYTc1NmJmMjkzMTY0YmFjYWJkZjNmMmI1ODgwMjY4NCIsInBoYXNlIjoiY29tcGxldGVkIiwicG9saWN5Q2xhc3MiOiJvYnNlcnZlIiwic2VtYW50aWNIYXNoIjoiZDRhOTcwNjZkNzk3OTk4MjU2MjBlY2FlYjIxMTg2MDJhYTc1NmJmMjkzMTY0YmFjYWJkZjNmMmI1ODgwMjY4NCIsInNlcXVlbmNlIjoyfX0sInJlcXVlc3RJZCI6ImFwcGVuZDoyOjhiYzdhYzEzLWI1YzItNDY1MC04OTEyLTQzMzI5OWFjZDc3MTpjb21wbGV0ZWQifQ=="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "66e026e3-c9e2-4cc5-af3a-47139cd33ae9"
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-10-10T20:46:23.938401Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048699",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDAuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6Im51ZGdlIiwiYWdlbnQiOiJjbGF1ZGUiLCJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDAuMDAwWiIsImNvbnRyb2xJZCI6ImUzY2VkN2RlLTFkMTctNGU3Ny1hNWJkLTg3NjczMzhhM2UwYiIsImVwb2NoIjoxLCJpZGVtcG90ZW5jeUtleSI6Im51ZGdlOmNsYXVkZToxIiwicGF5bG9hZEhhc2giOiJlNTQzMGIyYzFhOGYxYmQwYWJhYzM3ZGQyY2UwYTVhZGM2NGJlNTBhYWYwM2E1NTg3MjgzMTE2ZmZiZjQ3ZmI5IiwicGhhc2UiOiJwcmVwYXJlZCIsInBvbGljeUNsYXNzIjoic2FmZS1hdXRvbWF0aWMiLCJzZXF1ZW5jZSI6M319LCJyZXF1ZXN0SWQiOiJhcHBlbmQ6MzplM2NlZDdkZS0xZDE3LTRlNzctYTViZC04NzY3MzM4YTNlMGI6cHJlcGFyZWQifQ=="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "388c8fe5-00bd-4f3c-9b05-bb9efe045b21"
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-10-10T20:46:23.940099Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048700",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDEuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6Im51ZGdlIiwiYWdlbnQiOiJjbGF1ZGUiLCJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDEuMDAwWiIsImNvbnRyb2xJZCI6ImUzY2VkN2RlLTFkMTctNGU3Ny1hNWJkLTg3NjczMzhhM2UwYiIsImVwb2NoIjoxLCJpZGVtcG90ZW5jeUtleSI6Im51ZGdlOmNsYXVkZToxIiwicGF5bG9hZEhhc2giOiJlNTQzMGIyYzFhOGYxYmQwYWJhYzM3ZGQyY2UwYTVhZGM2NGJlNTBhYWYwM2E1NTg3MjgzMTE2ZmZiZjQ3ZmI5IiwicGhhc2UiOiJkaXNwYXRjaGVkIiwicG9saWN5Q2xhc3MiOiJzYWZlLWF1dG9tYXRpYyIsInNlcXVlbmNlIjo0LCJ0cmFuc3BvcnQiOiJjbGF1ZGUtY2hhbm5lbCJ9fSwicmVxdWVzdElkIjoiYXBwZW5kOjQ6ZTNjZWQ3ZGUtMWQxNy00ZTc3LWE1YmQtODc2NzMzOGEzZTBiOmRpc3BhdGNoZWQifQ=="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "e7e5579c-5265-40f8-a44b-7a5c9398f293"
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-10-10T20:46:23.941786Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048701",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDIuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6Im51ZGdlIiwiYWdlbnQiOiJjbGF1ZGUiLCJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDIuMDAwWiIsImNvbnRyb2xJZCI6ImUzY2VkN2RlLTFkMTctNGU3Ny1hNWJkLTg3NjczMzhhM2UwYiIsImVwb2NoIjoxLCJpZGVtcG90ZW5jeUtleSI6Im51ZGdlOmNsYXVkZToxIiwicGF5bG9hZEhhc2giOiJlNTQzMGIyYzFhOGYxYmQwYWJhYzM3ZGQyY2UwYTVhZGM2NGJlNTBhYWYwM2E1NTg3MjgzMTE2ZmZiZjQ3ZmI5IiwicGhhc2UiOiJhY2NlcHRlZCIsInBvbGljeUNsYXNzIjoic2FmZS1hdXRvbWF0aWMiLCJzZXF1ZW5jZSI6NSwidHJhbnNwb3J0IjoiY2xhdWRlLWNoYW5uZWwiLCJldmlkZW5jZSI6ImNoYW5uZWwgYWNrIn19LCJyZXF1ZXN0SWQiOiJhcHBlbmQ6NTplM2NlZDdkZS0xZDE3LTRlNzctYTViZC04NzY3MzM4YTNlMGI6YWNjZXB0ZWQifQ=="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "c8f3d750-4873-4f10-9b42-1c5fb8a91f4f"
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-10-10T20:46:23.943957Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048702",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDMuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6Im51ZGdlIiwiYWdlbnQiOiJjbGF1ZGUiLCJhdCI6IjIwMjYtMDktMDFUMDA6MDE6MDMuMDAwWiIsImNvbnRyb2xJZCI6ImUzY2VkN2RlLTFkMTctNGU3Ny1hNWJkLTg3NjczMzhhM2UwYiIsImVwb2NoIjoxLCJpZGVtcG90ZW5jeUtleSI6Im51ZGdlOmNsYXVkZToxIiwicGF5bG9hZEhhc2giOiJlNTQzMGIyYzFhOGYxYmQwYWJhYzM3ZGQyY2UwYTVhZGM2NGJlNTBhYWYwM2E1NTg3MjgzMTE2ZmZiZjQ3ZmI5IiwicGhhc2UiOiJjb21wbGV0ZWQiLCJwb2xpY3lDbGFzcyI6InNhZmUtYXV0b21hdGljIiwic2VxdWVuY2UiOjYsInRyYW5zcG9ydCI6ImNsYXVkZS1jaGFubmVsIiwiZXZpZGVuY2UiOiJjaGFubmVsIGFjayJ9fSwicmVxdWVzdElkIjoiYXBwZW5kOjY6ZTNjZWQ3ZGUtMWQxNy00ZTc3LWE1YmQtODc2NzMzOGEzZTBiOmNvbXBsZXRlZCJ9"
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "fda966ca-1ce2-4373-9e75-3fae4ddfda5d"
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-10-10T20:46:23.945565Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048703",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDM6MDAuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6InJlc3RhcnQtYWdlbnQiLCJhZ2VudCI6ImNvZGV4IiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAzOjAwLjAwMFoiLCJjb250cm9sSWQiOiI5ZWRmMzkxZi1jODdhLTQzNmYtOTgzOC04ZTFmYzIzMGIyMWQiLCJlcG9jaCI6MiwiaWRlbXBvdGVuY3lLZXkiOiJyZXN0YXJ0OmNvZGV4OjEiLCJwYXlsb2FkSGFzaCI6ImRlZWE5YjQ2MzYwZmM2NGYwM2UyYzQwNWQyNGJjMzVjMmE4ZTExZmEyMmUxNGI2MWM2ZGNiZTNkNWIzODI1NDUiLCJwaGFzZSI6InByZXBhcmVkIiwicG9saWN5Q2xhc3MiOiJyZXF1aXJlLWNvbmZpcm1hdGlvbiIsInNlcXVlbmNlIjo3fX0sInJlcXVlc3RJZCI6ImFwcGVuZDo3OjllZGYzOTFmLWM4N2EtNDM2Zi05ODM4LThlMWZjMjMwYjIxZDpwcmVwYXJlZCJ9"
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "65cdefe7-59b0-442a-b6d1-2220d47d4daa"
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-10-10T20:46:23.947577Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048704",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDM6MDEuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6InJlc3RhcnQtYWdlbnQiLCJhZ2VudCI6ImNvZGV4IiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAzOjAxLjAwMFoiLCJjb250cm9sSWQiOiI5ZWRmMzkxZi1jODdhLTQzNmYtOTgzOC04ZTFmYzIzMGIyMWQiLCJlcG9jaCI6MiwiaWRlbXBvdGVuY3lLZXkiOiJyZXN0YXJ0OmNvZGV4OjEiLCJwYXlsb2FkSGFzaCI6ImRlZWE5YjQ2MzYwZmM2NGYwM2UyYzQwNWQyNGJjMzVjMmE4ZTExZmEyMmUxNGI2MWM2ZGNiZTNkNWIzODI1NDUiLCJwaGFzZSI6ImZhaWxlZCIsInBvbGljeUNsYXNzIjoicmVxdWlyZS1jb25maXJtYXRpb24iLCJzZXF1ZW5jZSI6OCwicmVhc29uIjoidHJhbnNwb3J0IHVuYXZhaWxhYmxlIn19LCJyZXF1ZXN0SWQiOiJhcHBlbmQ6ODo5ZWRmMzkxZi1jODdhLTQzNmYtOTgzOC04ZTFmYzIzMGIyMWQ6ZmFpbGVkIn0="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "625995d4-3c30-409c-8a07-c3bc335e86d4"
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-10-10T20:46:23.949259Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048705",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDM6MDIuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6InJlc3RhcnQtYWdlbnQiLCJhZ2VudCI6ImNvZGV4IiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAzOjAyLjAwMFoiLCJjb250cm9sSWQiOiI0OWQ1MGU2Yy05NzYyLTQyMGYtOWVmNS1kZmVmNmYzNDgyNmYiLCJlcG9jaCI6MiwiaWRlbXBvdGVuY3lLZXkiOiJyZXN0YXJ0OmNvZGV4OjEiLCJwYXlsb2FkSGFzaCI6ImRlZWE5YjQ2MzYwZmM2NGYwM2UyYzQwNWQyNGJjMzVjMmE4ZTExZmEyMmUxNGI2MWM2ZGNiZTNkNWIzODI1NDUiLCJwaGFzZSI6InByZXBhcmVkIiwicG9saWN5Q2xhc3MiOiJyZXF1aXJlLWNvbmZpcm1hdGlvbiIsInNlcXVlbmNlIjo5fX0sInJlcXVlc3RJZCI6ImFwcGVuZDo5OjQ5ZDUwZTZjLTk3NjItNDIwZi05ZWY1LWRmZWY2ZjM0ODI2ZjpwcmVwYXJlZCJ9"
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "d587ec77-e2c4-4243-95b1-e9ee50a6d1eb"
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-10-10T20:46:23.950731Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048706",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDM6MDMuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6InJlc3RhcnQtYWdlbnQiLCJhZ2VudCI6ImNvZGV4IiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAzOjAzLjAwMFoiLCJjb250cm9sSWQiOiI0OWQ1MGU2Yy05NzYyLTQyMGYtOWVmNS1kZmVmNmYzNDgyNmYiLCJlcG9jaCI6MiwiaWRlbXBvdGVuY3lLZXkiOiJyZXN0YXJ0OmNvZGV4OjEiLCJwYXlsb2FkSGFzaCI6ImRlZWE5YjQ2MzYwZmM2NGYwM2UyYzQwNWQyNGJjMzVjMmE4ZTExZmEyMmUxNGI2MWM2ZGNiZTNkNWIzODI1NDUiLCJwaGFzZSI6ImRpc3BhdGNoZWQiLCJwb2xpY3lDbGFzcyI6InJlcXVpcmUtY29uZmlybWF0aW9uIiwic2VxdWVuY2UiOjEwLCJ0cmFuc3BvcnQiOiJjb2RleC1hcHAtc2VydmVyIn19LCJyZXF1ZXN0SWQiOiJhcHBlbmQ6MTA6NDlkNTBlNmMtOTc2Mi00MjBmLTllZjUtZGZlZjZmMzQ4MjZmOmRpc3BhdGNoZWQifQ=="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "d8f9a8c5-628b-4d44-a28e-3bfaeb68375f"
+      }
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2026-10-10T20:46:23.952203Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "1048707",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "workflow-port-command",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjIwMjYtMDktMDFUMDA6MDM6MDQuMDAwWiIsImtpbmQiOiJzaWduYWwiLCJuYW1lIjoiYXBwZW5kX3JlY29yZCIsInBheWxvYWQiOnsicmVjb3JkIjp7ImFjdGlvbiI6InJlc3RhcnQtYWdlbnQiLCJhZ2VudCI6ImNvZGV4IiwiYXQiOiIyMDI2LTA5LTAxVDAwOjAzOjA0LjAwMFoiLCJjb250cm9sSWQiOiI0OWQ1MGU2Yy05NzYyLTQyMGYtOWVmNS1kZmVmNmYzNDgyNmYiLCJlcG9jaCI6MiwiaWRlbXBvdGVuY3lLZXkiOiJyZXN0YXJ0OmNvZGV4OjEiLCJwYXlsb2FkSGFzaCI6ImRlZWE5YjQ2MzYwZmM2NGYwM2UyYzQwNWQyNGJjMzVjMmE4ZTExZmEyMmUxNGI2MWM2ZGNiZTNkNWIzODI1NDUiLCJwaGFzZSI6ImNvbXBsZXRlZCIsInBvbGljeUNsYXNzIjoicmVxdWlyZS1jb25maXJtYXRpb24iLCJzZXF1ZW5jZSI6MTEsInRyYW5zcG9ydCI6ImNvZGV4LWFwcC1zZXJ2ZXIifX0sInJlcXVlc3RJZCI6ImFwcGVuZDoxMTo0OWQ1MGU2Yy05NzYyLTQyMGYtOWVmNS1kZmVmNmYzNDgyNmY6Y29tcGxldGVkIn0="
+            }
+          ]
+        },
+        "identity": "governess-journal-fixture-recorder",
+        "header": {},
+        "requestId": "7bd96e9a-7e50-48dd-8b2d-0629a1ea91d6"
+      }
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2026-10-10T20:46:23.961137Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048708",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "governess-journal-fixture-recorder-6d2752a6192d46d188a2eabb10cd68e5",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "loop-governess-replay-worker"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2026-10-10T20:46:23.961140Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048709",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "16",
+        "identity": "governess-journal-fixture-recorder",
+        "requestId": "request-from-RespondWorkflowTaskCompleted",
+        "historySizeBytes": "1455",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.23.0+1a3a99feb74fd7fc2c8476a0b3115355691217e759059128d97ec55c74be6544"
+        }
+      }
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2026-10-10T20:46:23.965966Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048713",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "16",
+        "startedEventId": "17",
+        "identity": "governess-journal-fixture-recorder",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.23.0+1a3a99feb74fd7fc2c8476a0b3115355691217e759059128d97ec55c74be6544"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    }
+  ]
+}

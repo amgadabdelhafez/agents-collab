@@ -17,7 +17,13 @@ import { join } from "node:path";
 import { defaultPayloadConverter } from "@temporalio/client";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
-import { governessBeatWorkflowId } from "../../src/loop/governess-beat-workflow";
+import {
+  governessBeatLegacyWorkflowId,
+  governessBeatOwnedWorkflowId,
+  governessBeatOwner,
+  governessBeatOwnerMemo,
+} from "../../src/loop/governess-beat-identity";
+import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "../../src/loop/governess-beat-workflow";
 import {
   compactGovernessJournal,
   prepareGovernessControl,
@@ -45,6 +51,8 @@ import {
 } from "./governess-beat-fixture";
 
 const GOLDEN = "tests/fixtures/governess/beat-journal.golden.jsonl";
+const REPO_A = "repo-a-00000000000a";
+const REPO_B = "repo-b-00000000000b";
 const TEST_CONFIG: GovernessTemporalConfig = {
   address: "unused-by-injected-connect:7233",
   namespace: "unused",
@@ -110,6 +118,18 @@ const writeFixture = (journalFile: string): void => {
   );
 };
 
+// The error text a call failed with, or "resolved". Awaited directly rather
+// than through expect().rejects, which stalled the gRPC client for about 45 s
+// per call under bun here.
+const refusal = async (call: Promise<unknown>): Promise<string> => {
+  try {
+    await call;
+    return "resolved";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+};
+
 const freshJournal = (): string =>
   join(mkdtempSync(join(tmpdir(), "gov6-temporal-journal-")), "journal.jsonl");
 
@@ -118,15 +138,71 @@ describe("gov-6 governess journal on Temporal", () => {
   let worker: Worker;
   let workerRun: Promise<void>;
 
-  const journalClient = (): GovernessTemporalJournalClient =>
+  const journalClient = (
+    ownerRepoId = REPO_A,
+    taskQueue = TEST_CONFIG.taskQueue
+  ): GovernessTemporalJournalClient =>
     createGovernessTemporalJournalClient({
       client: environment.client.workflow,
       decode: (payload) =>
         defaultPayloadConverter.fromPayload(
           payload as Parameters<typeof defaultPayloadConverter.fromPayload>[0]
         ),
-      taskQueue: TEST_CONFIG.taskQueue,
+      ownerRepoId,
+      settleTimeoutMs: 10_000,
+      taskQueue,
     });
+
+  const ownedId = (
+    runId: string,
+    repoId = REPO_A,
+    taskQueue = TEST_CONFIG.taskQueue
+  ): string =>
+    governessBeatOwnedWorkflowId(
+      governessBeatOwner({ repoId, runId, taskQueue })
+    );
+
+  // Signal events in an id's latest run: everything ever written to it.
+  const signalCount = async (workflowId: string): Promise<number> =>
+    (
+      (await environment.client.workflow.getHandle(workflowId).fetchHistory())
+        .events ?? []
+    ).filter((event) => event.workflowExecutionSignaledEventAttributes).length;
+
+  // An execution created the way an older journal, or another owner, would:
+  // signalWithStart under whatever id, memo and queue the caller chose.
+  const plantBeat = async (input: {
+    memo?: Record<string, string>;
+    record: GovernessControlRecord;
+    runId: string;
+    taskQueue: string;
+    workflowId: string;
+  }): Promise<void> => {
+    await environment.client.workflow.signalWithStart("temporalWorkflow", {
+      args: [
+        {
+          at: input.record.at,
+          input: { runId: input.runId },
+          requestId: `start:${input.runId}`,
+          workflowId: input.workflowId,
+          workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
+        },
+      ],
+      ...(input.memo ? { memo: input.memo } : {}),
+      signal: "workflow-port-command",
+      signalArgs: [
+        {
+          at: input.record.at,
+          kind: "signal",
+          name: "append_record",
+          payload: { record: input.record },
+          requestId: `append:${input.record.sequence}:planted`,
+        },
+      ],
+      taskQueue: input.taskQueue,
+      workflowId: input.workflowId,
+    });
+  };
 
   const queryWorkflowJournal = async (
     runId: string
@@ -136,7 +212,7 @@ describe("gov-6 governess journal on Temporal", () => {
     });
     const queried = await port.query({
       name: "journal",
-      workflowId: governessBeatWorkflowId(runId),
+      workflowId: ownedId(runId),
     });
     return queried.value as unknown as GovernessControlRecord[];
   };
@@ -168,6 +244,7 @@ describe("gov-6 governess journal on Temporal", () => {
     const backend = await attachGovernessJournalBackend({
       connect: async () => journalClient(),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -202,6 +279,7 @@ describe("gov-6 governess journal on Temporal", () => {
     const first = await attachGovernessJournalBackend({
       connect: async () => journalClient(),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -217,6 +295,7 @@ describe("gov-6 governess journal on Temporal", () => {
     const second = await attachGovernessJournalBackend({
       connect: async () => journalClient(),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -271,6 +350,7 @@ describe("gov-6 governess journal on Temporal", () => {
         },
       }),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -282,6 +362,7 @@ describe("gov-6 governess journal on Temporal", () => {
     const second = await attachGovernessJournalBackend({
       connect: async () => journalClient(),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -305,6 +386,7 @@ describe("gov-6 governess journal on Temporal", () => {
         appendRecord: () => Promise.reject(new Error("server unreachable")),
       }),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -321,6 +403,7 @@ describe("gov-6 governess journal on Temporal", () => {
     const second = await attachGovernessJournalBackend({
       connect: async () => journalClient(),
       journalFile,
+      ownerRepoId: REPO_A,
       runId,
       temporal: TEST_CONFIG,
     });
@@ -336,6 +419,223 @@ describe("gov-6 governess journal on Temporal", () => {
     expect(
       serializeGovernessJournal(await journalClient().readRecords(runId))
     ).toBe(serializeGovernessJournal(everything));
+  }, 120_000);
+
+  // fix7: the P1 cross-repo collision. Both repos use the same run id, the
+  // same namespace and the same task queue, which is exactly what two repos
+  // on one host with the default queue do.
+  test("isolation: two repos with the same run id sharing a namespace and queue keep separate journals", async () => {
+    const runId = `gov7-shared-${process.pid}`;
+    const fileA = freshJournal();
+    const fileB = freshJournal();
+    const a = await attachGovernessJournalBackend({
+      connect: async () => journalClient(REPO_A),
+      journalFile: fileA,
+      ownerRepoId: REPO_A,
+      runId,
+      temporal: TEST_CONFIG,
+    });
+    writeFixture(fileA);
+    await a.close();
+
+    const b = await attachGovernessJournalBackend({
+      connect: async () => journalClient(REPO_B),
+      journalFile: fileB,
+      ownerRepoId: REPO_B,
+      runId,
+      temporal: TEST_CONFIG,
+    });
+    if (b.kind !== "temporal") {
+      throw new Error("expected the Temporal backend");
+    }
+    // B's recovery saw none of A's records and rewrote nothing.
+    expect(b.recovery).toMatchObject({
+      backfilled: 0,
+      rewroteFile: false,
+      temporalRecords: 0,
+    });
+    expect(readGovernessJournal(fileB)).toEqual([]);
+    prepareGovernessControl(fileB, {
+      action: "nudge",
+      at: "2026-10-10T00:00:00.000Z",
+      epoch: 1,
+      idempotencyKey: "repo-b-only",
+      payload: "repo b's own control",
+      policyClass: "safe-automatic",
+    });
+    await b.close();
+
+    const recordsA = readGovernessJournal(fileA);
+    const recordsB = readGovernessJournal(fileB);
+    expect(recordsA.length).toBeGreaterThan(5);
+    expect(recordsB).toHaveLength(1);
+    expect(ownedId(runId, REPO_A)).not.toBe(ownedId(runId, REPO_B));
+    expect(
+      serializeGovernessJournal(await journalClient(REPO_A).readRecords(runId))
+    ).toBe(serializeGovernessJournal(recordsA));
+    expect(
+      serializeGovernessJournal(await journalClient(REPO_B).readRecords(runId))
+    ).toBe(serializeGovernessJournal(recordsB));
+    // Every signal each execution ever received is its own repo's.
+    expect(await signalCount(ownedId(runId, REPO_A))).toBe(recordsA.length);
+    expect(await signalCount(ownedId(runId, REPO_B))).toBe(1);
+    for (const repoId of [REPO_A, REPO_B]) {
+      const described = await environment.client.workflow
+        .getHandle(ownedId(runId, repoId))
+        .describe();
+      expect(described.memo).toEqual(
+        governessBeatOwnerMemo(
+          governessBeatOwner({
+            repoId,
+            runId,
+            taskQueue: TEST_CONFIG.taskQueue,
+          })
+        )
+      );
+    }
+    // The legacy id both would have shared was never created.
+    expect(
+      await refusal(
+        environment.client.workflow
+          .getHandle(governessBeatLegacyWorkflowId(runId))
+          .describe()
+      )
+    ).toContain("not found");
+  }, 120_000);
+
+  test("isolation: one repo and run under two deployments (task queues) keep separate journals", async () => {
+    const runId = `gov7-deployments-${process.pid}`;
+    const otherQueue = `${TEST_CONFIG.taskQueue}-elsewhere`;
+    const here = freshJournal();
+    const there = freshJournal();
+    const first = await attachGovernessJournalBackend({
+      connect: async () => journalClient(REPO_A),
+      journalFile: here,
+      ownerRepoId: REPO_A,
+      runId,
+      temporal: TEST_CONFIG,
+    });
+    writeFixture(here);
+    await first.close();
+    const second = await attachGovernessJournalBackend({
+      connect: async () => journalClient(REPO_A, otherQueue),
+      journalFile: there,
+      ownerRepoId: REPO_A,
+      runId,
+      temporal: { ...TEST_CONFIG, taskQueue: otherQueue },
+    });
+    if (second.kind !== "temporal") {
+      throw new Error("expected the Temporal backend");
+    }
+    expect(second.recovery.temporalRecords).toBe(0);
+    expect(second.workflowId).toBe(ownedId(runId, REPO_A, otherQueue));
+    await second.close();
+    expect(readGovernessJournal(there)).toEqual([]);
+    expect(await signalCount(ownedId(runId, REPO_A))).toBe(
+      readGovernessJournal(here).length
+    );
+  }, 120_000);
+
+  test("ownership: an execution under this run's id that another owner holds is never signalled or read", async () => {
+    const [seed] = goldenRecords();
+    if (!seed) {
+      throw new Error("golden journal is empty");
+    }
+    // Same id, this queue, but the memo names another repo.
+    const squatted = `gov7-squatted-${process.pid}`;
+    await plantBeat({
+      memo: governessBeatOwnerMemo(
+        governessBeatOwner({
+          repoId: REPO_B,
+          runId: squatted,
+          taskQueue: TEST_CONFIG.taskQueue,
+        })
+      ),
+      record: seed,
+      runId: squatted,
+      taskQueue: TEST_CONFIG.taskQueue,
+      workflowId: ownedId(squatted),
+    });
+    // Same id and this owner's memo, but another deployment's queue.
+    const queued = `gov7-queued-${process.pid}`;
+    await plantBeat({
+      memo: governessBeatOwnerMemo(
+        governessBeatOwner({
+          repoId: REPO_A,
+          runId: queued,
+          taskQueue: TEST_CONFIG.taskQueue,
+        })
+      ),
+      record: seed,
+      runId: queued,
+      taskQueue: `${TEST_CONFIG.taskQueue}-foreign`,
+      workflowId: ownedId(queued),
+    });
+    // Same id, this queue, no memo at all.
+    const unowned = `gov7-unowned-${process.pid}`;
+    await plantBeat({
+      record: seed,
+      runId: unowned,
+      taskQueue: TEST_CONFIG.taskQueue,
+      workflowId: ownedId(unowned),
+    });
+
+    for (const runId of [squatted, queued, unowned]) {
+      const client = journalClient(REPO_A);
+      expect(await refusal(client.appendRecord(runId, seed))).toContain(
+        `${ownedId(runId)} is not this run's journal`
+      );
+      expect(await refusal(client.readRecords(runId))).toContain(
+        "is not this run's journal"
+      );
+      // A governess start refuses instead of adopting the foreign journal.
+      expect(
+        await refusal(
+          attachGovernessJournalBackend({
+            connect: async () => journalClient(REPO_A),
+            journalFile: freshJournal(),
+            ownerRepoId: REPO_A,
+            runId,
+            temporal: TEST_CONFIG,
+          })
+        )
+      ).toContain("is not this run's journal");
+      expect(await signalCount(ownedId(runId))).toBe(1);
+    }
+  }, 120_000);
+
+  test("legacy: an in-flight legacy execution of the same run is neither read nor signalled", async () => {
+    const runId = `gov7-legacy-${process.pid}`;
+    const [seed] = goldenRecords();
+    if (!seed) {
+      throw new Error("golden journal is empty");
+    }
+    // What the pre-fix7 journal left: governess-beat:<runId>, repo memo only.
+    await plantBeat({
+      memo: { loopRepoId: REPO_A },
+      record: seed,
+      runId,
+      taskQueue: TEST_CONFIG.taskQueue,
+      workflowId: governessBeatLegacyWorkflowId(runId),
+    });
+    const journalFile = freshJournal();
+    const backend = await attachGovernessJournalBackend({
+      connect: async () => journalClient(REPO_A),
+      journalFile,
+      ownerRepoId: REPO_A,
+      runId,
+      temporal: TEST_CONFIG,
+    });
+    if (backend.kind !== "temporal") {
+      throw new Error("expected the Temporal backend");
+    }
+    expect(backend.recovery.temporalRecords).toBe(0);
+    writeFixture(journalFile);
+    await backend.close();
+    expect(await signalCount(governessBeatLegacyWorkflowId(runId))).toBe(1);
+    expect(
+      serializeGovernessJournal(await journalClient(REPO_A).readRecords(runId))
+    ).toBe(serializeGovernessJournal(readGovernessJournal(journalFile)));
   }, 120_000);
 });
 
@@ -400,7 +700,7 @@ describe("gov-6 journal authority and fallback", () => {
         },
         close: () => Promise.resolve(),
         readRecords: () => Promise.resolve(history),
-        workflowId: governessBeatWorkflowId,
+        workflowId: governessBeatLegacyWorkflowId,
       }
     );
     expect(recovery.divergedAt).toBe(2);
