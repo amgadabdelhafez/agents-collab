@@ -38,7 +38,10 @@ import type {
   RunLifecycleState,
   RunStatus,
 } from "./types";
-import { readUtilityJobs, type UtilityJobSnapshot } from "./utility-store";
+import {
+  readUtilityJobsAsEvidence,
+  type UtilityJobsEvidence,
+} from "./utility-store";
 
 const RUNS_ROOT = join(".loop", "runs");
 const MANIFEST_FILE = "manifest.json";
@@ -145,6 +148,8 @@ export interface RunManifest {
    * date such as `2026-02-30T18:30:00Z` is not a release.
    */
   workspaceReleasedAt?: string;
+  /** Set by startup GC for a launch that never bound a tmux session. */
+  workspaceReleaseKind?: "abandoned-never-bound";
   worldModel?: RunWorldModelBinding;
 }
 
@@ -649,16 +654,47 @@ export const runStatusFromState = (state: RunLifecycleState): RunStatus => {
 export const isActiveRunState = (state: RunLifecycleState): boolean =>
   ACTIVE_RUN_STATES.has(state);
 
+/**
+ * The manifest without its workspace handback. A handback belongs to a run
+ * that ended; a run that is reserved or resumed again owns its workspace
+ * again, so the marker (and its kind) must not survive into that life. Left
+ * in place, it would make the teardown of the resumed run report an earlier
+ * release as its own, and it is no longer true of the run.
+ */
+export const withoutWorkspaceHandback = (
+  manifest: RunManifest
+): RunManifest => {
+  if (
+    manifest.workspaceReleasedAt === undefined &&
+    manifest.workspaceReleaseKind === undefined
+  ) {
+    return manifest;
+  }
+  const {
+    workspaceReleasedAt: _releasedAt,
+    workspaceReleaseKind: _releaseKind,
+    ...rest
+  } = manifest;
+  return rest;
+};
+
+/** An active run never carries a handback (see `withoutWorkspaceHandback`). */
+const handbackForState = (manifest: RunManifest): RunManifest =>
+  isActiveRunState(manifest.state)
+    ? withoutWorkspaceHandback(manifest)
+    : manifest;
+
 export const setRunManifestState = (
   manifest: RunManifest,
   state: RunLifecycleState,
   now = new Date().toISOString()
-): RunManifest => ({
-  ...manifest,
-  state,
-  status: runStatusFromState(state),
-  updatedAt: now,
-});
+): RunManifest =>
+  handbackForState({
+    ...manifest,
+    state,
+    status: runStatusFromState(state),
+    updatedAt: now,
+  });
 
 const gitText = (
   cwd: string,
@@ -993,7 +1029,8 @@ const readRecordedPidFile = (
 export const readAuxiliaryRunPids = (
   manifestPath: string,
   manifest: RunManifest,
-  reference: string
+  reference: string,
+  nowMs: number = Date.now()
 ): AuxiliaryRunPids => {
   const runDir = dirname(manifestPath);
   const pids: RecordedRunPid[] = [];
@@ -1041,7 +1078,7 @@ export const readAuxiliaryRunPids = (
     }
     pids.push({ pid: record.pid, reference: record.reference, source });
   }
-  const workers = readUtilityWorkerPids(runDir, reference);
+  const workers = readUtilityWorkerPids(runDir, nowMs);
   if (workers.kind === "unreadable") {
     return workers;
   }
@@ -1050,34 +1087,59 @@ export const readAuxiliaryRunPids = (
 };
 
 /**
+ * How long a torn final append to `utility/jobs.jsonl` is treated as possibly
+ * still in flight. An append is one write; a worker whose claim append was
+ * torn throws at its very next store call, before any work. Past this grace
+ * the torn line is a dead writer's remains, not a live worker's claim.
+ */
+export const UTILITY_TORN_TAIL_GRACE_MS = 60_000;
+
+/**
  * The worker pid of every utility job the run ever claimed. A worker is
  * spawned detached with its cwd in the workspace and its pid is recorded
  * nowhere else, so it is release evidence like any other run process. Jobs
  * that already ended count too: a worker fenced or timed out may still be
- * exiting, and a dead or provably reused pid costs nothing. The claim is
- * written by the worker itself, so the claim time is a moment by which it
- * had started. A journal that cannot be read is unreadable evidence.
+ * exiting, and a dead or provably reused pid costs nothing.
+ *
+ * The PID-reuse reference is the claim instant ALONE. The worker writes its
+ * own claim (`runUtilityWorker` calls `claimUtilityJob` with its own pid and
+ * the time is taken in that process), so it had certainly started by then,
+ * and a live process that started after the claim is provably not that
+ * worker. Taking a later instant (such as the run's last update) would only
+ * misread unrelated processes that recycled an old worker pid as the worker,
+ * and a long run with many ended jobs would then rarely ever release.
+ *
+ * A journal that cannot be read is unreadable evidence, except for a torn
+ * final append older than `UTILITY_TORN_TAIL_GRACE_MS`, which is dropped (see
+ * `readUtilityJobsAsEvidence`). A fresh torn append may still be in flight.
  */
 const readUtilityWorkerPids = (
   runDir: string,
-  reference: string
+  nowMs: number
 ): AuxiliaryRunPids => {
-  let jobs: UtilityJobSnapshot[];
+  let evidence: UtilityJobsEvidence;
   try {
-    jobs = readUtilityJobs(runDir);
+    evidence = readUtilityJobsAsEvidence(runDir);
   } catch (error) {
     return {
       kind: "unreadable",
       reason: `utility/jobs.jsonl is unreadable: ${(error as Error).message}`,
     };
   }
+  const torn = evidence.tornTailModifiedAt;
+  if (torn && !(nowMs - torn.getTime() >= UTILITY_TORN_TAIL_GRACE_MS)) {
+    return {
+      kind: "unreadable",
+      reason: `utility/jobs.jsonl is unreadable: its final append (at ${torn.toISOString()}) is torn and may still be in flight`,
+    };
+  }
   const pids: RecordedRunPid[] = [];
-  for (const job of jobs) {
+  for (const job of evidence.jobs) {
     for (const event of job.events) {
       if (event.claim) {
         pids.push({
           pid: event.claim.workerPid,
-          reference: latestInstant(reference, event.at),
+          reference: latestInstant(event.at),
           source: `utility job ${job.jobId} worker`,
         });
       }
@@ -1160,6 +1222,21 @@ export const reconcileLegacyStoppedRun = async (
       status: "refused",
     };
   }
+  // The state first: a recorded handback speaks only for a run that is still
+  // in the terminal state it was released in. A run that was resumed since is
+  // a new life of the run, and an earlier marker is no release of it.
+  if (
+    evidence.state.kind !== "valid" ||
+    evidence.state.value !== terminalState ||
+    evidence.status.kind !== "valid" ||
+    evidence.status.value !== terminalState
+  ) {
+    return {
+      reason: `run-is-not-${terminalState}`,
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
   if (evidence.workspaceReleasedAt.kind === "valid") {
     return {
       runId: expectedRunId,
@@ -1170,18 +1247,6 @@ export const reconcileLegacyStoppedRun = async (
   if (evidence.workspaceReleasedAt.kind !== "absent") {
     return {
       reason: "invalid-release-evidence",
-      runId: expectedRunId,
-      status: "refused",
-    };
-  }
-  if (
-    evidence.state.kind !== "valid" ||
-    evidence.state.value !== terminalState ||
-    evidence.status.kind !== "valid" ||
-    evidence.status.value !== terminalState
-  ) {
-    return {
-      reason: `run-is-not-${terminalState}`,
       runId: expectedRunId,
       status: "refused",
     };
@@ -1367,11 +1432,12 @@ export const createRunManifest = (
 export const touchRunManifest = (
   manifest: RunManifest,
   now = new Date().toISOString()
-): RunManifest => ({
-  ...manifest,
-  status: runStatusFromState(manifest.state),
-  updatedAt: now,
-});
+): RunManifest =>
+  handbackForState({
+    ...manifest,
+    status: runStatusFromState(manifest.state),
+    updatedAt: now,
+  });
 
 export const writeRunManifest = (
   manifestPath: string,

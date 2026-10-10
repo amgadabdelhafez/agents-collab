@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { which } from "bun";
 import {
   defaultGovernessDeps,
   type GovernessConfig,
@@ -334,151 +335,179 @@ const alive = (pid: number): boolean => {
   }
 };
 
-test("the production teardown wiring ends the run's detached workers and hands the workspace back", async () => {
-  const root = mkdtempSync(join(tmpdir(), "loop-teardown-wiring-"));
-  // Short, and never created: the run's recorded tmux server is gone.
-  const socketDir = `/tmp/loop-wiring-${process.pid}-${Date.now()}`;
-  const tmuxTmp = mkdtempSync(join(tmpdir(), "loop-wiring-tmux-"));
-  const runDir = join(root, "runs", "repo-1", "91");
-  const repoRoot = join(root, "repo");
-  const children: number[] = [];
-  const savedEnv = {
-    LOOP_TMUX_SOCKET: process.env.LOOP_TMUX_SOCKET,
-    TMUX: process.env.TMUX,
-    TMUX_TMPDIR: process.env.TMUX_TMPDIR,
-  };
-  try {
-    // The kill goes to an empty scratch tmux directory, never a live server.
-    process.env.TMUX_TMPDIR = tmuxTmp;
-    Reflect.deleteProperty(process.env, "TMUX");
-    Reflect.deleteProperty(process.env, "LOOP_TMUX_SOCKET");
-    teardownHangupInternals.onHangup = () => undefined;
-    mkdirSync(repoRoot, { recursive: true });
-    mkdirSync(runDir, { recursive: true });
-    const sleeper = join(root, "sleeper.ts");
-    writeFileSync(sleeper, SLEEPER);
-    const start = (args: string[], detached: boolean): number => {
-      const child = spawn(process.execPath, [sleeper, ...args], {
-        detached,
-        stdio: "ignore",
-      });
-      child.unref();
-      if (typeof child.pid !== "number") {
-        throw new Error("could not spawn a worker stand-in");
-      }
-      children.push(child.pid);
-      return child.pid;
-    };
-    const bridgeWorker = start(["__bridge-worker", runDir], false);
-    const utilityWorker = start(
-      [UTILITY_WORKER_SUBCOMMAND, runDir, "1", "job-w"],
-      true
-    );
-    // Give both a moment to exec so `ps` shows their final command lines.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    const manifestPath = join(runDir, "manifest.json");
-    writeRunManifest(manifestPath, {
-      ...createRunManifest({
-        cwd: repoRoot,
-        mode: "paired",
-        pid: deadPid(),
-        repoId: "repo-1",
-        runId: "91",
-        state: "working",
-        tmuxSession: "repo-loop-91",
-        workspaceBinding: {
-          branchRef: "refs/heads/main",
-          repoId: "repo-1",
-          root: repoRoot,
-        },
-      }),
-      tmuxSocket: `${socketDir}/default`,
-    });
-    writeFileSync(
-      join(runDir, "bridge-worker.json"),
-      `${JSON.stringify({ pid: bridgeWorker })}\n`
-    );
-    appendUtilityRouteRequest(
-      runDir,
-      createUtilityRouteRequest({
-        acceptanceCriteria: ["return source-backed evidence"],
-        authority: {},
-        id: "job-w",
-        kind: "inspect",
-        objective: "Inspect the worker configuration",
-        readScope: ["src"],
-        requester: "claude",
-        requiredCapabilities: ["inspect"],
-        risk: "low",
-        writeScope: [],
-      })
-    );
-    activateUtilityEpoch(runDir, 1);
-    transitionUtilityJob(runDir, "job-w", "routed-utility", {
-      decision: {
-        reason: "utility-eligible",
-        target: "utility",
-        tierId: "utility-au-pair",
-      },
-      routeEpoch: 1,
-    });
-    claimUtilityJob(runDir, 1, {
-      jobId: "job-w",
-      workerId: `utility-${utilityWorker}`,
-      workerPid: utilityWorker,
-    });
-    transitionUtilityJob(runDir, "job-w", "running", {});
-    expect(alive(bridgeWorker)).toBe(true);
-    expect(alive(utilityWorker)).toBe(true);
-
-    const events: string[] = [];
-    const production = defaultGovernessDeps();
-    await stopGovernessLoop(
-      {
-        agents: [],
-        epoch: 1,
-        logFile: join(root, "governess.jsonl"),
-        manifestPath,
-        runDir,
-        runId: "91",
-        session: "repo-loop-91",
-      } as unknown as GovernessConfig,
-      {
-        ...production,
-        appendLog: (_file, record) => {
-          events.push(JSON.stringify(record));
-        },
-        fenceCurrent: () => true,
-      },
-      "user requested teardown"
-    );
-
-    expect(alive(bridgeWorker)).toBe(false);
-    expect(alive(utilityWorker)).toBe(false);
-    expect(events.join("\n")).toContain('"event":"workspace-released"');
-    const after = readRunManifest(manifestPath);
-    expect(after?.state).toBe("stopped");
-    expect(after?.workspaceReleasedAt).toBeDefined();
-    expect(readFileSync(join(runDir, "bridge-worker.json"), "utf8")).toContain(
-      String(bridgeWorker)
-    );
-  } finally {
-    for (const pid of children) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
+/** Polls until `pid` is gone; a SIGTERMed child needs a moment to exit. */
+const exited = async (pid: number, withinMs = 5000): Promise<boolean> => {
+  const deadline = Date.now() + withinMs;
+  while (alive(pid)) {
+    if (Date.now() > deadline) {
+      return false;
     }
-    for (const [name, value] of Object.entries(savedEnv)) {
-      if (value === undefined) {
-        Reflect.deleteProperty(process.env, name);
-      } else {
-        process.env[name] = value;
-      }
-    }
-    rmSync(root, { force: true, recursive: true });
-    rmSync(tmuxTmp, { force: true, recursive: true });
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
-}, 30_000);
+  return true;
+};
+
+// The production kill runs the `tmux` binary. Without it on PATH the kill is
+// reported unconfirmed (`tmux control unavailable`), and by design no release
+// is attempted after an unconfirmed kill, so this wiring cannot be observed.
+const TMUX_ON_PATH = Boolean(which("tmux"));
+if (!TMUX_ON_PATH) {
+  console.warn(
+    "[teardown-helper-gate] skipping the production wiring test: no tmux binary on PATH, so the production session kill cannot be confirmed"
+  );
+}
+const productionWiringTest = TMUX_ON_PATH ? test : test.skip;
+
+productionWiringTest(
+  "the production teardown wiring ends the run's detached workers and hands the workspace back",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "loop-teardown-wiring-"));
+    // Short, and never created: the run's recorded tmux server is gone.
+    const socketDir = `/tmp/loop-wiring-${process.pid}-${Date.now()}`;
+    const tmuxTmp = mkdtempSync(join(tmpdir(), "loop-wiring-tmux-"));
+    const runDir = join(root, "runs", "repo-1", "91");
+    const repoRoot = join(root, "repo");
+    const children: number[] = [];
+    const savedEnv = {
+      LOOP_TMUX_SOCKET: process.env.LOOP_TMUX_SOCKET,
+      TMUX: process.env.TMUX,
+      TMUX_TMPDIR: process.env.TMUX_TMPDIR,
+    };
+    try {
+      // The kill goes to an empty scratch tmux directory, never a live server.
+      process.env.TMUX_TMPDIR = tmuxTmp;
+      Reflect.deleteProperty(process.env, "TMUX");
+      Reflect.deleteProperty(process.env, "LOOP_TMUX_SOCKET");
+      teardownHangupInternals.onHangup = () => undefined;
+      mkdirSync(repoRoot, { recursive: true });
+      mkdirSync(runDir, { recursive: true });
+      const sleeper = join(root, "sleeper.ts");
+      writeFileSync(sleeper, SLEEPER);
+      const start = (args: string[], detached: boolean): number => {
+        const child = spawn(process.execPath, [sleeper, ...args], {
+          detached,
+          stdio: "ignore",
+        });
+        child.unref();
+        if (typeof child.pid !== "number") {
+          throw new Error("could not spawn a worker stand-in");
+        }
+        children.push(child.pid);
+        return child.pid;
+      };
+      const bridgeWorker = start(["__bridge-worker", runDir], false);
+      const utilityWorker = start(
+        [UTILITY_WORKER_SUBCOMMAND, runDir, "1", "job-w"],
+        true
+      );
+      // Give both a moment to exec so `ps` shows their final command lines.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const manifestPath = join(runDir, "manifest.json");
+      writeRunManifest(manifestPath, {
+        ...createRunManifest({
+          cwd: repoRoot,
+          mode: "paired",
+          pid: deadPid(),
+          repoId: "repo-1",
+          runId: "91",
+          state: "working",
+          tmuxSession: "repo-loop-91",
+          workspaceBinding: {
+            branchRef: "refs/heads/main",
+            repoId: "repo-1",
+            root: repoRoot,
+          },
+        }),
+        tmuxSocket: `${socketDir}/default`,
+      });
+      writeFileSync(
+        join(runDir, "bridge-worker.json"),
+        `${JSON.stringify({ pid: bridgeWorker })}\n`
+      );
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["return source-backed evidence"],
+          authority: {},
+          id: "job-w",
+          kind: "inspect",
+          objective: "Inspect the worker configuration",
+          readScope: ["src"],
+          requester: "claude",
+          requiredCapabilities: ["inspect"],
+          risk: "low",
+          writeScope: [],
+        })
+      );
+      activateUtilityEpoch(runDir, 1);
+      transitionUtilityJob(runDir, "job-w", "routed-utility", {
+        decision: {
+          reason: "utility-eligible",
+          target: "utility",
+          tierId: "utility-au-pair",
+        },
+        routeEpoch: 1,
+      });
+      claimUtilityJob(runDir, 1, {
+        jobId: "job-w",
+        workerId: `utility-${utilityWorker}`,
+        workerPid: utilityWorker,
+      });
+      transitionUtilityJob(runDir, "job-w", "running", {});
+      expect(alive(bridgeWorker)).toBe(true);
+      expect(alive(utilityWorker)).toBe(true);
+
+      const events: string[] = [];
+      const production = defaultGovernessDeps();
+      await stopGovernessLoop(
+        {
+          agents: [],
+          epoch: 1,
+          logFile: join(root, "governess.jsonl"),
+          manifestPath,
+          runDir,
+          runId: "91",
+          session: "repo-loop-91",
+        } as unknown as GovernessConfig,
+        {
+          ...production,
+          appendLog: (_file, record) => {
+            events.push(JSON.stringify(record));
+          },
+          fenceCurrent: () => true,
+        },
+        "user requested teardown"
+      );
+
+      // Signalled, not merely outlived: each exits on its SIGTERM.
+      expect(await exited(bridgeWorker)).toBe(true);
+      expect(await exited(utilityWorker)).toBe(true);
+      expect(events.join("\n")).toContain('"event":"workspace-released"');
+      const after = readRunManifest(manifestPath);
+      expect(after?.state).toBe("stopped");
+      expect(after?.workspaceReleasedAt).toBeDefined();
+      expect(
+        readFileSync(join(runDir, "bridge-worker.json"), "utf8")
+      ).toContain(String(bridgeWorker));
+    } finally {
+      for (const pid of children) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+      for (const [name, value] of Object.entries(savedEnv)) {
+        if (value === undefined) {
+          Reflect.deleteProperty(process.env, name);
+        } else {
+          process.env[name] = value;
+        }
+      }
+      rmSync(root, { force: true, recursive: true });
+      rmSync(tmuxTmp, { force: true, recursive: true });
+    }
+  },
+  30_000
+);

@@ -12,6 +12,7 @@ import {
   BRIDGE_SUBCOMMAND,
   BRIDGE_WORKER_SUBCOMMAND,
 } from "./bridge-constants";
+import { tmuxRuntimeAbsentForManifestSync } from "./launch-reservation";
 import {
   buildManifestPath,
   isActiveRunState,
@@ -23,7 +24,10 @@ import {
   updateRunManifest,
 } from "./run-state";
 import { UTILITY_WORKER_SUBCOMMAND } from "./utility-constants";
-import { readUtilityJobs, type UtilityJobSnapshot } from "./utility-store";
+import {
+  readUtilityJobsAsEvidence,
+  type UtilityJobSnapshot,
+} from "./utility-store";
 
 const PROCESS_REGISTRY_DIR = "run-processes";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
@@ -48,6 +52,12 @@ interface RunProcessCleanupDeps {
   listTmuxSessions: () => ReadonlySet<string> | undefined;
   now: () => string;
   pidAlive: (pid: number) => boolean;
+  /**
+   * Whether the run's tmux runtime is positively gone on the run's own
+   * server: its recorded socket, or every legacy candidate socket when it
+   * recorded none. The same rule as `loop reconcile` and the launch scan.
+   */
+  runtimeAbsent: (manifestPath: string) => boolean;
   signal: (pid: number, signal: NodeJS.Signals) => void;
   updateManifest: typeof updateRunManifest;
 }
@@ -130,6 +140,8 @@ const cleanupDeps: RunProcessCleanupDeps = {
   listeningPids: defaultListeningPids,
   now: () => new Date().toISOString(),
   pidAlive: defaultPidAlive,
+  runtimeAbsent: (manifestPath) =>
+    tmuxRuntimeAbsentForManifestSync(manifestPath),
   signal: (pid, signal) => process.kill(pid, signal),
   updateManifest: updateRunManifest,
 };
@@ -306,11 +318,15 @@ const signalRunBridgeWorker = (
  * Ends every live utility worker (Direct, Nanny, Au Pair) the run ever
  * claimed a job with. Workers are spawned detached with their cwd in the
  * workspace, so the session kill never reaches them and their pid is recorded
- * only in the job claim. A worker is signalled only when its live command is
- * the worker subcommand followed by exactly this run directory, claim epoch
- * and job id at the end of its argv. Its process group goes with it (bounded commands it runs are
- * in that group); a worker that leads no group is signalled alone. The claims
- * are kept, since a dead pid is absence evidence for the release check.
+ * only in the job claim. Every claim event counts, not only a job's latest
+ * claim: a worker fenced off by a later claim of the same job may still be
+ * alive, and the release evidence counts it too. A worker is signalled only
+ * when its live argv ends with exactly the worker subcommand, this run
+ * directory, the claim epoch and the job id (r6's exact-tail rule). Its process group goes with
+ * it (bounded commands it runs are in that group); a worker that leads no
+ * group is signalled alone. The claims are kept, since a dead pid is absence
+ * evidence for the release check. A torn final append is skipped here (it
+ * names no pid that can be read); the release check judges it.
  */
 const signalRunUtilityWorkers = (
   result: RunProcessCleanupResult,
@@ -319,7 +335,7 @@ const signalRunUtilityWorkers = (
 ): void => {
   let jobs: UtilityJobSnapshot[];
   try {
-    jobs = readUtilityJobs(runDir);
+    jobs = readUtilityJobsAsEvidence(runDir).jobs;
   } catch (error) {
     // Never kill authority. The release check reads the same journal as
     // unreadable and keeps the workspace owned.
@@ -329,43 +345,61 @@ const signalRunUtilityWorkers = (
     });
     return;
   }
+  const seen = new Set<string>();
   for (const job of jobs) {
-    const claim = job.claim;
-    if (!(claim && deps.pidAlive(claim.workerPid))) {
-      continue;
+    for (const event of job.events) {
+      const claim = event.claim;
+      const key = claim && `${claim.workerPid}:${claim.epoch}:${job.jobId}`;
+      if (!(claim && key) || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      signalUtilityWorker(result, runDir, job.jobId, claim, deps);
     }
-    const pid = claim.workerPid;
-    const command = deps.commandForPid(pid);
-    // The worker is spawned as `<loop> __utility-worker <runDir> <epoch>
-    // <jobId>`, so only that exact argv tail proves ownership (r6's rule for
-    // detached workers: a spaced or prefixing run directory never matches).
-    const owned = Boolean(
-      command &&
-        commandEndsWithArgs(command, [
-          UTILITY_WORKER_SUBCOMMAND,
-          runDir,
-          String(claim.epoch),
-          job.jobId,
-        ])
-    );
-    if (!owned) {
-      result.skipped.push({
-        pid,
-        reason: command
-          ? "utility-worker-command-mismatch"
-          : "utility-worker-not-running",
-      });
-      continue;
-    }
-    try {
-      deps.signal(-pid, "SIGTERM");
-      result.killed.push(pid);
-      continue;
-    } catch {
-      // Not a process-group leader: signal the worker alone below.
-    }
-    signalOwnedProcess(result, pid, true, "", deps.signal);
   }
+};
+
+const signalUtilityWorker = (
+  result: RunProcessCleanupResult,
+  runDir: string,
+  jobId: string,
+  claim: { epoch: number; workerPid: number },
+  deps: RunProcessCleanupDeps
+): void => {
+  const pid = claim.workerPid;
+  if (!deps.pidAlive(pid)) {
+    return;
+  }
+  const command = deps.commandForPid(pid);
+  // Spawned as `<loop> __utility-worker <runDir> <epoch> <jobId>`: only that
+  // exact argv tail proves ownership (a spaced or prefixing run directory
+  // never matches).
+  const owned = Boolean(
+    command &&
+      commandEndsWithArgs(command, [
+        UTILITY_WORKER_SUBCOMMAND,
+        runDir,
+        String(claim.epoch),
+        jobId,
+      ])
+  );
+  if (!owned) {
+    result.skipped.push({
+      pid,
+      reason: command
+        ? "utility-worker-command-mismatch"
+        : "utility-worker-not-running",
+    });
+    return;
+  }
+  try {
+    deps.signal(-pid, "SIGTERM");
+    result.killed.push(pid);
+    return;
+  } catch {
+    // Not a process-group leader: signal the worker alone below.
+  }
+  signalOwnedProcess(result, pid, true, "", deps.signal);
 };
 
 const cleanupRunOwnedProcessesWithDeps = (
@@ -436,6 +470,7 @@ export const cleanupRunOwnedProcesses = (
 
 const runIsProvablyAbandoned = (
   manifest: RunManifest,
+  manifestPath: string,
   liveTmuxSessions: ReadonlySet<string> | undefined,
   deps: RunProcessCleanupDeps
 ): boolean => {
@@ -463,7 +498,15 @@ const runIsProvablyAbandoned = (
   ) {
     return false;
   }
-  return !deps.pidAlive(manifest.pid);
+  if (deps.pidAlive(manifest.pid)) {
+    return false;
+  }
+  // The current server's session list says nothing about a run whose session
+  // lives on another socket. Before GC marks such a run failed (which ends
+  // every helper it routes next) or records a handback, the run's own server
+  // must positively lack the session too: the recorded socket, or every
+  // legacy candidate when it recorded none.
+  return !manifest.tmuxSession || deps.runtimeAbsent(manifestPath);
 };
 
 const cleanupAbandonedRun = (input: {
@@ -481,7 +524,12 @@ const cleanupAbandonedRun = (input: {
   if (
     !(
       (hasProcessEvidence || needsStateRepair) &&
-      runIsProvablyAbandoned(input.manifest, input.liveTmuxSessions, input.deps)
+      runIsProvablyAbandoned(
+        input.manifest,
+        input.manifestPath,
+        input.liveTmuxSessions,
+        input.deps
+      )
     )
   ) {
     return undefined;

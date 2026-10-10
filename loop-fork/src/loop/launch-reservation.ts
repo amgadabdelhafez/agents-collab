@@ -30,9 +30,14 @@ import {
   setRunManifestState,
   touchRunManifest,
   updateRunManifest,
+  withoutWorkspaceHandback,
   writeRunManifest,
 } from "./run-state";
-import { type TmuxLiveness, tmuxTargetLivenessAsync } from "./tmux-control";
+import {
+  type TmuxLiveness,
+  tmuxTargetLiveness,
+  tmuxTargetLivenessAsync,
+} from "./tmux-control";
 import {
   legacyCandidateTargetsFromManifest,
   type ManifestHandle,
@@ -237,6 +242,52 @@ export const tmuxRuntimeAbsentForManifest = async (
     );
   }
   return await legacyRuntimeAbsent(handle, deps);
+};
+
+export interface SyncRuntimeProbeDeps {
+  endpointState: (target: TmuxTarget | undefined) => TmuxEndpointState;
+  env: Readonly<Record<string, string | undefined>>;
+  platform: string;
+  tmuxLiveness: (target: TmuxTarget | undefined) => TmuxLiveness;
+  uid: number;
+}
+
+/**
+ * The synchronous form of `tmuxRuntimeAbsentForManifest`, with the same rule:
+ * the recorded socket when there is one, else every legacy candidate socket,
+ * each judged by `runtimeAbsent`. For startup GC, which must not judge a run
+ * gone from the current tmux server's session list alone.
+ */
+export const tmuxRuntimeAbsentForManifestSync = (
+  manifestPath: string,
+  overrides: Partial<SyncRuntimeProbeDeps> = {}
+): boolean => {
+  const deps: SyncRuntimeProbeDeps = {
+    endpointState: readTmuxEndpointState,
+    env: process.env,
+    platform: osPlatform(),
+    tmuxLiveness: (target) => tmuxTargetLiveness(target),
+    uid: process.getuid?.() ?? 0,
+    ...overrides,
+  };
+  const handle = readRunManifestHandle(manifestPath);
+  if (!handle) {
+    return false;
+  }
+  const target = targetFromManifest(handle);
+  const targets = target
+    ? [target]
+    : legacyCandidateTargetsFromManifest(handle, {
+        env: deps.env,
+        platform: deps.platform,
+        uid: deps.uid,
+      });
+  if (!targets?.length) {
+    return false;
+  }
+  return targets.every((candidate) =>
+    runtimeAbsent(deps.endpointState(candidate), deps.tmuxLiveness(candidate))
+  );
 };
 
 const neverBoundShape = (manifest: RunManifest): boolean =>
@@ -617,6 +668,20 @@ const validateExplicitWorkspaceResume = (
   return stored;
 };
 
+/**
+ * Drops a recorded handback from the manifest a resume re-attaches to. Only
+ * the marker changes; a manifest without one is not rewritten.
+ */
+const clearWorkspaceHandback = (manifestPath: string): void => {
+  updateRunManifest(manifestPath, (current) =>
+    current &&
+    (current.workspaceReleasedAt !== undefined ||
+      current.workspaceReleaseKind !== undefined)
+      ? withoutWorkspaceHandback(current)
+      : undefined
+  );
+};
+
 const reserveRequestedLaunch = async (
   opts: Options,
   requested: RunManifest,
@@ -636,6 +701,7 @@ const reserveRequestedLaunch = async (
     opts.launchClaimId = requested.launchClaimId;
   }
   if (tmux === "live") {
+    clearWorkspaceHandback(storage.manifestPath);
     return { reserved: false, storage, workspaceBinding: binding };
   }
   const liveAttemptPid = [
@@ -648,14 +714,18 @@ const reserveRequestedLaunch = async (
     );
   }
   const attemptId = deps.makeClaimId();
+  // Under the launch lock, after the conflict scan: the resumed run owns its
+  // workspace again, so an earlier handback must not survive into its new
+  // life (its helpers would be judged by it, and its next teardown would
+  // report it as its own release).
   writeRunManifest(
     storage.manifestPath,
     touchRunManifest(
-      {
+      withoutWorkspaceHandback({
         ...requested,
         launchAttemptId: attemptId,
         launchAttemptPid: deps.pid,
-      },
+      }),
       deps.now()
     )
   );

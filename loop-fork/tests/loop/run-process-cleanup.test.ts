@@ -385,6 +385,9 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) => {
           if (pid === 8801) {
             return "codex app-server --listen ws://127.0.0.1:4500";
@@ -477,6 +480,9 @@ test("startup GC preserves an active detached run with missing tmux ownership", 
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) => {
           throw new Error(`active run process ${pid} must not be inspected`);
         },
@@ -538,6 +544,9 @@ test("startup GC explicitly releases a dead launch that never bound tmux panes",
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         listTmuxSessions: () => new Set(),
         now: () => "2026-08-30T08:32:08.484Z",
         pidAlive: () => false,
@@ -583,6 +592,9 @@ test("startup GC never signals stale-run processes that fail ownership proof", (
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) =>
           pid === 9202
             ? "loop __bridge-mcp /another/run claude"
@@ -634,6 +646,9 @@ test("startup GC preserves a run present in the bounded tmux snapshot", () => {
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) => {
           throw new Error(`live run process ${pid} must not be inspected`);
         },
@@ -690,6 +705,7 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
   );
   const commonDeps = {
     commandForPid: () => "codex app-server --listen ws://127.0.0.1:4530",
+    runtimeAbsent: () => true,
     listTmuxSessions: () => new Set<string>(),
     listeningPids: () => [9301],
     pidAlive: () => false,
@@ -761,6 +777,9 @@ test("startup GC contains tmux snapshot failures and preserves tmux-owned runs",
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         listTmuxSessions: () => {
           throw new Error("tmux unavailable");
         },
@@ -825,6 +844,9 @@ test("startup GC contains manifest repair failures before signaling and continue
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: () => "codex app-server --listen ws://127.0.0.1:4530",
         listTmuxSessions: () => new Set(),
         listeningPids: () => [9301],
@@ -882,6 +904,9 @@ test("startup GC retains bridge registration after a signal failure", () => {
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: () => `loop __bridge-mcp ${runDir} claude`,
         listTmuxSessions: () => new Set(),
         pidAlive: () => false,

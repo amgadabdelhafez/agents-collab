@@ -1106,9 +1106,12 @@ const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
 
 /**
  * Why the worker's run can no longer use a helper, or `undefined` while it
- * may: its manifest records a terminal state or a workspace handback. A
- * manifest that cannot be read never stops a worker; the release that this
- * guards against requires a readable terminal manifest anyway.
+ * may: its manifest records a terminal state. Only the state decides. A
+ * workspace handback marker alone never stops a worker: a resumed run is
+ * active again (the resume clears the marker, and a release always requires a
+ * terminal state anyway), and its helpers must start. A manifest that cannot
+ * be read never stops a worker; the release that this guards against requires
+ * a readable terminal manifest anyway.
  */
 const runNoLongerActive = (runDir: string): string | undefined => {
   let manifest: { state?: unknown; workspaceReleasedAt?: unknown } | null;
@@ -1118,15 +1121,17 @@ const runNoLongerActive = (runDir: string): string | undefined => {
     return undefined;
   }
   if (
-    typeof manifest?.workspaceReleasedAt === "string" &&
-    manifest.workspaceReleasedAt
+    !(
+      typeof manifest?.state === "string" &&
+      TERMINAL_RUN_STATES.has(manifest.state)
+    )
   ) {
-    return "its workspace was handed back";
+    return undefined;
   }
-  return typeof manifest?.state === "string" &&
-    TERMINAL_RUN_STATES.has(manifest.state)
-    ? `it is ${manifest.state}`
-    : undefined;
+  return typeof manifest.workspaceReleasedAt === "string" &&
+    manifest.workspaceReleasedAt
+    ? `it is ${manifest.state} and its workspace was handed back`
+    : `it is ${manifest.state}`;
 };
 
 const artifactDirForJob = (

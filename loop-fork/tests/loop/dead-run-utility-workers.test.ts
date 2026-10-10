@@ -24,7 +24,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { confirmTeardownRelease } from "../../src/loop/governess";
-import { reservePairedLaunch } from "../../src/loop/launch-reservation";
+import {
+  reservePairedLaunch,
+  tmuxRuntimeAbsentForManifestSync,
+} from "../../src/loop/launch-reservation";
 import {
   cleanupRunOwnedProcesses,
   gcAbandonedRunProcesses,
@@ -36,6 +39,7 @@ import {
   readRunManifest,
   resolveRepoId,
   resolveStorageRoot,
+  UTILITY_TORN_TAIL_GRACE_MS,
   writeRunManifest,
 } from "../../src/loop/run-state";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
@@ -326,9 +330,9 @@ test("a dead utility worker, or a live pid that provably started after its claim
   });
 });
 
-test("a live worker pid is judged against the later of the claim and the run's last update", async () => {
-  // Claim AFTER the last manifest update: a pid that started between the two
-  // may still be the worker, so the claim time must not be dropped.
+test("a live worker pid is judged against its claim instant alone", async () => {
+  // Claim AFTER the last manifest update: a pid that started before the claim
+  // may still be the worker.
   await withFixture(async (fixture) => {
     const { manifestPath, runDir } = writeRun(fixture);
     writeClaimedJob(
@@ -345,40 +349,172 @@ test("a live worker pid is judged against the later of the claim and the run's l
       world,
       manifestPath,
       "utility job job-1 worker",
-      "claim later than update"
+      "started before a claim later than the update"
     );
   });
-  // Claim BEFORE the last manifest update: the update time must not be
-  // dropped either.
+  // Claim BEFORE the last manifest update, pid started between the two. The
+  // worker wrote its own claim after it started, so a process that started
+  // after the claim is provably not it: the run's later update must not turn
+  // that recycled pid into ownership.
   await withFixture(async (fixture) => {
     const { manifestPath, runDir } = writeRun(fixture);
     writeClaimedJob(runDir, "job-1", WORKER, "running", CLAIMED_AT);
     const world = newWorld(WORKER);
     world.startedAt.set(WORKER, at("2026-10-05T20:45:00.000Z"));
+    await expectReleased(
+      fixture,
+      world,
+      manifestPath,
+      "started after the claim, before the update"
+    );
+  });
+  // The boundary: a process that started at the claim instant may be the
+  // worker.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    writeClaimedJob(runDir, "job-1", WORKER, "running", CLAIMED_AT);
+    const world = newWorld(WORKER);
+    world.startedAt.set(WORKER, at(CLAIMED_AT));
     await expectBlocked(
       fixture,
       world,
       manifestPath,
       "utility job job-1 worker",
-      "claim earlier than update"
+      "started at the claim instant"
     );
   });
 });
 
+test("an already-released run is not re-blocked by a long-ended worker whose pid was recycled", async () => {
+  // Released before the claim-time reference existed; the worker of an old
+  // job is long gone and an unrelated process that started after its claim,
+  // but before the run's release, now holds its pid.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture, {
+      workspaceReleasedAt: UPDATED_AT,
+    });
+    writeClaimedJob(runDir, "job-1", WORKER, "failed", CLAIMED_AT);
+    const world = newWorld(WORKER);
+    world.startedAt.set(WORKER, at("2026-10-05T20:45:00.000Z"));
+    const claim = await reservePairedLaunch(
+      makeOptions(),
+      fixture.binding,
+      fakeDeps(fixture.home, world)
+    );
+    expect(claim.storage.runId).toBe("82");
+    expect(readRunManifest(manifestPath)?.workspaceReleasedAt).toBe(UPDATED_AT);
+  });
+});
+
+const JOURNAL = (runDir: string) => join(runDir, "utility", "jobs.jsonl");
+
+const ageJournal = (runDir: string, ms: number) => {
+  const when = new Date(Date.now() - ms);
+  utimesSync(JOURNAL(runDir), when, when);
+};
+
 test("an unreadable utility job journal blocks release instead of reading as no workers", async () => {
+  // A malformed COMPLETE line is corruption, however old: its ordering and
+  // content cannot be trusted.
   await withFixture(async (fixture) => {
     const { manifestPath, runDir } = writeRun(fixture);
     writeClaimedJob(runDir, "job-1", WORKER);
     writeFileSync(
-      join(runDir, "utility", "jobs.jsonl"),
-      `${readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")}{"truncated`
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"interior": broken}\n`
+    );
+    ageJournal(runDir, 3_600_000);
+    await expectBlocked(
+      fixture,
+      newWorld(),
+      manifestPath,
+      "recorded-process-evidence-unreadable: utility/jobs.jsonl is unreadable: malformed utility event"
+    );
+  });
+  // A torn FINAL append that is fresh may still be in flight: it may be the
+  // claim of a worker that is alive right now.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    writeClaimedJob(runDir, "job-1", WORKER);
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"truncated`
     );
     await expectBlocked(
       fixture,
       newWorld(),
       manifestPath,
-      "recorded-process-evidence-unreadable: utility/jobs.jsonl is unreadable"
+      "recorded-process-evidence-unreadable: utility/jobs.jsonl is unreadable: its final append"
     );
+  });
+});
+
+test("a torn final append past the in-flight grace is a dead writer's remains, not a block", async () => {
+  // Just inside the grace: still blocks.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    writeClaimedJob(runDir, "job-1", WORKER);
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"truncated`
+    );
+    ageJournal(runDir, UTILITY_TORN_TAIL_GRACE_MS - 10_000);
+    await expectBlocked(
+      fixture,
+      newWorld(),
+      manifestPath,
+      "is torn and may still be in flight",
+      "inside the grace"
+    );
+  });
+  // Past the grace, with every worker of the complete lines dead: released.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    writeClaimedJob(runDir, "job-1", WORKER);
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"truncated`
+    );
+    ageJournal(runDir, UTILITY_TORN_TAIL_GRACE_MS + 10_000);
+    await expectReleased(fixture, newWorld(), manifestPath, "past the grace");
+  });
+  // Past the grace, the complete lines are still evidence: their live worker
+  // blocks.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    writeClaimedJob(runDir, "job-1", WORKER);
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"truncated`
+    );
+    ageJournal(runDir, UTILITY_TORN_TAIL_GRACE_MS + 10_000);
+    await expectBlocked(
+      fixture,
+      newWorld(WORKER),
+      manifestPath,
+      `recorded-process-may-be-live: utility job job-1 worker pid ${WORKER}`,
+      "complete lines still count"
+    );
+  });
+  // An already-released run whose journal ends torn does not block every new
+  // launch in its workspace.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture, {
+      workspaceReleasedAt: UPDATED_AT,
+    });
+    writeClaimedJob(runDir, "job-1", WORKER, "failed");
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"truncated`
+    );
+    ageJournal(runDir, UTILITY_TORN_TAIL_GRACE_MS + 10_000);
+    const claim = await reservePairedLaunch(
+      makeOptions(),
+      fixture.binding,
+      fakeDeps(fixture.home, newWorld())
+    );
+    expect(claim.storage.runId, "already released").toBe("82");
+    expect(readRunManifest(manifestPath)?.workspaceReleasedAt).toBe(UPDATED_AT);
   });
 });
 
@@ -552,6 +688,69 @@ test("teardown ends the run's live utility workers by process group, and only th
   }
 });
 
+test("teardown ends a fenced earlier worker of a re-claimed job, not only the latest claim", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-utility-cleanup-"));
+  const original = { ...runProcessCleanupInternals.deps };
+  try {
+    writeClaimedJob(runDir, "job-r", 5301, "claimed");
+    // A second claim of the same job, by another worker under a later epoch,
+    // as a re-route after a fence would record it.
+    const first = readUtilityJob(runDir, "job-r")?.events.find(
+      (event) => event.claim
+    );
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}${JSON.stringify({
+        ...first,
+        at: "2026-10-05T20:40:00.000Z",
+        claim: { epoch: 2, workerId: "utility-5302", workerPid: 5302 },
+        eventId: "claim:job-r:2:utility-5302",
+      })}\n`
+    );
+    expect(readUtilityJob(runDir, "job-r")?.claim?.workerPid).toBe(5302);
+    const signals: number[] = [];
+    runProcessCleanupInternals.deps.pidAlive = () => true;
+    runProcessCleanupInternals.deps.commandForPid = (pid) =>
+      pid === 5301
+        ? workerCommand(runDir, 1, "job-r")
+        : workerCommand(runDir, 2, "job-r");
+    runProcessCleanupInternals.deps.signal = (pid) => {
+      signals.push(pid);
+    };
+    const result = cleanupRunOwnedProcesses(runDir, undefined);
+    expect(signals).toEqual([-5301, -5302]);
+    expect(result.killed).toEqual([5301, 5302]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("teardown still ends the workers of a journal whose final append is torn", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-utility-cleanup-"));
+  const original = { ...runProcessCleanupInternals.deps };
+  try {
+    writeClaimedJob(runDir, "job-t", 5401, "running");
+    writeFileSync(
+      JOURNAL(runDir),
+      `${readFileSync(JOURNAL(runDir), "utf8")}{"truncated`
+    );
+    const signals: number[] = [];
+    runProcessCleanupInternals.deps.pidAlive = () => true;
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      workerCommand(runDir, 1, "job-t");
+    runProcessCleanupInternals.deps.signal = (pid) => {
+      signals.push(pid);
+    };
+    const result = cleanupRunOwnedProcesses(runDir, undefined);
+    expect(signals).toEqual([-5401]);
+    expect(result.skipped).toEqual([]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("teardown still ends the bridge processes when the utility journal is unreadable", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-utility-cleanup-"));
   const original = { ...runProcessCleanupInternals.deps };
@@ -623,6 +822,7 @@ test("startup GC signals no detached bridge or utility worker of a run it judges
         // used another socket, was never asked.
         listTmuxSessions: () => new Set(),
         listeningPids: () => [],
+        runtimeAbsent: () => true,
         pidAlive: (pid) => pid !== 8800,
         signal: (pid) => {
           signals.push(pid);
@@ -636,6 +836,122 @@ test("startup GC signals no detached bridge or utility worker of a run it judges
     expect(signals).toEqual([8802]);
     expect(asked).not.toContain(8803);
     expect(asked).not.toContain(8804);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+/** A run GC sees as abandoned on the current server: session absent, pid dead. */
+const writeGcRun = (
+  storageRoot: string,
+  repoId: string,
+  fields: Record<string, unknown>
+): string => {
+  const runDir = join(storageRoot, repoId, "89");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(join(runDir, "manifest.json"), {
+    ...createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 8900,
+      repoId,
+      runId: "89",
+      state: "working",
+      tmuxSession: "repo-loop-89",
+    }),
+    ...fields,
+  });
+  return runDir;
+};
+
+test("startup GC marks no run failed or released whose own tmux server cannot be shown to lack its session", () => {
+  // The current server's list is empty and the run's pid is dead, which is
+  // all GC used to need. The run's recorded socket is a present endpoint that
+  // will not answer (a plain file stands in for a server GC cannot read): the
+  // run may be alive there, so GC must leave it, and its helpers, alone.
+  // The production probe is used; it contacts only this scratch path.
+  const root = mkdtempSync("/tmp/lgc-");
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  try {
+    const socket = join(root, "s");
+    writeFileSync(socket, "");
+    const runDir = writeGcRun(storageRoot, repoId, { tmuxSocket: socket });
+    const before = readFileSync(join(runDir, "manifest.json"));
+    const signals: number[] = [];
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        listTmuxSessions: () => new Set(),
+        pidAlive: () => false,
+        signal: (pid) => {
+          signals.push(pid);
+        },
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+    expect(result.cleaned).toBe(0);
+    expect(readFileSync(join(runDir, "manifest.json")).equals(before)).toBe(
+      true
+    );
+    expect(signals).toEqual([]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+  // Control: the recorded socket is positively gone, so the run is repaired
+  // and released as before.
+  const gone = mkdtempSync("/tmp/lgc-");
+  try {
+    const goneRoot = join(gone, "runs");
+    const runDir = writeGcRun(goneRoot, repoId, {
+      tmuxSocket: join(gone, "never-created"),
+    });
+    const result = gcAbandonedRunProcesses({
+      deps: { listTmuxSessions: () => new Set(), pidAlive: () => false },
+      log: () => undefined,
+      repoId,
+      storageRoot: goneRoot,
+    });
+    expect(result.cleaned).toBe(1);
+    const after = readRunManifest(join(runDir, "manifest.json"));
+    expect(after?.state).toBe("failed");
+    expect(after?.workspaceReleasedAt).toBeDefined();
+  } finally {
+    rmSync(gone, { force: true, recursive: true });
+  }
+});
+
+test("GC's runtime evidence for a socket-less run is every legacy candidate socket", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-gc-legacy-"));
+  try {
+    const manifestPath = join(writeGcRun(root, "repo", {}), "manifest.json");
+    let probes = 0;
+    const absentEverywhere = tmuxRuntimeAbsentForManifestSync(manifestPath, {
+      endpointState: () => "absent",
+      env: {},
+      platform: "darwin",
+      tmuxLiveness: () => {
+        probes += 1;
+        return "unknown";
+      },
+      uid: 501,
+    });
+    expect(absentEverywhere).toBe(true);
+    // /tmp and /private/tmp, each for tmux's default and the per-repo dir.
+    expect(probes).toBe(4);
+    let calls = 0;
+    const liveOnOne = tmuxRuntimeAbsentForManifestSync(manifestPath, {
+      endpointState: () => "present",
+      env: {},
+      platform: "darwin",
+      tmuxLiveness: () => {
+        calls += 1;
+        return calls === 3 ? "live" : "dead";
+      },
+      uid: 501,
+    });
+    expect(liveOnOne).toBe(false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -676,14 +992,21 @@ const writeRoutedJob = (runDir: string, repoRoot: string, jobId: string) => {
   });
 };
 
-test("a utility worker that claims a job after its run stopped or handed back cancels it without starting", async () => {
+test("a utility worker that claims a job after its run turned terminal cancels it without starting", async () => {
   const shapes: [string, Record<string, unknown>, boolean][] = [
     ["stopped", { state: "stopped", status: "stopped" }, false],
     ["failed", { state: "failed", status: "failed" }, false],
     [
-      "handed back",
-      { state: "working", status: "running", workspaceReleasedAt: NOW },
+      "stopped and handed back",
+      { state: "stopped", status: "stopped", workspaceReleasedAt: NOW },
       false,
+    ],
+    // A handback marker alone never cancels: an active run with a stale
+    // marker (an older binary's resume left it behind) is still active.
+    [
+      "active with a stale handback",
+      { state: "working", status: "running", workspaceReleasedAt: NOW },
+      true,
     ],
     // Control: an active run's worker does start.
     ["active", { state: "working", status: "running" }, true],
@@ -717,7 +1040,9 @@ test("a utility worker that claims a job after its run stopped or handed back ca
       }
       expect(states, name).not.toContain("running");
       expect(job?.state, name).toBe("canceled");
-      expect(job?.events.at(-1)?.reason, name).toContain("no longer active");
+      expect(job?.events.at(-1)?.reason, name).toContain(
+        `run is no longer active: it is ${fields.state}`
+      );
     } finally {
       rmSync(repoRoot, { force: true, recursive: true });
     }
