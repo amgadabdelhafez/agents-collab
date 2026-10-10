@@ -2,7 +2,7 @@
   "events": [
     {
       "eventId": "1",
-      "eventTime": "2026-10-07T07:37:34.894361Z",
+      "eventTime": "2026-10-10T05:45:34.753063Z",
       "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
       "taskId": "1049149",
       "workflowExecutionStartedEventAttributes": {
@@ -24,9 +24,9 @@
           ]
         },
         "workflowTaskTimeout": "10s",
-        "originalExecutionRunId": "01a1154b-d9ae-757e-8417-39ca95e24ab1",
+        "originalExecutionRunId": "01a12458-6321-70f2-9270-bfc448adeddd",
         "identity": "temporal-replay-fixture-recorder",
-        "firstExecutionRunId": "01a1154b-d9ae-757e-8417-39ca95e24ab1",
+        "firstExecutionRunId": "01a12458-6321-70f2-9270-bfc448adeddd",
         "attempt": 1,
         "firstWorkflowTaskBackoff": "0s",
         "header": {},
@@ -35,7 +35,7 @@
     },
     {
       "eventId": "2",
-      "eventTime": "2026-10-07T07:37:34.894401Z",
+      "eventTime": "2026-10-10T05:45:34.753103Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
       "taskId": "1049150",
       "workflowTaskScheduledEventAttributes": {
@@ -49,22 +49,22 @@
     },
     {
       "eventId": "3",
-      "eventTime": "2026-10-07T07:37:34.930684Z",
+      "eventTime": "2026-10-10T05:45:34.754453Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
       "taskId": "1049155",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "2",
         "identity": "temporal-replay-fixture-recorder",
-        "requestId": "870370f9-2705-4a21-b30d-109c10a49dc9",
+        "requestId": "b1d1f540-b3ae-4786-bc9d-5b89a0ef5980",
         "historySizeBytes": "916",
         "workerVersion": {
-          "buildId": "@temporalio/worker@1.23.0+cb20310536bf34703b14ec7fb71453b2ebf543b44942b46128b46ba5c169b54e"
+          "buildId": "@temporalio/worker@1.23.0+505dccbaff18d091af654c18f4559c5c7bf5c144a200ea35d188e7ce1b16503d"
         }
       }
     },
     {
       "eventId": "4",
-      "eventTime": "2026-10-07T07:37:34.935946Z",
+      "eventTime": "2026-10-10T05:45:34.758622Z",
       "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
       "taskId": "1049159",
       "workflowTaskCompletedEventAttributes": {
@@ -72,10 +72,10 @@
         "startedEventId": "3",
         "identity": "temporal-replay-fixture-recorder",
         "workerVersion": {
-          "buildId": "@temporalio/worker@1.23.0+cb20310536bf34703b14ec7fb71453b2ebf543b44942b46128b46ba5c169b54e"
+          "buildId": "@temporalio/worker@1.23.0+505dccbaff18d091af654c18f4559c5c7bf5c144a200ea35d188e7ce1b16503d"
         },
         "sdkMetadata": {
-          "coreUsedFlags": [1, 2, 3],
+          "coreUsedFlags": [2, 3, 1],
           "sdkName": "temporal-typescript",
           "sdkVersion": "1.23.0"
         },
