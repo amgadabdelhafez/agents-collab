@@ -459,6 +459,120 @@ describe("governess-beat close on a real Temporal test server", () => {
     expect(await statusOf(runId)).toBe("TERMINATED");
     rmSync(runDir, { force: true, recursive: true });
   });
+
+  // The dead-run release on the Temporal-journal line: the real default beat
+  // close runs before the agent groups are collected and the session killed,
+  // and the workspace handback is attempted only after the kill and the end
+  // of the collected groups, with the workflow already closed.
+  test("governess: a Temporal-journal teardown closes the beat, then collects, kills, ends the groups and only then hands the workspace back", async () => {
+    const runId = nextRunId();
+    const runDir = mkdtempSync(join(tmpdir(), "beat-close-release-"));
+    try {
+      const manifestPath = join(runDir, "manifest.json");
+      writeRunManifest(manifestPath, manifestFor(runId, "working"));
+      const journalFile = join(runDir, "governess-control.jsonl");
+      const temporal = {
+        address: environment.address,
+        namespace: environment.namespace ?? "default",
+        taskQueue: TASK_QUEUE,
+      };
+      const backend = await attachGovernessJournalBackend({
+        connect: async () => journalClient(REPO),
+        journalFile,
+        ownerRepoId: REPO,
+        runId,
+        temporal,
+      });
+      // The beat workflow exists, as it does once the governess journaled.
+      await startBeat(runId);
+      expect(await statusOf(runId)).toBe("RUNNING");
+      const config = {
+        agents: [],
+        epoch: 1,
+        journalBackend: backend,
+        journalFile,
+        journalTemporal: temporal,
+        logFile: join(runDir, "governess.jsonl"),
+        manifestPath,
+        repoId: REPO,
+        runDir,
+        runId,
+        session: `repo-beat-close-${runId}`,
+      } as unknown as GovernessConfig;
+      const base = defaultGovernessDeps();
+      const order: string[] = [];
+      await stopGovernessLoop(
+        config,
+        {
+          ...base,
+          appendLog: (_file: string, entry: unknown) =>
+            order.push(`log:${(entry as { event: string }).event}`),
+          cleanupRunProcesses: () => {
+            order.push("cleanup");
+            return { killed: [], skipped: [] };
+          },
+          closeBeatWorkflow: async (closing, reason) => {
+            const closed = await base.closeBeatWorkflow?.(closing, reason);
+            order.push(`closed:${closed?.outcome}:${await statusOf(runId)}`);
+            return closed;
+          },
+          collectAgentGroups: () => {
+            order.push("collect");
+            return {
+              groups: [
+                {
+                  id: 9_999_001,
+                  kind: "group",
+                  reference: "2026-10-10T00:00:00.000Z",
+                  source: "agent pane %1",
+                },
+              ],
+              killed: [],
+              skipped: [],
+            };
+          },
+          fenceCurrent: () => true,
+          killSession: () => order.push("kill"),
+          markRunStopped: (stopping, reason) => {
+            base.markRunStopped?.(stopping, reason);
+            order.push(`mark:${readRunManifest(manifestPath)?.state}`);
+          },
+          now: () => Date.parse("2026-10-10T00:00:00.000Z"),
+          releaseWorkspaceAfterTeardown: async () => {
+            order.push(`release:${await statusOf(runId)}`);
+            return { detail: "changed", released: true };
+          },
+          terminateRunProcessGroups: (_ending, targets) => {
+            order.push(`terminate:${targets.map((target) => target.id)}`);
+            return Promise.resolve({
+              exited: [9_999_001],
+              failed: [],
+              killed: [],
+              survivors: [],
+            });
+          },
+        },
+        "user requested teardown"
+      );
+      expect(order.filter((entry) => !entry.startsWith("log:"))).toEqual([
+        "mark:stopped",
+        "cleanup",
+        "closed:terminated:TERMINATED",
+        "collect",
+        "kill",
+        "terminate:9999001",
+        "release:TERMINATED",
+      ]);
+      expect(order).toContain("log:journal-temporal-closed");
+      expect(order.at(-1)).toBe("log:workspace-released");
+      // The teardown's later journal transitions stay in the file and never
+      // reopen the closed workflow.
+      expect(config.journalBackend).toBeUndefined();
+      expect(await statusOf(runId)).toBe("TERMINATED");
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
 });
 
 describe("governess-beat close without a server", () => {
