@@ -75,7 +75,8 @@ import { temporalWorkflowBundleBase64 } from "./temporal-workflow-bundle.generat
  * through the shared workflow bundle (temporal-workflow.ts dispatches on type),
  * so this list is the declared surface of that bundle rather than a second
  * registry. gov-6 adds the governess beat: one workflow per run, keyed
- * `governess-beat:<runId>`, whose history is the governess journal.
+ * `governess-beat:v2:<repoId>:<runId>:<taskQueue>` since fix7 (before it,
+ * `governess-beat:<runId>`), whose history is the governess journal.
  */
 export const LOOP_ORCHESTRATION_WORKFLOW_TYPES = [
   GOVERNESS_BEAT_WORKFLOW_TYPE,

@@ -15,7 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection, Worker } from "@temporalio/worker";
-import { governessBeatWorkflowId } from "../src/loop/governess-beat-workflow";
+import {
+  governessBeatOwnedWorkflowId,
+  governessBeatOwner,
+} from "../src/loop/governess-beat-identity";
 import {
   prepareGovernessControl,
   readGovernessJournal,
@@ -37,6 +40,9 @@ import {
 } from "../tests/loop/governess-beat-fixture";
 
 const GOLDEN = "tests/fixtures/governess/beat-journal.golden.jsonl";
+// The proof journals as a repo of its own, so its workflow id (which names
+// the repo, the run and the private task queue) can never be a real run's.
+const PROOF_REPO_ID = "gov6-live-proof";
 
 const normalize = (records: readonly GovernessControlRecord[]): string => {
   const ids = new Map<string, string>();
@@ -95,7 +101,13 @@ const main = async (): Promise<void> => {
   }
   const config = { ...base, taskQueue: `gov6-live-proof-${process.pid}` };
   const runId = `gov6-live-${new Date().toISOString().replace(/[^0-9]/g, "")}`;
-  const workflowId = governessBeatWorkflowId(runId);
+  const workflowId = governessBeatOwnedWorkflowId(
+    governessBeatOwner({
+      repoId: PROOF_REPO_ID,
+      runId,
+      taskQueue: config.taskQueue,
+    })
+  );
 
   const native = await NativeConnection.connect({ address: config.address });
   const worker = await Worker.create({
@@ -122,6 +134,7 @@ const main = async (): Promise<void> => {
     );
     const first = await attachGovernessJournalBackend({
       journalFile,
+      ownerRepoId: PROOF_REPO_ID,
       runId,
       temporal: config,
     });
@@ -135,13 +148,14 @@ const main = async (): Promise<void> => {
 
     const second = await attachGovernessJournalBackend({
       journalFile,
+      ownerRepoId: PROOF_REPO_ID,
       runId,
       temporal: config,
     });
     await second.close();
     const recovered = readGovernessJournal(journalFile);
 
-    const reader = await connectGovernessTemporalJournal(config);
+    const reader = await connectGovernessTemporalJournal(config, PROOF_REPO_ID);
     const fromHistory = await reader.readRecords(runId);
     await reader.close();
     const port = new TemporalWorkflowPort(client, {

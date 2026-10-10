@@ -381,7 +381,9 @@ describe("loop governess history", () => {
     }
 
     const printed = JSON.parse(chunks.join("")) as {
+      legacyWorkflowId: string;
       records: GovernessControlRecord[];
+      taskQueue: string;
       workflowId: string;
       workflowType: string;
     };
@@ -391,7 +393,12 @@ describe("loop governess history", () => {
       .map((line) => JSON.parse(line) as GovernessControlRecord);
 
     expect(printed.workflowType).toBe(GOVERNESS_BEAT_WORKFLOW_TYPE);
+    // fix7: the repo-, run- and queue-qualified id, plus the legacy one.
+    expect(printed.taskQueue).toBe("loop-governess");
     expect(printed.workflowId).toBe(
+      `governess-beat:v2:${state.storage.repoId}:gov6-history-test:loop-governess`
+    );
+    expect(printed.legacyWorkflowId).toBe(
       governessBeatWorkflowId("gov6-history-test")
     );
     expect(printed.records).toHaveLength(golden.length);

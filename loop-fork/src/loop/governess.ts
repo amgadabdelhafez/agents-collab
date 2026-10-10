@@ -429,7 +429,7 @@ export interface GovernessDeps {
   ) => RunProcessCleanupResult | undefined;
   connectTemporalJournal?: (
     config: GovernessTemporalConfig,
-    ownerRepoId?: string
+    ownerRepoId: string
   ) => Promise<GovernessTemporalJournalClient>;
   fenceCurrent?: (config: GovernessConfig) => boolean;
   // Turn on the pane-border title strip for the whole session (idempotent).
@@ -7294,10 +7294,10 @@ export const defaultGovernessDeps = (
         manifest: readRunManifest(config.manifestPath),
         reason,
         repoId: config.repoId,
-        // This governess wrote the workflow, possibly under an older binary
-        // that set no owner memo.
-        requireOwnerMemo: false,
         runId: config.runId,
+        // An execution an older binary created without an owner memo is
+        // refused even here: under the legacy id it may be another repo's.
+        taskQueue: config.journalTemporal.taskQueue,
       });
     } finally {
       await control.close().catch(() => undefined);

@@ -5,9 +5,14 @@
 //                  Temporal test server, and its journal is still readable.
 //   live         — a run in any active state is never closed, and not even
 //                  described.
-//   ownership    — a workflow whose owner memo names another repo is refused;
-//                  one with no memo is refused unless the run's own governess
-//                  closes it.
+//   ownership    — a workflow whose owner memo names another repo, or that
+//                  runs on another task queue, is refused; one with no memo
+//                  is refused, whoever asks (fix7: under the legacy id it may
+//                  be another repo's).
+//   collision    — fix7: two repos with the same run id sharing a namespace
+//                  each close only their own workflow; an in-flight legacy
+//                  `governess-beat:<runId>` is closed by its owner and never
+//                  by the other repo.
 //   reconcile    — startup closes completed, stopped and failed (abandoned)
 //                  runs, skips live and tmux-alive runs, and a second pass
 //                  closes nothing.
@@ -17,6 +22,7 @@
 //                  the journal sink first.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,7 +41,14 @@ import {
   type GovernessBeatWorkflowControl,
   reconcileGovernessBeatWorkflows,
 } from "../../src/loop/governess-beat-close";
-import { governessBeatWorkflowId } from "../../src/loop/governess-beat-workflow";
+import {
+  governessBeatLegacyWorkflowId,
+  governessBeatOwnedWorkflowId,
+  governessBeatOwner,
+  governessBeatOwnerMemo,
+} from "../../src/loop/governess-beat-identity";
+import { listGovernessBeatExecutions } from "../../src/loop/governess-beat-list";
+import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "../../src/loop/governess-beat-workflow";
 import {
   prepareGovernessControl,
   readGovernessJournal,
@@ -44,7 +57,6 @@ import type { GovernessControlRecord } from "../../src/loop/governess-journal-co
 import {
   attachGovernessJournalBackend,
   createGovernessTemporalJournalClient,
-  GOVERNESS_BEAT_OWNER_MEMO_KEY,
   type GovernessTemporalJournalClient,
 } from "../../src/loop/governess-temporal-journal";
 import {
@@ -56,9 +68,22 @@ import {
 } from "../../src/loop/run-state";
 import type { RunLifecycleState } from "../../src/loop/types";
 
+// The error text a call failed with, or "resolved". Awaited directly, not
+// through expect().rejects, which stalled the gRPC client under bun.
+const refusal = async (call: Promise<unknown>): Promise<string> => {
+  try {
+    await call;
+    return "resolved";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+};
+
 const REPO = "repo-beat-close";
 const OTHER_REPO = "repo-someone-else";
 const TASK_QUEUE = `beat-close-${process.pid}`;
+// The queue governessTemporalConfigFromEnv defaults to, which TEMPORAL_ENV uses.
+const DEFAULT_QUEUE = "loop-governess";
 const ACTIVE_STATES: RunLifecycleState[] = [
   "submitted",
   "working",
@@ -69,6 +94,22 @@ const TEMPORAL_ENV = {
   LOOP_GOVERNESS_TEMPORAL_ADDRESS: "127.0.0.1:7233",
   LOOP_GOVERNESS_TEMPORAL_NAMESPACE: "harness",
 };
+
+const ownedId = (
+  runId: string,
+  repoId = REPO,
+  taskQueue = TASK_QUEUE
+): string =>
+  governessBeatOwnedWorkflowId(
+    governessBeatOwner({ repoId, runId, taskQueue })
+  );
+
+const ownerMemo = (
+  runId: string,
+  repoId = REPO,
+  taskQueue = TASK_QUEUE
+): Record<string, string> =>
+  governessBeatOwnerMemo(governessBeatOwner({ repoId, runId, taskQueue }));
 
 const manifestFor = (
   runId: string,
@@ -98,9 +139,15 @@ const record = (at: string): GovernessControlRecord => {
   });
 };
 
+interface FakeExecution {
+  memo?: Record<string, unknown>;
+  status: string;
+  taskQueue?: string;
+}
+
 /** A control that records calls and serves a scripted server state. */
 const fakeControl = (
-  workflows: Record<string, { ownerRepoId?: string; status: string }>
+  workflows: Record<string, FakeExecution>
 ): GovernessBeatWorkflowControl & { calls: string[] } => {
   const calls: string[] = [];
   return {
@@ -111,10 +158,20 @@ const fakeControl = (
     },
     describe: (workflowId) => {
       calls.push(`describe:${workflowId}`);
-      return Promise.resolve(workflows[workflowId]);
+      const found = workflows[workflowId];
+      return Promise.resolve(
+        found
+          ? {
+              executionRunId: `run-of-${workflowId}`,
+              memo: found.memo,
+              status: found.status,
+              taskQueue: found.taskQueue ?? DEFAULT_QUEUE,
+            }
+          : undefined
+      );
     },
-    terminate: (workflowId) => {
-      calls.push(`terminate:${workflowId}`);
+    terminate: (workflowId, executionRunId) => {
+      calls.push(`terminate:${workflowId}@${executionRunId}`);
       const found = workflows[workflowId];
       if (found) {
         found.status = "TERMINATED";
@@ -128,16 +185,14 @@ describe("governess-beat close on a real Temporal test server", () => {
   let environment: TestWorkflowEnvironment;
   let sequence = 0;
 
-  const journalClient = (
-    ownerRepoId?: string
-  ): GovernessTemporalJournalClient =>
+  const journalClient = (ownerRepoId = REPO): GovernessTemporalJournalClient =>
     createGovernessTemporalJournalClient({
       client: environment.client.workflow,
       decode: (payload) =>
         defaultPayloadConverter.fromPayload(
           payload as Parameters<typeof defaultPayloadConverter.fromPayload>[0]
         ),
-      ...(ownerRepoId ? { ownerRepoId } : {}),
+      ownerRepoId,
       settleTimeoutMs: 2000,
       taskQueue: TASK_QUEUE,
     });
@@ -145,29 +200,75 @@ describe("governess-beat close on a real Temporal test server", () => {
   const control = (): GovernessBeatWorkflowControl =>
     createGovernessBeatWorkflowControl({ client: environment.client.workflow });
 
-  // Starts governess-beat:<runId> the way the live journal does. No worker
-  // polls TASK_QUEUE, exactly as in production.
+  // Starts the run's beat the way the live journal does. No worker polls
+  // TASK_QUEUE, exactly as in production.
   const startBeat = async (
     runId: string,
-    ownerRepoId: string | null = REPO
+    ownerRepoId = REPO
   ): Promise<void> => {
-    await journalClient(ownerRepoId ?? undefined).appendRecord(
+    await journalClient(ownerRepoId).appendRecord(
       runId,
       record("2026-09-18T00:00:00.000Z")
     );
   };
 
-  const statusOf = async (runId: string): Promise<string> =>
-    (
-      await environment.client.workflow
-        .getHandle(governessBeatWorkflowId(runId))
-        .describe()
-    ).status.name;
+  // An execution created as the pre-fix7 journal (or another owner) would:
+  // signalWithStart under any id, with whatever memo and queue it chose.
+  const plantBeat = async (input: {
+    memo?: Record<string, string>;
+    runId: string;
+    taskQueue?: string;
+    workflowId: string;
+  }): Promise<void> => {
+    const at = "2026-09-18T00:00:00.000Z";
+    await environment.client.workflow.signalWithStart("temporalWorkflow", {
+      args: [
+        {
+          at,
+          input: { runId: input.runId },
+          requestId: `start:${input.runId}`,
+          workflowId: input.workflowId,
+          workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
+        },
+      ],
+      ...(input.memo ? { memo: input.memo } : {}),
+      signal: "workflow-port-command",
+      signalArgs: [
+        {
+          at,
+          kind: "signal",
+          name: "append_record",
+          payload: { record: record(at) },
+          requestId: "append:1:planted",
+        },
+      ],
+      taskQueue: input.taskQueue ?? TASK_QUEUE,
+      workflowId: input.workflowId,
+    });
+  };
+
+  const statusOf = async (workflowId: string): Promise<string> =>
+    (await environment.client.workflow.getHandle(workflowId).describe()).status
+      .name;
 
   const nextRunId = (): string => {
     sequence += 1;
     return `beat-close-${process.pid}-${sequence}`;
   };
+
+  const closeAs = (
+    runId: string,
+    repoId = REPO,
+    state: RunLifecycleState = "stopped"
+  ) =>
+    closeGovernessBeatWorkflow({
+      control: control(),
+      manifest: manifestFor(runId, state, { repoId }),
+      reason: "test",
+      repoId,
+      runId,
+      taskQueue: TASK_QUEUE,
+    });
 
   beforeAll(async () => {
     environment = await TestWorkflowEnvironment.createLocal();
@@ -177,33 +278,27 @@ describe("governess-beat close on a real Temporal test server", () => {
     await environment?.teardown();
   });
 
-  test("close: the journal writes the owner memo when it creates the workflow", async () => {
+  test("close: the journal writes the full owner memo when it creates the workflow", async () => {
     const runId = nextRunId();
     await startBeat(runId);
     const described = await environment.client.workflow
-      .getHandle(governessBeatWorkflowId(runId))
+      .getHandle(ownedId(runId))
       .describe();
-    expect(described.memo?.[GOVERNESS_BEAT_OWNER_MEMO_KEY]).toBe(REPO);
+    expect(described.memo).toEqual(ownerMemo(runId));
+    expect(described.taskQueue).toBe(TASK_QUEUE);
   });
 
   for (const state of ["completed", "failed", "stopped"] as const) {
     test(`close: a ${state} run's running beat workflow is terminated and its journal stays readable`, async () => {
       const runId = nextRunId();
       await startBeat(runId);
-      expect(await statusOf(runId)).toBe("RUNNING");
-      const closed = await closeGovernessBeatWorkflow({
-        control: control(),
-        manifest: manifestFor(runId, state),
-        reason: "test",
-        repoId: REPO,
-        requireOwnerMemo: true,
-        runId,
-      });
+      expect(await statusOf(ownedId(runId))).toBe("RUNNING");
+      const closed = await closeAs(runId, REPO, state);
       expect(closed).toEqual({
         outcome: "terminated",
-        workflowId: governessBeatWorkflowId(runId),
+        workflowId: ownedId(runId),
       });
-      expect(await statusOf(runId)).toBe("TERMINATED");
+      expect(await statusOf(ownedId(runId))).toBe("TERMINATED");
       expect(await journalClient().readRecords(runId)).toHaveLength(1);
     });
   }
@@ -212,56 +307,184 @@ describe("governess-beat close on a real Temporal test server", () => {
     test(`live: a ${state} run's workflow is never closed`, async () => {
       const runId = nextRunId();
       await startBeat(runId);
-      const closed = await closeGovernessBeatWorkflow({
-        control: control(),
-        manifest: manifestFor(runId, state),
-        reason: "test",
-        repoId: REPO,
-        requireOwnerMemo: false,
-        runId,
-      });
+      const closed = await closeAs(runId, REPO, state);
       expect(closed.outcome).toBe("refused-live");
-      expect(await statusOf(runId)).toBe("RUNNING");
+      expect(await statusOf(ownedId(runId))).toBe("RUNNING");
     });
   }
 
-  test("ownership: a workflow owned by another repo is refused", async () => {
+  test("ownership: an execution under this run's id whose memo names another repo is refused", async () => {
     const runId = nextRunId();
-    await startBeat(runId, OTHER_REPO);
-    const closed = await closeGovernessBeatWorkflow({
-      control: control(),
-      manifest: manifestFor(runId, "stopped"),
-      reason: "test",
-      repoId: REPO,
-      requireOwnerMemo: false,
+    await plantBeat({
+      memo: ownerMemo(runId, OTHER_REPO),
       runId,
+      workflowId: ownedId(runId),
     });
-    expect(closed.outcome).toBe("refused-foreign");
-    expect(await statusOf(runId)).toBe("RUNNING");
+    const closed = await closeAs(runId);
+    expect(closed).toMatchObject({
+      detail: `owned by ${OTHER_REPO}`,
+      outcome: "refused-foreign",
+    });
+    expect(await statusOf(ownedId(runId))).toBe("RUNNING");
   });
 
-  test("ownership: an unowned workflow is refused unless the run's own governess closes it", async () => {
+  test("ownership: an execution under this run's id on another task queue is refused", async () => {
     const runId = nextRunId();
-    await startBeat(runId, null);
-    const input = {
-      control: control(),
+    await plantBeat({
+      memo: ownerMemo(runId),
+      runId,
+      taskQueue: `${TASK_QUEUE}-elsewhere`,
+      workflowId: ownedId(runId),
+    });
+    const closed = await closeAs(runId);
+    expect(closed.outcome).toBe("refused-foreign");
+    expect(await statusOf(ownedId(runId))).toBe("RUNNING");
+  });
+
+  test("ownership: an unowned execution, owned or legacy id, is refused whoever asks", async () => {
+    const runId = nextRunId();
+    await plantBeat({ runId, workflowId: ownedId(runId) });
+    await plantBeat({
+      runId,
+      workflowId: governessBeatLegacyWorkflowId(runId),
+    });
+    const closed = await closeAs(runId);
+    expect(closed).toMatchObject({
+      legacy: {
+        outcome: "refused-unowned",
+        workflowId: governessBeatLegacyWorkflowId(runId),
+      },
+      outcome: "refused-unowned",
+    });
+    expect(await statusOf(ownedId(runId))).toBe("RUNNING");
+    expect(await statusOf(governessBeatLegacyWorkflowId(runId))).toBe(
+      "RUNNING"
+    );
+    // The run's own governess, the old exception, refuses too.
+    const runDir = mkdtempSync(join(tmpdir(), "beat-close-unowned-"));
+    const manifestPath = join(runDir, "manifest.json");
+    writeRunManifest(manifestPath, manifestFor(runId, "stopped"));
+    const own = await defaultGovernessDeps().closeBeatWorkflow?.(
+      {
+        journalTemporal: {
+          address: environment.address,
+          namespace: environment.namespace ?? "default",
+          taskQueue: TASK_QUEUE,
+        },
+        manifestPath,
+        repoId: REPO,
+        runId,
+      } as unknown as GovernessConfig,
+      "teardown"
+    );
+    expect(own?.outcome).toBe("refused-unowned");
+    expect(own?.legacy?.outcome).toBe("refused-unowned");
+    expect(await statusOf(governessBeatLegacyWorkflowId(runId))).toBe(
+      "RUNNING"
+    );
+    rmSync(runDir, { force: true, recursive: true });
+  });
+
+  test("collision: two repos with the same run id on one namespace and queue each close only their own", async () => {
+    const runId = nextRunId();
+    await startBeat(runId, REPO);
+    await startBeat(runId, OTHER_REPO);
+    expect(ownedId(runId, REPO)).not.toBe(ownedId(runId, OTHER_REPO));
+
+    const mine = await closeAs(runId, REPO);
+    expect(mine).toEqual({ outcome: "terminated", workflowId: ownedId(runId) });
+    expect(await statusOf(ownedId(runId, REPO))).toBe("TERMINATED");
+    expect(await statusOf(ownedId(runId, OTHER_REPO))).toBe("RUNNING");
+    // The other repo's journal is whole and still its own.
+    expect(await journalClient(OTHER_REPO).readRecords(runId)).toHaveLength(1);
+
+    const theirs = await closeAs(runId, OTHER_REPO);
+    expect(theirs.outcome).toBe("terminated");
+    expect(await statusOf(ownedId(runId, OTHER_REPO))).toBe("TERMINATED");
+  });
+
+  test("collision: an in-flight legacy execution is closed by its owner and never by the other repo", async () => {
+    const runId = nextRunId();
+    const legacyId = governessBeatLegacyWorkflowId(runId);
+    // What the pre-fix7 journal left for OTHER_REPO's run: legacy id, memo
+    // naming only the repo, this deployment's queue.
+    await plantBeat({
+      memo: { loopRepoId: OTHER_REPO },
+      runId,
+      workflowId: legacyId,
+    });
+    await startBeat(runId, REPO);
+
+    const mine = await closeAs(runId, REPO);
+    expect(mine).toEqual({
+      legacy: {
+        detail: `owned by ${OTHER_REPO}`,
+        outcome: "refused-foreign",
+        workflowId: legacyId,
+      },
+      outcome: "terminated",
+      workflowId: ownedId(runId, REPO),
+    });
+    expect(await statusOf(legacyId)).toBe("RUNNING");
+
+    const theirs = await closeAs(runId, OTHER_REPO);
+    expect(theirs).toEqual({
+      legacy: { outcome: "terminated", workflowId: legacyId },
+      outcome: "absent",
+      workflowId: ownedId(runId, OTHER_REPO),
+    });
+    expect(await statusOf(legacyId)).toBe("TERMINATED");
+  });
+
+  test("collision: a legacy execution on another deployment's queue is refused even with this repo's memo", async () => {
+    const runId = nextRunId();
+    const legacyId = governessBeatLegacyWorkflowId(runId);
+    await plantBeat({
+      memo: { loopRepoId: REPO },
+      runId,
+      taskQueue: `${TASK_QUEUE}-other-host`,
+      workflowId: legacyId,
+    });
+    const closed = await closeAs(runId);
+    expect(closed.legacy?.outcome).toBe("refused-foreign");
+    expect(await statusOf(legacyId)).toBe("RUNNING");
+  });
+
+  test("close: the terminate addresses the verified run, never a later one under the same id", async () => {
+    const runId = nextRunId();
+    await startBeat(runId);
+    const real = control();
+    let swapped = false;
+    const racing: GovernessBeatWorkflowControl = {
+      close: () => real.close(),
+      describe: (workflowId) => real.describe(workflowId),
+      async terminate(workflowId, executionRunId, reason) {
+        // Between describe and terminate the verified run ends and another
+        // owner starts a new run under the same id.
+        if (!swapped && workflowId === ownedId(runId)) {
+          swapped = true;
+          await environment.client.workflow
+            .getHandle(workflowId)
+            .terminate("replaced");
+          await plantBeat({
+            memo: ownerMemo(runId, OTHER_REPO),
+            runId,
+            workflowId,
+          });
+        }
+        await real.terminate(workflowId, executionRunId, reason);
+      },
+    };
+    const closed = await closeGovernessBeatWorkflow({
+      control: racing,
       manifest: manifestFor(runId, "stopped"),
       reason: "test",
       repoId: REPO,
       runId,
-    };
-    const refused = await closeGovernessBeatWorkflow({
-      ...input,
-      requireOwnerMemo: true,
+      taskQueue: TASK_QUEUE,
     });
-    expect(refused.outcome).toBe("refused-unowned");
-    expect(await statusOf(runId)).toBe("RUNNING");
-    const closed = await closeGovernessBeatWorkflow({
-      ...input,
-      requireOwnerMemo: false,
-    });
-    expect(closed.outcome).toBe("terminated");
-    expect(await statusOf(runId)).toBe("TERMINATED");
+    expect(closed.outcome).toBe("already-closed");
+    expect(await statusOf(ownedId(runId))).toBe("RUNNING");
   });
 
   test("deadline: the connected control bounds describe and terminate on a real server", async () => {
@@ -270,25 +493,26 @@ describe("governess-beat close on a real Temporal test server", () => {
     const config = {
       address: environment.address,
       namespace: environment.namespace ?? "default",
+      taskQueue: TASK_QUEUE,
     };
+    const workflowId = ownedId(runId);
+    const runOf = (
+      await environment.client.workflow.getHandle(workflowId).describe()
+    ).runId;
     const expired = await connectGovernessBeatWorkflowControl(config, 0);
     try {
       // A deadline that has already passed fails the call instead of waiting.
-      await expect(
-        expired.describe(governessBeatWorkflowId(runId))
-      ).rejects.toThrow();
-      await expect(
-        expired.terminate(governessBeatWorkflowId(runId), "test")
-      ).rejects.toThrow();
+      expect(await refusal(expired.describe(workflowId))).not.toBe("resolved");
+      expect(
+        await refusal(expired.terminate(workflowId, runOf, "test"))
+      ).not.toBe("resolved");
     } finally {
       await expired.close();
     }
-    expect(await statusOf(runId)).toBe("RUNNING");
+    expect(await statusOf(workflowId)).toBe("RUNNING");
     const bounded = await connectGovernessBeatWorkflowControl(config);
     try {
-      expect(
-        (await bounded.describe(governessBeatWorkflowId(runId)))?.status
-      ).toBe("RUNNING");
+      expect((await bounded.describe(workflowId))?.status).toBe("RUNNING");
     } finally {
       await bounded.close();
     }
@@ -296,32 +520,14 @@ describe("governess-beat close on a real Temporal test server", () => {
 
   test("close: absent and already-closed workflows are no-ops", async () => {
     const absentRun = nextRunId();
-    expect(
-      (
-        await closeGovernessBeatWorkflow({
-          control: control(),
-          manifest: manifestFor(absentRun, "stopped"),
-          reason: "test",
-          repoId: REPO,
-          requireOwnerMemo: true,
-          runId: absentRun,
-        })
-      ).outcome
-    ).toBe("absent");
+    expect(await closeAs(absentRun)).toEqual({
+      outcome: "absent",
+      workflowId: ownedId(absentRun),
+    });
     const runId = nextRunId();
     await startBeat(runId);
-    const input = {
-      control: control(),
-      manifest: manifestFor(runId, "stopped"),
-      reason: "test",
-      repoId: REPO,
-      requireOwnerMemo: true,
-      runId,
-    };
-    expect((await closeGovernessBeatWorkflow(input)).outcome).toBe(
-      "terminated"
-    );
-    const again = await closeGovernessBeatWorkflow(input);
+    expect((await closeAs(runId)).outcome).toBe("terminated");
+    const again = await closeAs(runId);
     expect(again).toMatchObject({
       detail: "TERMINATED",
       outcome: "already-closed",
@@ -357,10 +563,19 @@ describe("governess-beat close on a real Temporal test server", () => {
     for (const runId of Object.values(runs)) {
       await startBeat(runId);
     }
+    // The stopped run also left an owned legacy execution from an old build.
+    await plantBeat({
+      memo: { loopRepoId: REPO },
+      runId: runs.stopped,
+      workflowId: governessBeatLegacyWorkflowId(runs.stopped),
+    });
     const reconcile = () =>
       reconcileGovernessBeatWorkflows({
         connect: async () => control(),
-        env: TEMPORAL_ENV,
+        env: {
+          ...TEMPORAL_ENV,
+          LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE: TASK_QUEUE,
+        },
         listTmuxSessions: () => new Set(["live-session"]),
         log: () => undefined,
         repoId: REPO,
@@ -371,24 +586,116 @@ describe("governess-beat close on a real Temporal test server", () => {
     expect(first).toEqual({
       checked: 3,
       failed: 0,
-      outcomes: { terminated: 3 },
+      outcomes: { terminated: 4 },
       skippedLive: 1,
     });
-    expect(await statusOf(runs.completed)).toBe("TERMINATED");
-    expect(await statusOf(runs.stopped)).toBe("TERMINATED");
-    expect(await statusOf(runs.abandoned)).toBe("TERMINATED");
-    expect(await statusOf(runs.working)).toBe("RUNNING");
-    expect(await statusOf(runs.liveTmux)).toBe("RUNNING");
+    expect(await statusOf(ownedId(runs.completed))).toBe("TERMINATED");
+    expect(await statusOf(ownedId(runs.stopped))).toBe("TERMINATED");
+    expect(await statusOf(governessBeatLegacyWorkflowId(runs.stopped))).toBe(
+      "TERMINATED"
+    );
+    expect(await statusOf(ownedId(runs.abandoned))).toBe("TERMINATED");
+    expect(await statusOf(ownedId(runs.working))).toBe("RUNNING");
+    expect(await statusOf(ownedId(runs.liveTmux))).toBe("RUNNING");
 
     const second = await reconcile();
     expect(second).toEqual({
       checked: 3,
       failed: 0,
-      outcomes: { "already-closed": 3 },
+      outcomes: { "already-closed": 4 },
       skippedLive: 1,
     });
-    expect(await statusOf(runs.working)).toBe("RUNNING");
+    expect(await statusOf(ownedId(runs.working))).toBe("RUNNING");
     rmSync(storageRoot, { force: true, recursive: true });
+  });
+
+  test("inventory: the read-only listing classifies every beat execution on a queue, and the script prints it", async () => {
+    const runId = nextRunId();
+    const closedRun = nextRunId();
+    const legacyOwned = governessBeatLegacyWorkflowId(`${runId}-o`);
+    const legacyUnowned = governessBeatLegacyWorkflowId(`${runId}-u`);
+    await startBeat(runId);
+    await startBeat(closedRun);
+    await closeAs(closedRun);
+    await plantBeat({
+      memo: { loopRepoId: OTHER_REPO },
+      runId: `${runId}-o`,
+      workflowId: legacyOwned,
+    });
+    await plantBeat({ runId: `${runId}-u`, workflowId: legacyUnowned });
+    // Same workflow function and queue, not a beat: never listed.
+    await plantBeat({ runId, workflowId: `supervisor-message:${runId}` });
+    const histories = async () =>
+      Promise.all(
+        [ownedId(runId), legacyOwned, legacyUnowned].map(
+          async (id) =>
+            (await environment.client.workflow.getHandle(id).fetchHistory())
+              .events?.length
+        )
+      );
+    const before = await histories();
+
+    const wanted = [ownedId(runId), legacyOwned, legacyUnowned];
+    let listed: Awaited<ReturnType<typeof listGovernessBeatExecutions>> = [];
+    // Visibility is eventually consistent.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      listed = await listGovernessBeatExecutions(environment.client.workflow, {
+        taskQueue: TASK_QUEUE,
+      });
+      if (wanted.every((id) => listed.some((one) => one.workflowId === id))) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const kindOf = (id: string) =>
+      listed.find((one) => one.workflowId === id)?.kind;
+    expect(kindOf(ownedId(runId))).toBe("v2");
+    expect(kindOf(legacyOwned)).toBe("legacy-owned");
+    expect(listed.find((one) => one.workflowId === legacyOwned)).toMatchObject({
+      ownerRepoId: OTHER_REPO,
+      runId: `${runId}-o`,
+      status: "RUNNING",
+    });
+    expect(kindOf(legacyUnowned)).toBe("legacy-unowned");
+    expect(kindOf(ownedId(closedRun))).toBeUndefined();
+    expect(kindOf(`supervisor-message:${runId}`)).toBeUndefined();
+    const withClosed = await listGovernessBeatExecutions(
+      environment.client.workflow,
+      { includeClosed: true, taskQueue: TASK_QUEUE }
+    );
+    expect(
+      withClosed.find((one) => one.workflowId === ownedId(closedRun))?.status
+    ).toBe("TERMINATED");
+
+    const script = spawnSync(
+      process.execPath,
+      [
+        "run",
+        "scripts/governess-beat-list.ts",
+        "--address",
+        environment.address,
+        "--namespace",
+        environment.namespace ?? "default",
+        "--task-queue",
+        TASK_QUEUE,
+      ],
+      { cwd: join(import.meta.dir, "../..") }
+    );
+    expect(script.status).toBe(0);
+    const printed = script.stdout
+      .toString()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { kind: string; workflowId: string });
+    for (const id of wanted) {
+      expect(
+        printed.some((one) => one.workflowId === id),
+        id
+      ).toBe(true);
+    }
+    expect(script.stderr.toString()).toContain("governess-beat executions:");
+    // Listing is read-only: no history grew.
+    expect(await histories()).toEqual(before);
   });
 
   test("governess: the default close detaches the journal sink, then terminates the stopped run's workflow", async () => {
@@ -431,7 +738,7 @@ describe("governess-beat close on a real Temporal test server", () => {
 
     // Live: the run is still working, so the governess refuses.
     expect((await close?.(config, "early"))?.outcome).toBe("refused-live");
-    expect(await statusOf(runId)).toBe("RUNNING");
+    expect(await statusOf(ownedId(runId))).toBe("RUNNING");
 
     writeRunManifest(
       manifestPath,
@@ -442,7 +749,7 @@ describe("governess-beat close on a real Temporal test server", () => {
     );
     const closed = await close?.(config, "user requested teardown");
     expect(closed?.outcome).toBe("terminated");
-    expect(await statusOf(runId)).toBe("TERMINATED");
+    expect(await statusOf(ownedId(runId))).toBe("TERMINATED");
     expect(config.journalBackend).toBeUndefined();
     // Records after the close stay in the file and never reopen the workflow.
     prepareGovernessControl(journalFile, {
@@ -456,7 +763,7 @@ describe("governess-beat close on a real Temporal test server", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(readGovernessJournal(journalFile)).toHaveLength(2);
-    expect(await statusOf(runId)).toBe("TERMINATED");
+    expect(await statusOf(ownedId(runId))).toBe("TERMINATED");
     rmSync(runDir, { force: true, recursive: true });
   });
 
@@ -576,11 +883,13 @@ describe("governess-beat close on a real Temporal test server", () => {
 });
 
 describe("governess-beat close without a server", () => {
+  const OWNED_7 = ownedId("7", REPO, DEFAULT_QUEUE);
+
   test("live: an active run is refused before the server is even described", async () => {
     for (const state of ACTIVE_STATES) {
       const control = fakeControl({
-        [governessBeatWorkflowId("7")]: {
-          ownerRepoId: REPO,
+        [OWNED_7]: {
+          memo: ownerMemo("7", REPO, DEFAULT_QUEUE),
           status: "RUNNING",
         },
       });
@@ -589,8 +898,8 @@ describe("governess-beat close without a server", () => {
         manifest: manifestFor("7", state),
         reason: "test",
         repoId: REPO,
-        requireOwnerMemo: false,
         runId: "7",
+        taskQueue: DEFAULT_QUEUE,
       });
       expect(closed.outcome).toBe("refused-live");
       expect(control.calls).toEqual([]);
@@ -603,8 +912,8 @@ describe("governess-beat close without a server", () => {
       control,
       reason: "test",
       repoId: REPO,
-      requireOwnerMemo: false,
       runId: "7",
+      taskQueue: DEFAULT_QUEUE,
     };
     expect(
       (await closeGovernessBeatWorkflow({ ...input, manifest: undefined }))
@@ -622,10 +931,18 @@ describe("governess-beat close without a server", () => {
   });
 
   test("close: a terminate that races a concurrent close is already-closed", async () => {
-    const workflowId = governessBeatWorkflowId("9");
+    const workflowId = ownedId("9", REPO, DEFAULT_QUEUE);
     const control: GovernessBeatWorkflowControl = {
       close: async () => undefined,
-      describe: async () => ({ ownerRepoId: REPO, status: "RUNNING" }),
+      describe: async (id) =>
+        id === workflowId
+          ? {
+              executionRunId: "run-9",
+              memo: ownerMemo("9", REPO, DEFAULT_QUEUE),
+              status: "RUNNING",
+              taskQueue: DEFAULT_QUEUE,
+            }
+          : undefined,
       terminate: () =>
         Promise.reject(
           Object.assign(new Error("gone"), { name: "WorkflowNotFoundError" })
@@ -637,8 +954,8 @@ describe("governess-beat close without a server", () => {
         manifest: manifestFor("9", "stopped"),
         reason: "test",
         repoId: REPO,
-        requireOwnerMemo: true,
         runId: "9",
+        taskQueue: DEFAULT_QUEUE,
       })
     ).toEqual({
       detail: "closed concurrently",
@@ -744,13 +1061,19 @@ describe("governess-beat close without a server", () => {
       reason: "test",
       runId: "6",
     });
-    expect(closed?.outcome).toBe("refused-live");
+    expect(closed).toMatchObject({
+      outcome: "refused-live",
+      workflowId: ownedId("6", REPO, DEFAULT_QUEUE),
+    });
     expect(dialled).toBe(0);
   });
 
-  test("launcher: a failed run's owned workflow is terminated", async () => {
+  test("launcher: a failed run's owned workflow, and its owned legacy one, are terminated by exact run", async () => {
+    const owned = ownedId("6", REPO, DEFAULT_QUEUE);
+    const legacy = governessBeatLegacyWorkflowId("6");
     const control = fakeControl({
-      [governessBeatWorkflowId("6")]: { ownerRepoId: REPO, status: "RUNNING" },
+      [legacy]: { memo: { loopRepoId: REPO }, status: "RUNNING" },
+      [owned]: { memo: ownerMemo("6", REPO, DEFAULT_QUEUE), status: "RUNNING" },
     });
     const closed = await closeGovernessBeatForTerminalRun({
       connect: () => Promise.resolve(control),
@@ -760,10 +1083,16 @@ describe("governess-beat close without a server", () => {
       reason: "paired session start failed",
       runId: "6",
     });
-    expect(closed?.outcome).toBe("terminated");
+    expect(closed).toEqual({
+      legacy: { outcome: "terminated", workflowId: legacy },
+      outcome: "terminated",
+      workflowId: owned,
+    });
     expect(control.calls).toEqual([
-      `describe:${governessBeatWorkflowId("6")}`,
-      `terminate:${governessBeatWorkflowId("6")}`,
+      `describe:${owned}`,
+      `terminate:${owned}@run-of-${owned}`,
+      `describe:${legacy}`,
+      `terminate:${legacy}@run-of-${legacy}`,
       "close",
     ]);
   });

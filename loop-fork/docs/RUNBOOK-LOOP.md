@@ -10,12 +10,21 @@ ordered event log, and the JSONL control journal is a read model projected out o
 it.
 
 - Workflow type: `governess-beat.v1`
-- Workflow id: `governess-beat:<runId>`
+- Workflow id: `governess-beat:v2:<repoId>:<runId>:<taskQueue>` since fix7
+  (`src/loop/governess-beat-identity.ts`). Before fix7 it was
+  `governess-beat:<runId>`, which collided across repos; see
+  "Temporal journal: SUSPENDED, fix7, and re-enabling it" below before setting
+  any `LOOP_GOVERNESS_TEMPORAL_*` variable.
 - Namespace: `harness`
 - Definition: `src/loop/governess-beat-workflow.ts`
 - Reducer shared with the JSONL writer: `src/loop/governess-journal-core.ts`
 
 ### Turning the Temporal journal on (gov-6 v3)
+
+> SUSPENDED since 2026-09-19 (P1 cross-repo workflow-id collision). Do not set
+> these variables with any build that predates fix7. The procedure that
+> replaces the block below is "Temporal journal: SUSPENDED, fix7, and
+> re-enabling it".
 
 The live governess writes its journal through the beat workflow only when both
 variables are set in the governess pane's environment; with neither set it keeps
@@ -29,8 +38,10 @@ LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE=loop-governess   # optional, this is the defa
 
 - Authority: when both exist, Temporal history is authoritative. The run-dir
   `governess-control.jsonl` stays the synchronous write-ahead copy the governess
-  fences against; every record is then signalled (`append_record`, via
-  `signalWithStart`) to `governess-beat:<runId>` in order.
+  fences against; every record is then signalled (`append_record`) to the
+  run's beat execution in order: by exact run id when it is running, via
+  `signalWithStart` when it is not, and only after its task queue and owner
+  memo prove it is this run's (fix7).
 - Recovery: on every governess start the file is reconciled from history before
   the epoch is acquired. History wins a disagreement at a held sequence; a file
   that is missing or behind is rewritten from history; a file tail newer than
@@ -44,6 +55,228 @@ LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE=loop-governess   # optional, this is the defa
 - Live proof: `bun run scripts/governess-temporal-live-proof.ts` with the two
   variables set. It runs its own worker on a private task queue and terminates
   its proof workflow when done.
+
+### Temporal journal: SUSPENDED, fix7, and re-enabling it
+
+Written 2026-10-10 on claude/fix7-governess-temporal-journal (from
+claude/fix-integration-r6-2026-10-09 at c16636fc). Not merged, not installed,
+nothing enabled. Every step below that sets a variable, terminates an
+execution or installs a binary is an operator decision; the listing command is
+the only one that talks to the live server, and it only reads.
+
+#### What collided (the 2026-09-19 P1)
+
+- Id derivation, every build from gov-6 (f0e6d158) to the r6 base:
+  `governessBeatWorkflowId(runId)` = `governess-beat:${runId}`
+  (src/loop/governess-beat-workflow.ts). Run ids are per-repo integers
+  (`reserveRunStorage`, run-state.ts), so two repos that journal into one
+  namespace derive the same id for their run 29.
+- Write: `appendRecord` used `signalWithStart`, which signals whatever
+  execution holds the id, and wrote the owner memo (`loopRepoId`, since
+  7b5ccdbf; ec185ba1, the build first installed with the journal on as
+  cc8d978c, wrote none) only when it created one. Repo B's records went into
+  repo A's history.
+- Read: recovery read `getHandle(governess-beat:<runId>)` with no owner check
+  and history wins every disagreement, so repo B's governess rewrote its own
+  file journal from repo A's records (reproduced by the test "isolation: two
+  repos with the same run id ..." before the fix: B recovered A's records).
+- Only the close path checked the memo, and it let a run's own governess close
+  an execution with no memo.
+
+The r6 deployment discriminator does not cover governess beats. It is the V2
+message id format (`supervisor-message-workflow:v2:deployment:<sha256>`) plus
+`TemporalWorkflowPort.#owned`, which refuses an execution on another task
+queue for every port call (temporal-workflow-port.ts). The governess journal
+and the beat close never go through the port: they call `WorkflowClient`
+directly (`signalWithStart`, `getHandle(id).describe/fetchHistory/terminate`),
+and the beat id carries no repo and no deployment.
+
+#### What fix7 changes
+
+- Id: `governess-beat:v2:<repoId>:<runId>:<taskQueue>`. The repo id is the
+  run manifest's (`<repo name>-<12 hex of the git common dir>`), the task
+  queue is `LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE` (default `loop-governess`),
+  which is the deployment discriminator the V2 port uses. No legacy id
+  (`governess-beat:<runId>`, one colon, run ids cannot hold one) can equal an
+  owned one.
+- Memo on creation: `loopBeatIdFormat` `v2`, `loopRepoId`, `loopRunId`,
+  `loopTaskQueue`.
+- Every call verifies before it acts (governess-temporal-journal.ts
+  `appendOwned`/`readOwned`, governess-beat-close.ts `closeOwnedExecution`):
+  describe; refuse unless the execution runs on this task queue and its memo
+  names this repo, run and queue; then address the exact run id that was
+  verified (signal, history read, terminate). A refusal in the journal throws
+  `GovernessBeatForeignJournalError` ("... is not this run's journal"), so a
+  governess start fails loudly instead of adopting a foreign journal. A run
+  that `signalWithStart` creates is described again and verified.
+- Legacy ids during the transition: the journal never reads or writes one. Its
+  history may hold another repo's records, so the run's file journal (always
+  complete: it is the write-ahead copy, archive included) is backfilled into
+  the new id on the first start under fix7. The close path still closes a
+  legacy execution, only when it runs on this task queue and its memo names
+  this repo; one with no memo is `refused-unowned` for every caller, including
+  the run's own governess (that exception is removed). `closeGovernessBeatWorkflow`
+  reports it as `legacy` beside the owned outcome; reconcile counts both.
+- The workflow bundle is unchanged (identical modules to the r6 base's
+  committed bundle; the committed generated file is untouched), so no replay
+  or handoff changes. Inside a new execution the beat's start result still
+  reads `governess-beat:<runId>`: a label in its state, not its id.
+- `loop governess history <run-id>` prints `workflowId` (owned, for this repo
+  and the configured or default queue), `legacyWorkflowId` and `taskQueue`.
+
+Proof, all on task-owned local Temporal test servers
+(`TestWorkflowEnvironment.createLocal`), no live state:
+`tests/loop/governess-beat-identity.test.ts` (10),
+`governess-temporal-journal.test.ts` (12; isolation across repos and across
+queues, squatted/foreign-queue/unowned executions never signalled or read,
+legacy never read), `governess-beat-close.test.ts` (31; two repos with one run
+id, owned legacy closed by its owner, foreign and unowned legacy never closed,
+exact-run terminate, the inventory and its script),
+`governess-beat-legacy-replay.test.ts` (9; below). Mutations, each reverted:
+see the fix7 commit message.
+
+#### Recorded live-journal histories (extends the replay suite)
+
+`tests/fixtures/temporal-replay/governess-journal`, regenerated by
+`bun run scripts/record-governess-journal-histories.ts`: the gov-6 fixture
+journal written by the journal writer, journal client and committed bundle of
+4439b2e7 (the installed line's journal code, byte-identical to the r6 base's;
+owner memo) and of ec185ba1 (no memo), under `governess-beat:41`..`44`, each
+left RUNNING, once with no worker on `loop-governess` (as production runs)
+and once with a worker (so the history has completed workflow tasks).
+`tests/loop/governess-beat-legacy-replay.test.ts` checks: this checkout's
+reader folds each history into exactly its writer's journal; the two worker
+histories replay on the shipped bundle and on a build of the source, and a
+control bundle that refuses `append_record` fails both; every recorded start
+and signal, sent again to a worker on this bundle, answers `journal` as
+recorded; and on the production-shaped executions, the fix7 journal of the
+same run never reads or signals the legacy one, the owner's close terminates
+it (history still readable), another repo with the same run id neither
+signals, reads nor closes it, and the no-memo one is closed by nobody. This
+closes "governess beat histories written by the live journal itself" from the
+replay section below, for these two builds.
+
+#### Preconditions (all of them, before any variable is set)
+
+1. The binary that launches runs is built from a commit that contains fix7.
+   Byte probe on the installed binary (read-only):
+   `grep -a -c -F 'loopBeatIdFormat' ~/.local/bin/loop` must print 1 or
+   more; a pre-fix7 build prints 0 (the literal does not occur at c16636fc).
+   Validate the probe with a control literal present in both, for example
+   `governess-beat.v1`. Do not probe for `governess-beat:v2:`: the id prefix
+   is assembled at run time and does not occur in the binary (checked
+   2026-10-10 on a scratch build of this branch: `loopBeatIdFormat` 1,
+   `is not this run's journal` 1, `governess-beat.v1` 1,
+   `governess-beat:v2:` 0).
+2. No pre-fix7 binary anywhere gets the variables. Pre-fix7 builds still
+   derive `governess-beat:<runId>` and still collide with each other. fix7
+   builds never touch those ids except to close an owned one, so a mixed fleet
+   is safe for fix7 runs but not for the old ones.
+3. One task queue per deployment. If more than one host journals into
+   namespace `harness`, give each its own queue, for example
+   `LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE=loop-governess-<host>`; with one host
+   the default `loop-governess` is fine. Repo ids are derived from the git
+   common-dir path, so two hosts with the same checkout path share a repo id;
+   only the queue separates them. Do not change the queue while runs that
+   journal are live: the id names the queue, so a run's next governess start
+   would begin a new execution (backfilled from the file) and the close would
+   no longer see the old one.
+4. Inventory the namespace (read-only; lists through visibility, never
+   describes, signals or terminates; takes its target from flags, never from
+   `LOOP_GOVERNESS_TEMPORAL_*`), from a loop-fork checkout at fix7:
+
+   ```
+   bun run scripts/governess-beat-list.ts --address 192.168.1.18:7233 --namespace harness
+   bun run scripts/governess-beat-list.ts --address 192.168.1.18:7233 --namespace harness --all
+   ```
+
+   Each line is one execution with `kind`: `v2`, `legacy-owned` (memo names
+   `ownerRepoId`), `legacy-unowned` (no memo) or `unrecognised`; the summary
+   goes to stderr. Expected before re-enabling: no `v2`; RUNNING legacy
+   executions such as `governess-beat:29` (run 29, created 2026-09-18 by
+   cc8d978c, which set no memo) are possible.
+5. Decide about RUNNING legacy executions. fix7 never reads or writes them, so
+   leaving them is safe for correctness; they only stay open. A
+   `legacy-owned` one on the same queue is terminated by its repo's next close
+   of that run (run end, `loop reconcile stopped-run <run-id>` or startup
+   reconcile with `LOOP_STARTUP_MAINTENANCE=1`) once the variables are set. A
+   `legacy-unowned` one is closed by no code: if the operator decides its run
+   is over, terminate it by hand, which keeps its history readable (an
+   explicit production mutation, operator's call):
+   `temporal workflow terminate --address 192.168.1.18:7233 --namespace harness --workflow-id governess-beat:29 --reason "fix7 legacy cleanup"`.
+   A run whose only surviving journal copy is a legacy history (its file
+   journal lost) is not recovered automatically: read that history by hand.
+
+#### Enable (operator)
+
+In the shell that launches loop runs (the governess pane receives them through
+the `governessEnv` allowlist in src/loop/tmux.ts; only runs launched after the
+export pick them up):
+
+```bash
+export LOOP_GOVERNESS_TEMPORAL_ADDRESS=192.168.1.18:7233
+export LOOP_GOVERNESS_TEMPORAL_NAMESPACE=harness
+export LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE=loop-governess   # or loop-governess-<host>; see precondition 3
+```
+
+Both address and namespace, or neither: one alone stops the governess with
+"governess Temporal journal needs both ...". Launch one run and verify before
+relying on it.
+
+#### Verify
+
+For a run `<run-id>` launched after the export, in repo `<repoId>`:
+
+1. `~/.loop/runs/<repoId>/<run-id>/governess.jsonl` has a
+   `journal-temporal-recovered` entry whose `workflowId` is
+   `governess-beat:v2:<repoId>:<run-id>:<queue>`, and no
+   `journal-temporal-append-failed` entry.
+2. `loop governess history <run-id>` (with the same queue variable) prints
+   that `workflowId`.
+3. The inventory lists it as `kind` `v2`, RUNNING, on `<queue>`, and lists no
+   new legacy execution.
+4. When the run ends: `governess.jsonl` has `journal-temporal-closed` with
+   `outcome` `terminated` (and a `legacy` entry if an owned legacy execution
+   was closed with it); `--all` shows the execution TERMINATED.
+5. Optional end-to-end proof on the server, scoped to one command (no export):
+   `LOOP_GOVERNESS_TEMPORAL_ADDRESS=192.168.1.18:7233 LOOP_GOVERNESS_TEMPORAL_NAMESPACE=harness bun run scripts/governess-temporal-live-proof.ts`.
+   It journals as repo `gov6-live-proof` on a private queue, runs its own
+   worker and terminates its execution.
+
+A governess start that logs "... is not this run's journal" found an execution
+under its own id that it does not own (another repo's memo, another queue, or
+no memo). It refuses rather than adopt it. Inventory, then decide; do not
+delete it.
+
+#### Roll back
+
+- Turn the journal off: `unset LOOP_GOVERNESS_TEMPORAL_ADDRESS LOOP_GOVERNESS_TEMPORAL_NAMESPACE LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE`
+  in the launching shell and in any launcher config that exported them. New
+  runs use the file journal only. Nothing is lost: the file journal is the
+  complete write-ahead copy in both modes. Runs launched while the variables
+  were set keep them in their governess pane until they end.
+- Executions left RUNNING by runs that ended while the variables were unset
+  are not closed (the close is a no-op without them). Inventory, then either
+  set the variables for one `loop reconcile stopped-run <run-id>` per run, or
+  terminate by hand as in precondition 5.
+- Binary rollback to a pre-fix7 build: unset the variables first; a pre-fix7
+  build with them set has the P1 defect. Pre-fix7 builds ignore `v2`
+  executions.
+
+#### Limits
+
+- Ownership rests on the task queue and the memo. Search attributes are not
+  used (they need namespace registration). Anyone who can write to the
+  namespace can forge a memo; the check separates cooperating repos and
+  deployments, it is not access control.
+- A racing creator under the same owned id (possible only with the same repo
+  id, run id and queue) is detected after `signalWithStart` and reported, but
+  that one signal has already landed.
+- A run resumed after its execution was terminated journals into a new run of
+  the same id (unchanged from gov-6): recovery then reads only the new run.
+- `expect(promise).rejects` on a Temporal client call stalled the gRPC client
+  for about 45 s per call under bun 1.4.2 in these tests; the new tests await
+  the call directly (`refusal()`).
 
 ### One workflow per run, not per seat
 
@@ -653,7 +886,8 @@ and task graphs when it is upgraded to this line; at the workflow layer none
 is needed to roll back to r2 or to 455ccc32. Still not covered: a V2
 cancel (V2 recovery never sends one), V2 escalation (V2 never sends
 `clock_tick`), and governess beat histories written by the live journal
-itself rather than by these scenarios.
+itself rather than by these scenarios (covered since fix7 for 4439b2e7 and
+ec185ba1: "Recorded live-journal histories" above).
 
 Mutation runs on 2026-10-09, each with the bundle rebuilt and both reverted,
 against this test and against the 2026-10-07 version of it:

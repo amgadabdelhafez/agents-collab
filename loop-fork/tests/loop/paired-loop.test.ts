@@ -1119,18 +1119,37 @@ const recordingBeatClose = async (module: PairedLoopModule) => {
   const { closeGovernessBeatForTerminalRun } = await import(
     "../../src/loop/governess-beat-close"
   );
-  const { governessBeatWorkflowId } = await import(
-    "../../src/loop/governess-beat-workflow"
-  );
-  const seen: { calls: string[]; statesAtClose: string[] } = {
-    calls: [],
-    statesAtClose: [],
+  const {
+    governessBeatLegacyWorkflowId,
+    governessBeatOwnedWorkflowId,
+    governessBeatOwner,
+    governessBeatOwnerMemo,
+  } = await import("../../src/loop/governess-beat-identity");
+  const seen: { calls: string[]; repoIds: string[]; statesAtClose: string[] } =
+    {
+      calls: [],
+      repoIds: [],
+      statesAtClose: [],
+    };
+  // The run's own owned-format id (default queue) and its legacy id.
+  const idsOf = (runId: string) => {
+    const owner = governessBeatOwner({
+      repoId: seen.repoIds[0] ?? "missing",
+      runId,
+      taskQueue: "loop-governess",
+    });
+    return {
+      legacy: governessBeatLegacyWorkflowId(runId),
+      memo: governessBeatOwnerMemo(owner),
+      owned: governessBeatOwnedWorkflowId(owner),
+    };
   };
   module.pairedLoopInternals.setDeps({
     closeGovernessBeat: (input) => {
-      seen.statesAtClose.push(
-        readRunManifest(input.manifestPath)?.state ?? "missing"
-      );
+      const manifest = readRunManifest(input.manifestPath);
+      seen.statesAtClose.push(manifest?.state ?? "missing");
+      seen.repoIds.push(manifest?.repoId ?? "missing");
+      const ids = idsOf(input.runId);
       return closeGovernessBeatForTerminalRun({
         ...input,
         connect: () =>
@@ -1138,10 +1157,17 @@ const recordingBeatClose = async (module: PairedLoopModule) => {
             close: () => Promise.resolve(),
             describe: (workflowId: string) => {
               seen.calls.push(`describe:${workflowId}`);
-              return Promise.resolve({
-                ownerRepoId: readRunManifest(input.manifestPath)?.repoId,
-                status: "RUNNING",
-              });
+              // Only the owned-format execution exists on this server.
+              return Promise.resolve(
+                workflowId === ids.owned
+                  ? {
+                      executionRunId: "run-1",
+                      memo: ids.memo,
+                      status: "RUNNING",
+                      taskQueue: "loop-governess",
+                    }
+                  : undefined
+              );
             },
             terminate: (workflowId: string) => {
               seen.calls.push(`terminate:${workflowId}`);
@@ -1152,13 +1178,13 @@ const recordingBeatClose = async (module: PairedLoopModule) => {
       });
     },
   });
-  return { governessBeatWorkflowId, seen };
+  return { idsOf, seen };
 };
 
 test("runPairedLoop closes the run's governess-beat workflow when the run completes", async () => {
   const module = await loadPairedLoop();
   completeOnFirstIteration();
-  const { governessBeatWorkflowId, seen } = await recordingBeatClose(module);
+  const { idsOf, seen } = await recordingBeatClose(module);
   try {
     await withTempHome("beat-close-completed", async (runDir) => {
       await module.runPairedLoop(
@@ -1171,8 +1197,9 @@ test("runPairedLoop closes the run's governess-beat workflow when the run comple
     });
     expect(seen.statesAtClose).toEqual(["completed"]);
     expect(seen.calls).toEqual([
-      `describe:${governessBeatWorkflowId("beat-close-completed")}`,
-      `terminate:${governessBeatWorkflowId("beat-close-completed")}`,
+      `describe:${idsOf("beat-close-completed").owned}`,
+      `terminate:${idsOf("beat-close-completed").owned}`,
+      `describe:${idsOf("beat-close-completed").legacy}`,
     ]);
   } finally {
     module.pairedLoopInternals.resetDeps();
@@ -1181,7 +1208,7 @@ test("runPairedLoop closes the run's governess-beat workflow when the run comple
 
 test("runPairedLoop closes the run's governess-beat workflow when the run fails", async () => {
   const module = await loadPairedLoop();
-  const { governessBeatWorkflowId, seen } = await recordingBeatClose(module);
+  const { idsOf, seen } = await recordingBeatClose(module);
   startPersistentAgentSessionImpl = (agent) =>
     agent === "claude"
       ? Promise.reject(new Error("claude start failed"))
@@ -1194,8 +1221,9 @@ test("runPairedLoop closes the run's governess-beat workflow when the run fails"
     });
     expect(seen.statesAtClose).toEqual(["failed"]);
     expect(seen.calls).toEqual([
-      `describe:${governessBeatWorkflowId("beat-close-failed")}`,
-      `terminate:${governessBeatWorkflowId("beat-close-failed")}`,
+      `describe:${idsOf("beat-close-failed").owned}`,
+      `terminate:${idsOf("beat-close-failed").owned}`,
+      `describe:${idsOf("beat-close-failed").legacy}`,
     ]);
   } finally {
     module.pairedLoopInternals.resetDeps();

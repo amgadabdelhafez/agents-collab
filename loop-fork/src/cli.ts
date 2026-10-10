@@ -419,10 +419,12 @@ const runStoppedRunReconcileCommand = async (
     reason: `reconcile ${kind}`,
     runId,
   });
-  if (closed) {
-    console.error(
-      `[loop] ${closed.workflowId}: ${closed.outcome}${closed.detail ? ` (${closed.detail})` : ""}`
-    );
+  for (const one of closed?.legacy ? [closed, closed.legacy] : [closed]) {
+    if (one) {
+      console.error(
+        `[loop] ${one.workflowId}: ${one.outcome}${one.detail ? ` (${one.detail})` : ""}`
+      );
+    }
   }
   return true;
 };

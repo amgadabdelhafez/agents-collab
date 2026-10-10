@@ -7,9 +7,11 @@ import {
   readPendingBridgeMessages,
 } from "./bridge-store";
 import {
-  GOVERNESS_BEAT_WORKFLOW_TYPE,
-  governessBeatWorkflowId,
-} from "./governess-beat-workflow";
+  governessBeatLegacyWorkflowId,
+  governessBeatOwnedWorkflowId,
+  governessBeatOwner,
+} from "./governess-beat-identity";
+import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "./governess-beat-workflow";
 import { recoverGovernessControlPlane } from "./governess-control-plane-recovery";
 import {
   decideGovernessCycle,
@@ -28,6 +30,7 @@ import {
 } from "./governess-journal";
 import { decideGovernessPolicy } from "./governess-policy";
 import { driverLeaseIsCurrent } from "./governess-runtime";
+import { GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE } from "./governess-temporal-journal";
 import { migrateLegacyGovernessState } from "./legacy-governess-compat";
 import { loadRunState, readRunManifestHandle } from "./run-state";
 import { collectSeatSignals, type SeatSignals } from "./seat-signals";
@@ -500,12 +503,21 @@ export const runGovernessUtilityCommand = (
     const records = governessJournalFromHistory(
       readGovernessJournal(join(storage.runDir, "governess-control.jsonl"))
     );
+    // The id this repo's journal writes on the configured (or default) task
+    // queue, and the pre-fix7 id an older build may have left in flight.
+    const taskQueue =
+      process.env.LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE?.trim() ||
+      GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE;
     process.stdout.write(
       `${JSON.stringify(
         {
+          legacyWorkflowId: governessBeatLegacyWorkflowId(runId),
           records,
           runId,
-          workflowId: governessBeatWorkflowId(runId),
+          taskQueue,
+          workflowId: governessBeatOwnedWorkflowId(
+            governessBeatOwner({ repoId: storage.repoId, runId, taskQueue })
+          ),
           workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
         },
         null,

@@ -2,9 +2,10 @@
 //
 // A run launched with LOOP_GOVERNESS_TEMPORAL_ADDRESS and
 // LOOP_GOVERNESS_TEMPORAL_NAMESPACE journals into workflow
-// `governess-beat:<runId>`. Nothing in the workflow ever returns, so without
-// this module every stopped, failed or abandoned run leaves one execution
-// RUNNING forever.
+// `governess-beat:v2:<repoId>:<runId>:<taskQueue>` (governess-beat-identity.ts;
+// before fix7, `governess-beat:<runId>`). Nothing in the workflow ever
+// returns, so without this module every stopped, failed or abandoned run
+// leaves one execution RUNNING forever.
 //
 // CLOSE MECHANISM: terminate, not a completion signal. temporalWorkflow never
 // returns (it is `Promise<never>`) and production runs no worker on the
@@ -14,16 +15,25 @@
 // without a worker and keeps its history, so the journal stays readable.
 //
 // SAFETY: the close refuses unless the run's own manifest proves the run is
-// terminal, and refuses a workflow whose memo names a different repo (run ids
-// are per-repo integers, so two repos can share one workflow id). The startup
-// reconcile additionally skips any run whose tmux session is still alive and
-// any workflow that carries no owner memo.
+// terminal. Each execution it considers, the owned-format one and, during the
+// transition, the legacy `governess-beat:<runId>` one, is closed only when it
+// runs on this deployment's task queue and its memo names this repo (and, for
+// the owned format, this run and queue); a foreign execution is
+// `refused-foreign` and one without an owner memo `refused-unowned`, whoever
+// asks. The terminate addresses the exact run that was verified. The startup
+// reconcile additionally skips any run whose tmux session is still alive.
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { governessBeatWorkflowId } from "./governess-beat-workflow";
 import {
-  GOVERNESS_BEAT_OWNER_MEMO_KEY,
+  type GovernessBeatExecution,
+  type GovernessBeatOwner,
+  governessBeatLegacyWorkflowId,
+  governessBeatOwnedWorkflowId,
+  governessBeatOwner,
+  governessBeatOwnership,
+} from "./governess-beat-identity";
+import {
   type GovernessTemporalConfig,
   governessTemporalConfigFromEnv,
 } from "./governess-temporal-journal";
@@ -46,17 +56,23 @@ type WithDeadline = <T>(call: () => Promise<T>) => Promise<T>;
 const unbounded: WithDeadline = (call) => call();
 const GRPC_NOT_FOUND = 5;
 
-export interface GovernessBeatDescription {
-  ownerRepoId?: string;
-  status: string;
-}
+/** One described execution: its exact run, status, queue and memo. */
+export type GovernessBeatDescription = Omit<
+  GovernessBeatExecution,
+  "workflowId"
+>;
 
 /** The two server operations a close needs. */
 export interface GovernessBeatWorkflowControl {
   close(): Promise<void>;
   /** undefined when no execution exists for the id. */
   describe(workflowId: string): Promise<GovernessBeatDescription | undefined>;
-  terminate(workflowId: string, reason: string): Promise<void>;
+  /** Terminates the exact run `executionRunId`, never whatever holds the id. */
+  terminate(
+    workflowId: string,
+    executionRunId: string,
+    reason: string
+  ): Promise<void>;
 }
 
 export type GovernessBeatCloseOutcome =
@@ -69,6 +85,11 @@ export type GovernessBeatCloseOutcome =
 
 export interface GovernessBeatCloseResult {
   detail?: string;
+  /**
+   * The legacy `governess-beat:<runId>` execution, reported only when one
+   * exists. Its own outcome: a foreign one is refused, never closed.
+   */
+  legacy?: Omit<GovernessBeatCloseResult, "legacy">;
   outcome: GovernessBeatCloseOutcome;
   workflowId: string;
 }
@@ -81,23 +102,77 @@ const isNotFound = (error: unknown): boolean => {
   );
 };
 
+type SingleCloseResult = Omit<GovernessBeatCloseResult, "legacy">;
+
+/** Close one execution if, and only if, the owner provably holds it. */
+const closeOwnedExecution = async (input: {
+  control: GovernessBeatWorkflowControl;
+  format: "legacy" | "v2";
+  owner: GovernessBeatOwner;
+  reason: string;
+  workflowId: string;
+}): Promise<SingleCloseResult> => {
+  const { workflowId } = input;
+  const described = await input.control.describe(workflowId);
+  if (!described) {
+    return { outcome: "absent", workflowId };
+  }
+  if (described.status !== "RUNNING") {
+    return { detail: described.status, outcome: "already-closed", workflowId };
+  }
+  const ownership = governessBeatOwnership(
+    { ...described, workflowId },
+    input.owner,
+    input.format
+  );
+  if (!ownership.owned) {
+    return {
+      detail: ownership.detail,
+      outcome:
+        ownership.reason === "unowned" ? "refused-unowned" : "refused-foreign",
+      workflowId,
+    };
+  }
+  try {
+    await input.control.terminate(
+      workflowId,
+      described.executionRunId,
+      input.reason
+    );
+  } catch (error) {
+    // Closed or removed between describe and terminate: the goal holds.
+    if (isNotFound(error)) {
+      return {
+        detail: "closed concurrently",
+        outcome: "already-closed",
+        workflowId,
+      };
+    }
+    throw error;
+  }
+  return { outcome: "terminated", workflowId };
+};
+
 /**
- * Close one run's beat workflow if, and only if, the run is provably over.
- *
- * `manifest` must be read immediately before the call. `requireOwnerMemo`
- * refuses a workflow with no owner memo; only the run's own governess, which
- * may have inherited a workflow an older binary created without the memo,
- * passes false.
+ * Close one run's beat workflow, and its legacy-format predecessor, if, and
+ * only if, the run is provably over and each execution is provably this
+ * run's. `manifest` must be read immediately before the call; `taskQueue` is
+ * this deployment's (the journal config's) task queue.
  */
 export const closeGovernessBeatWorkflow = async (input: {
   control: GovernessBeatWorkflowControl;
   manifest: RunManifest | undefined;
   reason: string;
   repoId: string;
-  requireOwnerMemo: boolean;
   runId: string;
+  taskQueue: string;
 }): Promise<GovernessBeatCloseResult> => {
-  const workflowId = governessBeatWorkflowId(input.runId);
+  const owner = governessBeatOwner({
+    repoId: input.repoId,
+    runId: input.runId,
+    taskQueue: input.taskQueue,
+  });
+  const workflowId = governessBeatOwnedWorkflowId(owner);
   const manifest = input.manifest;
   if (
     !manifest ||
@@ -117,44 +192,22 @@ export const closeGovernessBeatWorkflow = async (input: {
       workflowId,
     };
   }
-  const described = await input.control.describe(workflowId);
-  if (!described) {
-    return { outcome: "absent", workflowId };
-  }
-  if (described.status !== "RUNNING") {
-    return { detail: described.status, outcome: "already-closed", workflowId };
-  }
-  if (described.ownerRepoId && described.ownerRepoId !== input.repoId) {
-    return {
-      detail: `owned by ${described.ownerRepoId}`,
-      outcome: "refused-foreign",
-      workflowId,
-    };
-  }
-  if (!described.ownerRepoId && input.requireOwnerMemo) {
-    return {
-      detail: "workflow carries no owner memo",
-      outcome: "refused-unowned",
-      workflowId,
-    };
-  }
-  try {
-    await input.control.terminate(
-      workflowId,
-      `loop run ${input.runId} is ${manifest.state}: ${input.reason}`
-    );
-  } catch (error) {
-    // Closed or removed between describe and terminate: the goal holds.
-    if (isNotFound(error)) {
-      return {
-        detail: "closed concurrently",
-        outcome: "already-closed",
-        workflowId,
-      };
-    }
-    throw error;
-  }
-  return { outcome: "terminated", workflowId };
+  const reason = `loop run ${input.runId} is ${manifest.state}: ${input.reason}`;
+  const owned = await closeOwnedExecution({
+    control: input.control,
+    format: "v2",
+    owner,
+    reason,
+    workflowId,
+  });
+  const legacy = await closeOwnedExecution({
+    control: input.control,
+    format: "legacy",
+    owner,
+    reason,
+    workflowId: governessBeatLegacyWorkflowId(input.runId),
+  });
+  return legacy.outcome === "absent" ? owned : { ...owned, legacy };
 };
 
 /** A control over an already-connected WorkflowClient. */
@@ -172,10 +225,11 @@ export const createGovernessBeatWorkflowControl = (input: {
       const description = await (input.withDeadline ?? unbounded)(() =>
         input.client.getHandle(workflowId).describe()
       );
-      const owner = description.memo?.[GOVERNESS_BEAT_OWNER_MEMO_KEY];
       return {
-        ...(typeof owner === "string" ? { ownerRepoId: owner } : {}),
+        executionRunId: description.runId,
+        memo: description.memo,
         status: description.status.name,
+        taskQueue: description.taskQueue,
       };
     } catch (error) {
       if (isNotFound(error)) {
@@ -184,9 +238,9 @@ export const createGovernessBeatWorkflowControl = (input: {
       throw error;
     }
   },
-  async terminate(workflowId, reason) {
+  async terminate(workflowId, executionRunId, reason) {
     await (input.withDeadline ?? unbounded)(() =>
-      input.client.getHandle(workflowId).terminate(reason)
+      input.client.getHandle(workflowId, executionRunId).terminate(reason)
     );
   },
 });
@@ -238,7 +292,15 @@ export const closeGovernessBeatForTerminalRun = async (input: {
     return {
       detail: manifest ? `run is ${manifest.state}` : "run manifest is missing",
       outcome: "refused-live",
-      workflowId: governessBeatWorkflowId(input.runId),
+      workflowId: manifest
+        ? governessBeatOwnedWorkflowId(
+            governessBeatOwner({
+              repoId: manifest.repoId,
+              runId: input.runId,
+              taskQueue: config.taskQueue,
+            })
+          )
+        : governessBeatLegacyWorkflowId(input.runId),
     };
   }
   const control = await (input.connect ?? connectGovernessBeatWorkflowControl)(
@@ -250,8 +312,8 @@ export const closeGovernessBeatForTerminalRun = async (input: {
       manifest: readManifest(),
       reason: input.reason,
       repoId: manifest.repoId,
-      requireOwnerMemo: true,
       runId: input.runId,
+      taskQueue: config.taskQueue,
     });
   } finally {
     await control.close().catch(() => undefined);
@@ -328,7 +390,11 @@ const closeCandidates = async (input: {
   log: (line: string) => void;
   repoId: string;
   result: GovernessBeatReconcileResult;
+  taskQueue: string;
 }): Promise<void> => {
+  const count = (outcome: GovernessBeatCloseOutcome): void => {
+    input.result.outcomes[outcome] = (input.result.outcomes[outcome] ?? 0) + 1;
+  };
   for (const candidate of input.candidates) {
     input.result.checked += 1;
     try {
@@ -338,15 +404,15 @@ const closeCandidates = async (input: {
         manifest: readRunManifest(candidate.manifestPath),
         reason: "startup reconcile",
         repoId: input.repoId,
-        requireOwnerMemo: true,
         runId: candidate.runId,
+        taskQueue: input.taskQueue,
       });
-      input.result.outcomes[closed.outcome] =
-        (input.result.outcomes[closed.outcome] ?? 0) + 1;
-      if (closed.outcome === "terminated") {
-        input.log(
-          `[loop] closed ${closed.workflowId} (run ${candidate.runId})`
-        );
+      // The legacy execution counts too, so its refusals stay visible.
+      for (const one of closed.legacy ? [closed, closed.legacy] : [closed]) {
+        count(one.outcome);
+        if (one.outcome === "terminated") {
+          input.log(`[loop] closed ${one.workflowId} (run ${candidate.runId})`);
+        }
       }
     } catch (error) {
       input.result.failed += 1;
@@ -423,7 +489,14 @@ export const reconcileGovernessBeatWorkflows = async (
     return result;
   }
   try {
-    await closeCandidates({ candidates, control, log, repoId, result });
+    await closeCandidates({
+      candidates,
+      control,
+      log,
+      repoId,
+      result,
+      taskQueue: config.taskQueue,
+    });
   } finally {
     await control.close().catch(() => undefined);
   }
