@@ -607,3 +607,27 @@ status entry above after review of b721681a; the decisions are unchanged.
   default: supervisor-a2a-v2-service "in the legacy-write default, every V2
   delivery path of one service defers a not-enrolled recipient under one
   shared bound, log line, and counters".
+
+## 2026-10-09: owner decisions accepted
+
+The user accepted these on 2026-10-09. They supersede the "conservative
+choices pending owner confirmation" entry of 2026-10-06 where they overlap.
+
+1. Q1: keep the legacy-write workflow id format; no flip. Legacy write is
+   the shipping default.
+2. Q2: unauthenticated /healthz carries no seat ids.
+3. No hand-recorded terminal outcomes.
+4. The additive `bound_by_deployment` column on the result binding table is
+   accepted.
+5. On rollback, the database refusing 40097564's re-bind of a binding
+   recorded under a result graph key is accepted.
+6. A missing A2A task, or a COMPLETED task without its accepted-result
+   artifact, stays unsettled.
+7. The activation rollback pins LOOP_BIN to the retained 678e2fde binary.
+8. Before Rollback B1, strip retired identities' `manifestPath` from a copy.
+9. The replay test keeps failing, not skipping, on shallow clones.
+
+claude/fix6-hygiene honours 1 to 6: it changes no default, no /healthz
+field and no terminal outcome path, and records a binding as settled only
+when the host's check says so, so decision 6's bindings are never recorded
+and are checked again at each start and GET.

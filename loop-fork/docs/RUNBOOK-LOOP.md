@@ -1208,6 +1208,30 @@ Authenticated `GET <routePath>/assignment` adds
 this route tenant's unsettled bindings under a previous key of this
 deployment. /healthz carries no binding, key or fingerprint.
 
+Do not rename the task queue during a key rotation. The host's task queue
+(`taskQueue`, the orchestration config key) is its deployment: the ledger
+classifies, lists and reports only the bindings whose `bound_by_deployment`
+is that name (or whose deployment-format message its start intent assigns
+to it), and the settled record above is kept per deployment. A host
+restarted under a new task queue name owns none of the bindings recorded
+under the old name, so:
+
+- `underPreviousResultGraphKey` and the `unknown-result-graph-key` start
+  lines stop naming them, and the retirement check below passes while
+  bindings under the previous key are still waiting to publish. Removing
+  that key then strands them: they can never publish;
+- deployment-format message ids are minted for the deployment, so messages
+  started under the old name are another deployment's messages to the
+  renamed host;
+- every binding is checked against the A2A task store again, once, under
+  the new name.
+
+Keep the task queue name unchanged from step 1 of the rotation until the
+retirement check has passed and the previous key's variable is removed. If
+a rename is needed, do it on its own, outside any rotation, after every
+previous key has been retired and every binding the host still lists has
+settled.
+
 Rotation procedure:
 
 1. Before rotating, bind every result graph already started under the
