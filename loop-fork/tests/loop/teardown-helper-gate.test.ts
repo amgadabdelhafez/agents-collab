@@ -312,9 +312,12 @@ test("an intake teardown routes no helper for the rest of its cycle and ends the
     ).toBe("pending");
     expect(spies.events).not.toContain("utility-routes-processed");
     expect(spies.events).not.toContain("native-fallback-requests-processed");
-    // The loop ended with the teardown, not through the exit menu.
+    // The loop ended with the teardown, not through the exit menu: it never
+    // asked for a second key, so the exit menu's "e" was never taken. (The
+    // first read's timer takes "x" 50 ms after the loop starts whether or not
+    // the loop still listens; the r6 line's first tick can outlast it.)
     expect(keyReads).toBe(1);
-    expect(keys).toEqual(["x", "e"]);
+    expect(keys).toContain("e");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
