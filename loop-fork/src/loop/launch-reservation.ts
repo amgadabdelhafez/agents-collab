@@ -16,6 +16,7 @@ import {
   createRunManifest,
   isActiveRunState,
   latestInstant,
+  type RecordedProcessClassifier,
   type ReservationManifestRead,
   type RunManifest,
   type RunOwnershipEvidence,
@@ -34,6 +35,10 @@ import {
   withoutWorkspaceHandback,
   writeRunManifest,
 } from "./run-state";
+import {
+  defaultOwnershipProbes,
+  recordedProcessClassifier,
+} from "./shared-process-ownership";
 import {
   type TmuxLiveness,
   tmuxTargetLiveness,
@@ -54,6 +59,11 @@ const LOCK_FILE = ".paired-launch.lock";
 const LOCK_STALE_MS = 5000;
 
 interface LaunchReservationDeps {
+  /**
+   * Judges each live recorded process another run may hold too (see
+   * `recordedProcessClassifier`). Absent, every live record counts.
+   */
+  classifyRecordedProcess?: RecordedProcessClassifier;
   /**
    * Classifies a target's socket endpoint. Injected so a test can fake the
    * filesystem fact without depending on which sockets exist on the host.
@@ -100,6 +110,7 @@ export interface PairedLaunchClaim {
 }
 
 const defaultDeps = (): LaunchReservationDeps => ({
+  classifyRecordedProcess: recordedProcessClassifier(defaultOwnershipProbes),
   endpointState: readTmuxEndpointState,
   env: process.env,
   home: process.env.HOME ?? "",
@@ -344,7 +355,8 @@ const recordedProcessOwnership = (
         manifest,
         reference,
         (pid, at) => pidCanStillOwnRun(pid, at, deps),
-        (pgid, at) => groupCanStillOwnRun(pgid, at, deps)
+        (pgid, at) => groupCanStillOwnRun(pgid, at, deps),
+        deps.classifyRecordedProcess
       )
     : undefined;
 };
@@ -567,6 +579,9 @@ const releaseDeadTerminalRun = async (
     stored.manifestPath,
     manifest.runId,
     {
+      ...(deps.classifyRecordedProcess
+        ? { classifyRecordedProcess: deps.classifyRecordedProcess }
+        : {}),
       groupCanStillOwnRun: (pgid, at) => groupCanStillOwnRun(pgid, at, deps),
       now: deps.now,
       pidCanStillOwnRun: (pid, at) => pidCanStillOwnRun(pid, at, deps),

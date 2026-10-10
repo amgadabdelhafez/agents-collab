@@ -945,6 +945,11 @@ export type StoppedRunReconcileResult =
 
 export interface StoppedRunReconcileDeps {
   /**
+   * Judges each live recorded process another run may hold too (see
+   * `RecordedProcessClassifier`). Absent, every live record counts.
+   */
+  classifyRecordedProcess?: RecordedProcessClassifier;
+  /**
    * Whether a recorded process GROUP (a utility worker's, an agent pane's)
    * may still hold a run process: see `groupCanStillOwnRun`. Every production
    * caller supplies it; without it the pid rule or any live member counts.
@@ -994,6 +999,23 @@ export interface RecordedRunPid {
   readonly reference: string;
   readonly source: string;
 }
+
+/**
+ * Release evidence for processes another run may hold too: built once per
+ * evidence read, then asked for each live recorded process. `count: false`
+ * means the live process does not keep this run's workspace owned (it is
+ * shared with another live run and does not work in this workspace, or it is
+ * a daemon that re-parented away and works outside it). `rule` names why.
+ */
+export type RecordedProcessClassifier = (
+  manifestPath: string,
+  manifest: RunManifest
+) => (entry: RecordedRunPid) => {
+  readonly count: boolean;
+  readonly detail?: string;
+  readonly otherRunId?: string;
+  readonly rule: string;
+};
 
 export type AuxiliaryRunPids =
   | { readonly kind: "read"; readonly pids: readonly RecordedRunPid[] }
@@ -1202,16 +1224,22 @@ export const auxiliaryProcessOwnership = (
   groupCanStillOwnRun: (
     pgid: number,
     reference: string
-  ) => boolean = conservativeGroupOwnership(pidCanStillOwnRun)
+  ) => boolean = conservativeGroupOwnership(pidCanStillOwnRun),
+  classifyRecordedProcess?: RecordedProcessClassifier
 ): string | undefined => {
   const auxiliary = readAuxiliaryRunPids(manifestPath, manifest, reference);
   if (auxiliary.kind === "unreadable") {
     return `recorded-process-evidence-unreadable: ${auxiliary.reason}`;
   }
-  const live = auxiliary.pids.find((entry) =>
-    entry.group
-      ? groupCanStillOwnRun(entry.pid, entry.reference)
-      : pidCanStillOwnRun(entry.pid, entry.reference)
+  const classify = classifyRecordedProcess?.(manifestPath, manifest);
+  const live = auxiliary.pids.find(
+    (entry) =>
+      (entry.group
+        ? groupCanStillOwnRun(entry.pid, entry.reference)
+        : pidCanStillOwnRun(entry.pid, entry.reference)) &&
+      // A live process another run holds too, or a daemon that re-parented
+      // away from the run outside its workspace, may not count.
+      (classify?.(entry).count ?? true)
   );
   if (!live) {
     return undefined;
@@ -1280,7 +1308,8 @@ const recordedProcessRefusal = (
     manifest,
     reference,
     deps.pidCanStillOwnRun,
-    deps.groupCanStillOwnRun
+    deps.groupCanStillOwnRun,
+    deps.classifyRecordedProcess
   );
 };
 

@@ -1747,7 +1747,106 @@ Further limits of the same repair, recorded for the owner (not part of the
 - A pane that the manifest does not name (split in by hand) is not recorded.
 - The other side of tracking descendants: a long-lived daemon a tool started
   from inside the run (a `gpg-agent` while it still descends from the CLI, a
-  dev server) is run-owned once a snapshot saw it. Its life blocks the
-  release, and the teardown ends it.
+  dev server) is run-owned once a snapshot saw it, unless one of the
+  shared-process rules below applies. Its life blocks the release, and the
+  teardown ends it.
 - Not verified: whether the Claude or Codex CLI itself ends its detached tool
   children on a hangup. The repair does not rely on it.
+
+### Shared processes: whose is it (2026-10-10)
+
+How a Codex seat gets its app-server (from the code, `tmux.ts`
+`preparePersistentTmuxLaunch` and `codex-app-server.ts`): each paired launch
+or resume that includes Codex has its launcher process (the `loop` command)
+spawn one `codex app-server --listen ws://127.0.0.1:<port>` detached (its own
+session and group) and orphaned when the launcher exits. Its pid and URL are
+recorded as the run's `codexAppServerPid` / `codexRemoteUrl`, and the
+launcher also spawns a detached `loop __codex-tmux-proxy <runDir> ...` that
+the Codex pane connects through. Nothing in the code shares one app-server
+between runs or seats on purpose: the app-server object is a singleton per
+launcher process, and each run has its own launcher. Sharing comes from the
+process tree: a `loop` launch or resume of run B run from an agent's tool
+shell in run A starts B's app-server, B's proxy and, for a private socket,
+possibly B's tmux server as descendants of A's agent CLI, so A's ppid walk
+recorded them as A's `agent-group-<pgid>.json`. Other long-lived processes
+that can appear in an agent pane's tree: the agent CLIs' MCP servers
+(`loop __bridge-mcp <runDir>` and configured ones, children of that CLI), the
+bridge worker and utility workers (spawned detached from inside the tree,
+their command line names their run directory), and whatever a tool starts
+(dev servers, Temporal dev servers, build daemons such as Gradle, watchman,
+`lms server start`, `docker` clients). The governess pane, which runs the
+governess helpers, is never walked.
+
+The rules (`src/loop/shared-process-ownership.ts`), first match wins:
+
+1. `shared-process-skipped`: another run that is not provably dead (its
+   manifest is active, or present but not a valid manifest) records the
+   process or its group (manifest pid, launch attempt, `codexAppServerPid`,
+   `bridge-worker.json`, `run-processes/` records, utility worker claims), or
+   a member's command line names that run's directory, tmux socket, tmux
+   session or `--run-id`. A record whose id is held only by processes started
+   after it names a later process and does not apply. The teardown never
+   signals it: not at the pre-kill collection, not the run's own
+   `codexAppServerPid` cleanup, and not in any signal round (each round
+   re-reads the other runs). The governess logs one `shared-process-skipped`
+   line per skip with `otherRunId` and the `phase` (`cleanup`, `collect`,
+   `terminate`). It is release evidence only while a member's cwd (`lsof -a
+   -p <pid> -d cwd`) is inside this run's workspace root (binding root, else
+   cwd) or cannot be read.
+2. `ownership-unknown`: the other runs cannot all be read (a run directory,
+   a manifest or a run's records unreadable), or the walked group is not in
+   the process table. A walked group is then never signalled and stays
+   release evidence. The run's own pane groups and its own manifest
+   app-server are still judged by rule 1 alone.
+3. `run-owned`: a pane group, the run's own manifest app-server, or a walked
+   group with a member still descending from one of the run's live, proven
+   pane processes. As before: signalled after the kill, release evidence.
+4. A walked group none of whose members descends from the run's panes
+   (re-parented away, to launchd): `reparented-in-workspace` (a member's cwd
+   is inside the workspace) is signalled and counted as before;
+   `reparented-outside-workspace` (every member's cwd read, none inside) is
+   neither signalled nor counted; an unreadable cwd (or more than 32 members)
+   is `ownership-unknown`.
+
+The release evidence applies rules 1, 2 and 4 only to the run's
+`codexAppServerPid` and its `agent-group-*` records, in every release path
+(`loop reconcile`, the launch auto-release, the teardown's own handback and
+startup GC). The teardown's `workspace-released` detail lists each live
+record it did not count and the rule.
+
+Utility worker targets are re-verified right before every signal round:
+each carries the instant it was identified at (its group is still the
+worker's only while a member started by then lives) and its identity (while
+the leader lives, its command must still be the worker command of exactly
+that run directory, epoch and job). One that fails is reported `unverified`
+and never signalled.
+
+Accepted and remaining risks of these rules (for the owner):
+
+- A stale active manifest (a run that died without reconcile) keeps
+  everything it records or names "shared" for every other run: never ended
+  by them, and counted by them only while it works in their workspace. Its
+  own reconcile ends this.
+- One unreadable run directory under the storage root makes every walked
+  group of every run `ownership-unknown` (never signalled, blocks the
+  release while live) until it is repaired. This fails closed by design.
+- Command-line matching is textual. A tool of this run that merely names
+  another live run (`tail -f <other runDir>/governess.jsonl`, `loop status
+  --run-id 7`) is treated as shared: this run's teardown leaves it running,
+  and it blocks this run's release while its cwd is in this workspace. The
+  operator ends it. A `--run-id` value equal to this run's own id never
+  matches (ids repeat across repositories); one equal to another live run's
+  id in any repository does.
+- A daemon working outside the workspace (cwd elsewhere) that still writes
+  into it by absolute path is not counted once it re-parented away, and is
+  not ended. The same holds when the governess is gone and GC or the launch
+  auto-release judges the run: every walked group has re-parented by then,
+  so only the cwd rule keeps it.
+- cwd is read once per judgement; a process can `chdir` later. `lsof` is
+  slow (tens of ms per pid): it runs only for shared or re-parented groups.
+- Other runs are read from the storage root under `HOME` and, for a run
+  directory in the storage layout, from its own root. Runs kept under another
+  `HOME` are not seen.
+- The Codex tmux proxy and a private tmux server started by another run's
+  launcher are not recorded by that run; they are recognised as shared only
+  by their command lines naming its run directory or socket.

@@ -45,6 +45,17 @@ import {
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
+import {
+  classifyGroup,
+  defaultOwnershipProbes,
+  membersOf,
+  type OwnershipContext,
+  type OwnershipProbes,
+  ownershipContext,
+  recordedProcessClassifier,
+  selfOf,
+  sharedWithOtherRun,
+} from "./shared-process-ownership";
 import { boundedTmuxOptions, tmuxCommandTimedOut } from "./tmux-control";
 import { targetArgv, targetFromManifest } from "./tmux-socket";
 import {
@@ -77,10 +88,20 @@ export interface RunProcessCleanupResult {
    */
   groups?: TerminationTarget[];
   killed: number[];
-  skipped: Array<{ pid: number; reason: string }>;
+  /**
+   * Not signalled, and why. `shared-process-skipped` names the other run
+   * that records or names the process (`otherRunId`); `detail` says which
+   * record or rule applied.
+   */
+  skipped: Array<{
+    detail?: string;
+    otherRunId?: string;
+    pid: number;
+    reason: string;
+  }>;
 }
 
-interface RunProcessCleanupDeps {
+interface RunProcessCleanupDeps extends OwnershipProbes {
   commandForPid: (pid: number) => string | undefined;
   listeningPids: (port: number) => number[];
   /**
@@ -235,6 +256,9 @@ const defaultListRunPanes = (runDir: string): ListedPane[] | undefined => {
 
 const cleanupDeps: RunProcessCleanupDeps = {
   commandForPid: defaultCommandForPid,
+  commandTable: defaultOwnershipProbes.commandTable,
+  cwdOfPid: defaultOwnershipProbes.cwdOfPid,
+  otherRunIndex: defaultOwnershipProbes.otherRunIndex,
   listRunPanes: defaultListRunPanes,
   listTmuxSessions: defaultListTmuxSessions,
   listeningPids: defaultListeningPids,
@@ -478,16 +502,26 @@ const signalUtilityWorker = (
     return;
   }
   const source = `utility job ${jobId} worker`;
+  // The worker was identified just now, so it (and every member of its
+  // group) had started by this instant. The teardown's later signal rounds
+  // re-identify the target against it, and against the worker command while
+  // the leader lives: a pid or group id reused after this check, or a leader
+  // that no longer runs this worker command, is never signalled.
+  const identified = {
+    identity: { epoch: claim.epoch, jobId, runDir },
+    reference: deps.now(),
+    source,
+  };
   try {
     deps.signal(-pid, "SIGTERM");
     result.killed.push(pid);
-    pushGroup(result, { id: pid, kind: "group", source });
+    pushGroup(result, { id: pid, kind: "group", ...identified });
     return;
   } catch {
     // Not a process-group leader: signal the worker alone below.
   }
   signalOwnedProcess(result, pid, true, "", deps.signal);
-  pushGroup(result, { id: pid, kind: "process", source });
+  pushGroup(result, { id: pid, kind: "process", ...identified });
 };
 
 const pushGroup = (
@@ -551,6 +585,9 @@ const collectRunAgentGroupsWithDeps = (
     table,
   });
   const present = new Set(table.map((row) => row.pgid));
+  const paneGroups = new Set(
+    readRunPaneProcessRecords(runDir).map((record) => record.pgid)
+  );
   const recorded = [
     ...readRunPaneProcessRecords(runDir).map((record) => ({
       pgid: record.pgid,
@@ -563,6 +600,11 @@ const collectRunAgentGroupsWithDeps = (
       source: `agent ${record.paneId} descendant`,
     })),
   ].filter((record) => present.has(record.pgid));
+  // Whose group is it (see `shared-process-ownership`): one another live run
+  // records or names is never targeted, nor one whose ownership cannot be
+  // judged, nor a daemon that re-parented away and works outside the
+  // workspace.
+  const ownership = ownershipContext({ manifest, probes: deps, runDir, table });
   // A group present in the snapshot is targeted only when some record of it
   // proves it is still the recorded group (a member started by the record's
   // instant); otherwise its id may now name an unrelated, later group.
@@ -593,14 +635,49 @@ const collectRunAgentGroupsWithDeps = (
       });
       continue;
     }
-    pushGroup(result, {
-      id: pgid,
-      kind: "group",
+    // A pane group is the run's own pane; a descendant group is the run's
+    // only by the walk.
+    targetUnlessShared(result, ownership, {
+      inferred: !paneGroups.has(pgid),
+      pgid,
       reference: snapshotAt,
       source: provenSource,
     });
   }
   return result;
+};
+
+/**
+ * Targets one proven agent group, unless its ownership rule forbids a signal
+ * (`shared-process-skipped`, `ownership-unknown`,
+ * `reparented-outside-workspace`): then it is reported skipped with the rule,
+ * the other run's id when there is one, and what applied.
+ */
+const targetUnlessShared = (
+  result: RunProcessCleanupResult,
+  ownership: OwnershipContext,
+  group: { inferred: boolean; pgid: number; reference: string; source: string }
+): void => {
+  const verdict = classifyGroup(group.pgid, ownership, {
+    inferred: group.inferred,
+  });
+  if (!verdict.kill) {
+    result.skipped.push({
+      detail: `${group.source}: ${verdict.detail ?? verdict.rule}`,
+      ...(verdict.otherRunId ? { otherRunId: verdict.otherRunId } : {}),
+      pid: group.pgid,
+      reason: verdict.rule,
+    });
+    return;
+  }
+  pushGroup(result, {
+    id: group.pgid,
+    kind: "group",
+    ...(group.inferred ? { ownership: "inferred" as const } : {}),
+    reference: group.reference,
+    ...(verdict.rule === "run-owned" ? {} : { rule: verdict.rule }),
+    source: group.source,
+  });
 };
 
 /**
@@ -708,7 +785,17 @@ const cleanupRunOwnedProcessesWithDeps = (
 
   const appServerPid = manifest?.codexAppServerPid;
   const port = appServerPort(manifest?.codexRemoteUrl);
-  if (appServerPid) {
+  const sharedAppServer = appServerPid
+    ? appServerSharedWith(runDir, manifest, appServerPid, deps)
+    : undefined;
+  if (appServerPid && sharedAppServer) {
+    result.skipped.push({
+      detail: `codexAppServerPid: ${sharedAppServer.source}`,
+      otherRunId: sharedAppServer.otherRunId,
+      pid: appServerPid,
+      reason: "shared-process-skipped",
+    });
+  } else if (appServerPid) {
     const command = deps.commandForPid(appServerPid);
     const appServerCommand = Boolean(command?.includes("app-server"));
     const ownsListener = Boolean(
@@ -725,6 +812,40 @@ const cleanupRunOwnedProcessesWithDeps = (
     );
   }
   return result;
+};
+
+/**
+ * Another live run that records the run's Codex app-server (its pid or
+ * group) or whose run directory, socket, session or run id its command line
+ * names, or `undefined`. The app-server is the run's own record, so other runs
+ * that cannot be read do not stop its cleanup; one that is shared does.
+ * Without a process table the recorded pid itself is compared (as a process
+ * of unknown start, which errs toward shared).
+ */
+const appServerSharedWith = (
+  runDir: string,
+  manifest: RunManifest | undefined,
+  pid: number,
+  deps: RunProcessCleanupDeps
+): { otherRunId: string; source: string } | undefined => {
+  const table = deps.processTable();
+  const members = table
+    ? membersOf(pid, "process", table)
+    : [{ pgid: pid, pid, ppid: 0, startedAtMs: undefined }];
+  let index: ReturnType<OwnershipProbes["otherRunIndex"]> | undefined;
+  const shared = sharedWithOtherRun({
+    commands: deps.commandTable,
+    index: () => {
+      index ??= deps.otherRunIndex(runDir);
+      return index;
+    },
+    members,
+    pgid: pid,
+    self: selfOf(manifest),
+  });
+  return shared.kind === "shared"
+    ? { otherRunId: shared.otherRunId, source: shared.source }
+    : undefined;
 };
 
 /**
@@ -811,7 +932,8 @@ const gcOwnership = (
 const gcReleaseBlocker = (
   manifestPath: string,
   manifest: RunManifest,
-  ownership: GcOwnership
+  ownership: GcOwnership,
+  probes: OwnershipProbes
 ): string | undefined => {
   if (ownership.pid(manifest.pid)) {
     return "run-process-may-be-live";
@@ -827,7 +949,8 @@ const gcReleaseBlocker = (
     manifest,
     ownership.reference,
     (pid, at) => ownership.pid(pid, at),
-    (pgid, at) => ownership.group(pgid, at)
+    (pgid, at) => ownership.group(pgid, at),
+    recordedProcessClassifier(probes)
   );
 };
 
@@ -915,7 +1038,12 @@ const cleanupAbandonedRun = (input: {
     // agent pane groups, and every utility worker's process group) may still
     // be live. Short of that the run is only repaired, not released.
     if (
-      gcReleaseBlocker(input.manifestPath, withoutSettledOwnership, ownership)
+      gcReleaseBlocker(
+        input.manifestPath,
+        withoutSettledOwnership,
+        ownership,
+        input.deps
+      )
     ) {
       return withoutSettledOwnership;
     }

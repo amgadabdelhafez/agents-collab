@@ -60,6 +60,10 @@ import {
   runReconPane,
 } from "./loop/recon-pane";
 import { reconcileLegacyStoppedRun, resolveRunStorage } from "./loop/run-state";
+import {
+  defaultOwnershipProbes,
+  recordedProcessClassifier,
+} from "./loop/shared-process-ownership";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import { UTILITY_WORKER_SUBCOMMAND } from "./loop/utility-constants";
@@ -388,6 +392,10 @@ const runStoppedRunReconcileCommand = async (
   const storage = resolveRunStorage(runId);
   const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
     terminalState: kind === "stopped-run" ? "stopped" : "failed",
+    // A live process another live run holds too (or a daemon that re-parented
+    // away outside the workspace) keeps the workspace only while it works in
+    // it (see `shared-process-ownership`).
+    classifyRecordedProcess: recordedProcessClassifier(defaultOwnershipProbes),
     // A utility worker's or agent pane's process group is live while any
     // member exists, after its leader is gone.
     groupCanStillOwnRun: (pgid, reference) =>

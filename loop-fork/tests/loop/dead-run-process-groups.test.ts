@@ -674,6 +674,7 @@ test("teardown hands every verified worker group to the post-kill termination an
       5102: workerCommand(runDir, 1, "job-b"),
     };
     deps.commandForPid = (pid) => commands[pid];
+    deps.now = () => NOW;
     deps.signal = (pid, signal) => {
       signals.push(`${pid}:${signal}`);
       if (pid === -5102) {
@@ -682,9 +683,23 @@ test("teardown hands every verified worker group to the post-kill termination an
     };
     const result = cleanupRunOwnedProcesses(runDir, undefined);
     expect(signals).toEqual(["-5101:SIGTERM", "-5102:SIGTERM", "5102:SIGTERM"]);
+    // Each target carries the instant it was identified at and the worker
+    // identity, so every later signal round re-verifies it.
     expect(result.groups).toEqual([
-      { id: 5101, kind: "group", source: "utility job job-a worker" },
-      { id: 5102, kind: "process", source: "utility job job-b worker" },
+      {
+        id: 5101,
+        identity: { epoch: 1, jobId: "job-a", runDir },
+        kind: "group",
+        reference: NOW,
+        source: "utility job job-a worker",
+      },
+      {
+        id: 5102,
+        identity: { epoch: 1, jobId: "job-b", runDir },
+        kind: "process",
+        reference: NOW,
+        source: "utility job job-b worker",
+      },
     ]);
     expect(result.skipped).toEqual([
       { pid: 5103, reason: "utility-worker-group-orphaned" },
@@ -767,12 +782,14 @@ test("teardown records the agent panes of its own session and their descendants'
       {
         id: 601,
         kind: "group",
+        ownership: "inferred",
         reference: NOW,
         source: "agent %1 descendant",
       },
       {
         id: 701,
         kind: "group",
+        ownership: "inferred",
         reference: NOW,
         source: "agent %2 descendant",
       },

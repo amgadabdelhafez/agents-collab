@@ -65,6 +65,7 @@ import {
 } from "../../src/loop/run-process-cleanup";
 import {
   createRunManifest,
+  type RunManifest,
   reconcileLegacyStoppedRun,
 } from "../../src/loop/run-state";
 
@@ -426,13 +427,21 @@ test("teardown targets the recorded agent groups present in its snapshot, with t
     // Later: 601's group is gone and not targeted; 701 keeps a member that
     // was there at the record; 801's id is held only by a process started
     // after the record (a reused id), so it is reported, never targeted.
+    // 701's member re-parented to launchd: it stays a target because it
+    // works inside the run's workspace (see shared-process-ownership.test).
     deps.processTable = () => [row(7011, 1, 701), row(8011, 1, 801, AFTER)];
-    const result = collectRunAgentGroups(runDir, undefined);
+    deps.otherRunIndex = () => ({ kind: "read", references: [], runs: [] });
+    deps.cwdOfPid = () => "/ws/repo/src";
+    const result = collectRunAgentGroups(runDir, {
+      cwd: "/ws/repo",
+    } as RunManifest);
     expect(result.groups).toEqual([
       {
         id: 701,
         kind: "group",
+        ownership: "inferred",
         reference: SNAPSHOT_AT,
+        rule: "reparented-in-workspace",
         source: "agent %1 descendant",
       },
     ]);

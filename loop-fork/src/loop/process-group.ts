@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { isUtilityWorkerCommand } from "./utility-constants";
 
 /**
  * Process groups as release evidence and as the unit a teardown ends.
@@ -222,10 +223,29 @@ export const targetStillRecorded = (
   );
 };
 
+/** The identity a utility worker target is re-verified against. */
+export interface UtilityWorkerIdentity {
+  readonly epoch: number;
+  readonly jobId: string;
+  readonly runDir: string;
+}
+
 /** One thing a teardown or stale recovery ends: a whole group, or one process. */
 export interface TerminationTarget {
   readonly id: number;
+  /**
+   * A utility worker's identity: right before every signal round, a live
+   * leader (pid `id`) must still run the worker command of exactly this run
+   * directory, epoch and job, or the target is reported `unverified`.
+   */
+  readonly identity?: UtilityWorkerIdentity;
   readonly kind: "group" | "process";
+  /**
+   * `inferred`: the run holds the group only because the ppid walk found it
+   * (an `agent-group-*` record). Such a target is never signalled while the
+   * other runs cannot be read (see `shared-process-ownership`).
+   */
+  readonly ownership?: "inferred";
   /**
    * A moment by which the recorded group (or process) certainly existed. When
    * present, the target is re-identified right before every signal round (see
@@ -233,7 +253,16 @@ export interface TerminationTarget {
    * is no longer provably the recorded one.
    */
   readonly reference?: string;
+  /** The ownership rule that made it a target, when not the plain one. */
+  readonly rule?: string;
   readonly source: string;
+}
+
+/** Why a target another run may hold was not signalled. */
+export interface SharedTargetSkipEntry {
+  readonly detail: string;
+  readonly otherRunId?: string;
+  readonly reason: "ownership-unknown" | "shared-process-skipped";
 }
 
 export interface TerminationDeps {
@@ -243,6 +272,14 @@ export interface TerminationDeps {
   nowMs: () => number;
   pollMs: number;
   processGroupAlive: (pgid: number) => boolean;
+  /**
+   * Right before every signal round, the targets another live run records or
+   * names (or whose ownership cannot be judged), by `kind:id` key. They are
+   * reported in `shared` and never signalled. Absent, none is skipped.
+   */
+  sharedSkips?: (
+    targets: readonly TerminationTarget[]
+  ) => ReadonlyMap<string, SharedTargetSkipEntry>;
   /** `process.kill`: a negative id signals the group. */
   signal: (id: number, signal: NodeJS.Signals) => void;
   sleep: (ms: number) => Promise<void>;
@@ -261,6 +298,12 @@ export interface TerminationResult {
   readonly failed: Array<{ reason: string; target: string }>;
   /** Still alive after the grace, so sent SIGKILL. */
   readonly killed: string[];
+  /**
+   * Targets another live run records or names (`shared-process-skipped`), or
+   * whose ownership could not be judged (`ownership-unknown`): never
+   * signalled. Present only when non-empty.
+   */
+  readonly shared?: Array<SharedTargetSkipEntry & { target: string }>;
   /** Still alive after SIGKILL and its wait: the release must not proceed. */
   readonly survivors: string[];
   /**
@@ -330,22 +373,27 @@ export const terminateTargets = async (
   });
   const failed: Array<{ reason: string; target: string }> = [];
   const unverified: TerminationTarget[] = [];
+  const shared = new Map<
+    TerminationTarget,
+    SharedTargetSkipEntry & { target: string }
+  >();
+  const checked = (target: TerminationTarget): boolean =>
+    target.reference !== undefined || target.identity !== undefined;
   // Re-identify right before each signal round: a target recorded earlier
   // (before a slow beat close, or a grace) whose id was reused since is
-  // dropped and never signalled.
+  // dropped and never signalled, and so is one another live run now records
+  // or names.
   const identified = (
     targets: readonly TerminationTarget[]
   ): TerminationTarget[] => {
-    const referenced = targets.filter(
-      (target) => target.reference !== undefined
-    );
-    if (!(deps.stillRecorded && referenced.length > 0)) {
-      return [...targets];
-    }
-    const still = deps.stillRecorded(referenced);
-    return targets.filter((target) => {
+    const referenced = targets.filter(checked);
+    const still =
+      deps.stillRecorded && referenced.length > 0
+        ? deps.stillRecorded(referenced)
+        : undefined;
+    const recorded = targets.filter((target) => {
       if (
-        target.reference === undefined ||
+        !(still && checked(target)) ||
         still.has(`${target.kind}:${target.id}`)
       ) {
         return true;
@@ -353,6 +401,21 @@ export const terminateTargets = async (
       if (targetAlive(target, deps)) {
         unverified.push(target);
       }
+      return false;
+    });
+    const skips =
+      deps.sharedSkips && recorded.length > 0
+        ? deps.sharedSkips(recorded)
+        : undefined;
+    if (!skips || skips.size === 0) {
+      return recorded;
+    }
+    return recorded.filter((target) => {
+      const skip = skips.get(`${target.kind}:${target.id}`);
+      if (!skip) {
+        return true;
+      }
+      shared.set(target, { ...skip, target: label(target) });
       return false;
     });
   };
@@ -378,13 +441,58 @@ export const terminateTargets = async (
   return {
     // Gone within the grace, or already gone when re-identified.
     exited: unique
-      .filter((target) => !(killed.has(target) || skipped.has(target)))
+      .filter(
+        (target) =>
+          !(killed.has(target) || skipped.has(target) || shared.has(target))
+      )
       .map(label),
     failed,
     killed: afterGrace.map(label),
     survivors: survivors.map(label),
     ...(unverified.length > 0 ? { unverified: unverified.map(label) } : {}),
+    ...(shared.size > 0 ? { shared: [...shared.values()] } : {}),
   };
+};
+
+/**
+ * The re-identification on one table snapshot: the reference rule
+ * (`targetStillRecorded`), and for a utility worker target whose leader is
+ * still in the table, its command must still be the worker command of exactly
+ * its run directory, epoch and job (`commandOf` is asked only then; an
+ * unreadable command is not the worker).
+ */
+export const stillRecordedOn = (
+  targets: readonly TerminationTarget[],
+  table: readonly ProcessRow[],
+  commandOf: (pid: number) => string | undefined
+): Set<string> =>
+  new Set(
+    targets
+      .filter((target) => {
+        if (!targetStillRecorded(target, table)) {
+          return false;
+        }
+        const identity = target.identity;
+        if (!(identity && table.some((row) => row.pid === target.id))) {
+          return true;
+        }
+        return isUtilityWorkerCommand(commandOf(target.id), identity);
+      })
+      .map((target) => `${target.kind}:${target.id}`)
+  );
+
+/** `ps -o command= -p <pid>`, or `undefined`. */
+export const readCommandOf = (pid: number): string | undefined => {
+  if (!(Number.isSafeInteger(pid) && pid > 0)) {
+    return undefined;
+  }
+  const result = spawnSync(
+    "/bin/ps",
+    ["-ww", "-o", "command=", "-p", String(pid)],
+    { encoding: "utf8", timeout: 1000 }
+  );
+  const command = result.stdout?.trim();
+  return result.status === 0 && !result.error && command ? command : undefined;
 };
 
 /** The default re-identification: one process table snapshot per round. */
@@ -396,11 +504,7 @@ const defaultStillRecorded = (
     // Without a table nothing can be re-identified: signal none of them.
     return new Set();
   }
-  return new Set(
-    targets
-      .filter((target) => targetStillRecorded(target, table))
-      .map((target) => `${target.kind}:${target.id}`)
-  );
+  return stillRecordedOn(targets, table, readCommandOf);
 };
 
 const defaultPidAlive = (pid: number): boolean => {

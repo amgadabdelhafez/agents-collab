@@ -187,6 +187,11 @@ import {
   seatSignalsParity,
 } from "./seat-signals";
 import {
+  defaultOwnershipProbes,
+  recordedProcessClassifier,
+  sharedTargetCheck,
+} from "./shared-process-ownership";
+import {
   boundedTmuxOptions,
   isTmuxControlUnavailableError,
   TmuxControlUnavailableError,
@@ -5624,6 +5629,7 @@ export const stopGovernessLoop = (
         event: "run-process-cleanup",
         ...cleanup,
       });
+      logSharedProcessSkips(config, deps, "cleanup", cleanup.skipped);
     }
   } catch (error) {
     deps.appendLog(config.logFile, {
@@ -5669,6 +5675,38 @@ export const stopGovernessLoop = (
   return closeThenKill();
 };
 
+/**
+ * One `shared-process-skipped` log line per process the teardown left alone
+ * because another live run records or names it, with that run's id.
+ */
+const logSharedProcessSkips = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  phase: string,
+  entries: ReadonlyArray<{
+    detail?: string;
+    otherRunId?: string;
+    pid?: number;
+    reason: string;
+    target?: string;
+  }>
+): void => {
+  for (const entry of entries) {
+    if (entry.reason !== "shared-process-skipped") {
+      continue;
+    }
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      ...(entry.detail ? { detail: entry.detail } : {}),
+      event: "shared-process-skipped",
+      otherRunId: entry.otherRunId,
+      phase,
+      ...(entry.pid === undefined ? {} : { pid: entry.pid }),
+      ...(entry.target ? { target: entry.target } : {}),
+    });
+  }
+};
+
 /** The agent groups to end after the kill; a failure is logged, never fatal. */
 const collectAgentGroupsBeforeKill = (
   config: GovernessConfig,
@@ -5687,6 +5725,7 @@ const collectAgentGroupsBeforeKill = (
         groups,
         skipped: collected.skipped,
       });
+      logSharedProcessSkips(config, deps, "collect", collected.skipped);
     }
     return groups;
   } catch (error) {
@@ -5720,6 +5759,7 @@ const endGroupsThenRelease = async (
         event: "run-process-groups-ended",
         ...ended,
       });
+      logSharedProcessSkips(config, deps, "terminate", ended.shared ?? []);
     } catch (error) {
       deps.appendLog(config.logFile, {
         at: new Date(deps.now()).toISOString(),
@@ -5898,7 +5938,26 @@ export const confirmTeardownRelease = async (
 ): Promise<TeardownReleaseResult> => {
   let detail = "no release attempt was made";
   for (let attempt = 1; attempt <= deps.attempts; attempt += 1) {
+    // Live recorded processes this attempt did not count, and the rule.
+    const excluded: string[] = [];
+    const classify = deps.classifyRecordedProcess;
     const result = await reconcileLegacyStoppedRun(manifestPath, runId, {
+      ...(classify
+        ? {
+            classifyRecordedProcess: (path, manifest) => {
+              const judge = classify(path, manifest);
+              return (entry) => {
+                const verdict = judge(entry);
+                if (!verdict.count) {
+                  excluded.push(
+                    `${entry.source} pid ${entry.pid} (${verdict.rule}${verdict.detail ? `: ${verdict.detail}` : ""})`
+                  );
+                }
+                return verdict;
+              };
+            },
+          }
+        : {}),
       groupCanStillOwnRun: deps.groupCanStillOwnRun,
       now: deps.now,
       pidCanStillOwnRun: deps.pidCanStillOwnRun,
@@ -5907,7 +5966,7 @@ export const confirmTeardownRelease = async (
     });
     if (result.status !== "refused") {
       return {
-        detail: `${result.status} at ${result.workspaceReleasedAt}`,
+        detail: `${result.status} at ${result.workspaceReleasedAt}${excluded.length > 0 ? `; not counted: ${excluded.join("; ")}` : ""}`,
         released: true,
       };
     }
@@ -7202,8 +7261,21 @@ export const defaultGovernessDeps = (
       recordRunAgentDescendantsThrottled(config.runDir);
     }
   },
-  terminateRunProcessGroups: (_config, targets) =>
-    terminateTargets(targets, defaultTerminationDeps()),
+  terminateRunProcessGroups: (config, targets) =>
+    terminateTargets(targets, {
+      ...defaultTerminationDeps(),
+      // Right before every signal round, a target another live run now
+      // records or names is skipped (`shared-process-skipped`).
+      ...(config.runDir
+        ? {
+            sharedSkips: sharedTargetCheck(config.runDir, () =>
+              config.manifestPath
+                ? readRunManifest(config.manifestPath)
+                : undefined
+            ),
+          }
+        : {}),
+    }),
   closeBeatWorkflow: async (config, reason) => {
     if (!(config.journalTemporal && config.manifestPath && config.repoId)) {
       return undefined;
@@ -7404,6 +7476,9 @@ export const defaultGovernessDeps = (
     config.manifestPath
       ? confirmTeardownRelease(config.manifestPath, config.runId, {
           attempts: TEARDOWN_RELEASE_ATTEMPTS,
+          classifyRecordedProcess: recordedProcessClassifier(
+            defaultOwnershipProbes
+          ),
           groupCanStillOwnRun: (pgid, at) =>
             groupCanStillOwnRun(pgid, at, defaultPidOwnershipDeps),
           now: () => new Date().toISOString(),
