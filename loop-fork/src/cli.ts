@@ -16,6 +16,7 @@ import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
+import { RECONCILE_USAGE } from "./loop/constants";
 import { cliDeps } from "./loop/deps";
 import {
   GOVERNESS_SUBCOMMAND,
@@ -381,9 +382,7 @@ const runStoppedRunReconcileCommand = async (
     extra.length > 0 ||
     !CANONICAL_POSITIVE_RUN_ID_RE.test(runId)
   ) {
-    throw new Error(
-      "Usage: loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
-    );
+    throw new Error(`Usage: ${RECONCILE_USAGE}`);
   }
   const storage = resolveRunStorage(runId);
   const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {

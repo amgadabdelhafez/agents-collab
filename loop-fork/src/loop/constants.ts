@@ -40,6 +40,10 @@ export const DEFAULT_GOVERNESS_ESCALATE_IDLE_SECONDS = 300;
 export const DEFAULT_USAGE_TRACKER_URL = "http://127.0.0.1:8000";
 export const DEFAULT_USAGE_TRACKER_TIMEOUT_MS = 1500;
 
+/** The one usage line `loop reconcile` enforces and `--help` shows. */
+export const RECONCILE_USAGE =
+  "loop reconcile stopped-run|failed-start|failed-terminal <run-id>";
+
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
 
@@ -50,6 +54,8 @@ Usage:
   loop [options] [prompt]
   loop update                              Check for updates and apply if available
   loop upgrade                             Alias for update
+  ${RECONCILE_USAGE}
+                                           Hand back a dead stopped or failed run's workspace, only once its tmux session and every recorded process are gone
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only

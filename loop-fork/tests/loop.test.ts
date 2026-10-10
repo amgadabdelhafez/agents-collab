@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ImmediateInfoRequest } from "../src/loop/args";
+import { HELP, RECONCILE_USAGE } from "../src/loop/constants";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
 import {
   createRunManifest,
@@ -1078,6 +1079,17 @@ test("runCli rejects malformed stopped-run reconciliation before startup mainten
   expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
   expect(applyStagedMock).not.toHaveBeenCalled();
+});
+
+test("--help lists the reconcile command with exactly the usage it enforces", async () => {
+  const { runCli } = await loadRunCli();
+  expect(RECONCILE_USAGE).toBe(
+    "loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
+  );
+  await expect(runCli(["reconcile", "bogus", "22"])).rejects.toThrow(
+    `Usage: ${RECONCILE_USAGE}`
+  );
+  expect(HELP).toContain(`\n  ${RECONCILE_USAGE}\n`);
 });
 
 test("runCli leaves the beat workflow alone when stopped-run reconciliation refuses", async () => {
