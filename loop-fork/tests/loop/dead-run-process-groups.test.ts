@@ -56,11 +56,14 @@ import {
 import {
   agentPaneIdsOf,
   parsePaneListing,
+  readAgentGroupRecords,
   readRunPaneProcessRecords,
+  recordAgentDescendantGroups,
   recordRunPaneProcesses,
 } from "../../src/loop/run-pane-processes";
 import {
   cleanupRunOwnedProcesses,
+  collectRunAgentGroups,
   gcAbandonedRunProcesses,
   runProcessCleanupInternals,
 } from "../../src/loop/run-process-cleanup";
@@ -493,6 +496,58 @@ test("an agent pane's process group keeps a dead run owning until its last membe
   });
 });
 
+test("the group of an agent CLI's tool subprocess keeps a dead run owning until its last member is gone", async () => {
+  // Claude Code runs each Bash tool shell as a session leader, and Codex each
+  // exec command in a group of its own: outside the pane group. Recorded by a
+  // snapshot while the CLI was its parent, the group is release evidence for
+  // the launch auto-release like any other recorded group.
+  const TOOL_PGID = 91_301;
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    writePaneRecord(runDir, "%1", PANE_PGID);
+    recordAgentDescendantGroups({
+      groupAlive: () => true,
+      now: () => UPDATED_AT,
+      runDir,
+      table: [
+        { pgid: PANE_PGID, pid: PANE_PGID, ppid: 1, startedAtMs: 0 },
+        { pgid: TOOL_PGID, pid: TOOL_PGID, ppid: PANE_PGID, startedAtMs: 0 },
+      ],
+    });
+    // The pane group is gone (the session kill ended the CLI); the tool's
+    // group, reparented, lives on.
+    await expectBlocked(
+      fixture,
+      newWorld([], [TOOL_PGID]),
+      manifestPath,
+      `recorded-process-may-be-live: run-processes/agent-group-${TOOL_PGID}.json pid ${TOOL_PGID} (or a member of its process group)`
+    );
+    await expectReleased(fixture, newWorld(), manifestPath, "group gone");
+  });
+  // A descendant group record that names no valid group is unreadable
+  // evidence, never absence.
+  await withFixture(async (fixture) => {
+    const { manifestPath, runDir } = writeRun(fixture);
+    mkdirSync(join(runDir, "run-processes"), { recursive: true });
+    writeFileSync(
+      join(runDir, "run-processes", "agent-group-1.json"),
+      `${JSON.stringify({
+        kind: "agent-descendant-group",
+        paneId: "%1",
+        pgid: 1,
+        recordedAt: UPDATED_AT,
+        runDir,
+      })}\n`
+    );
+    await expectBlocked(
+      fixture,
+      newWorld(),
+      manifestPath,
+      "recorded-process-evidence-unreadable: run-processes/agent-group-1.json names no valid pid"
+    );
+  });
+});
+
 test("a pane record that names no valid process group blocks release as unreadable", async () => {
   for (const [name, record] of [
     ["group id 1", { pgid: 1 }],
@@ -639,7 +694,7 @@ test("teardown hands every verified worker group to the post-kill termination an
   }
 });
 
-test("teardown records and verifies the agent panes of its own session, and never targets its own group", () => {
+test("teardown records the agent panes of its own session and their descendants' groups, and never targets its own group", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-pane-cleanup-"));
   try {
     const manifest = {
@@ -657,8 +712,12 @@ test("teardown records and verifies the agent panes of its own session, and neve
       tmuxSession: "groups-loop-91",
     };
     // A record from the launch for a pane process that has since gone from
-    // the session while a member of its group lives on: unverifiable.
+    // the session while a member of its group (4011, there at the record)
+    // lives on: still provably that group.
     writePaneRecord(runDir, "%1", 401);
+    // Another old pane record whose group id is now held only by a process
+    // started after the record: not provably the recorded group.
+    writePaneRecord(runDir, "%2", 402);
     const deps = runProcessCleanupInternals.deps;
     const listedFor: string[] = [];
     deps.listRunPanes = (dir) => {
@@ -670,27 +729,73 @@ test("teardown records and verifies the agent panes of its own session, and neve
         { paneId: "%5", pid: 505 },
       ];
     };
+    const early = at(CREATED_AT);
+    deps.now = () => NOW;
     deps.pgidOf = (pid) => pid;
     deps.ownProcessGroup = () => 505;
-    deps.processGroupAlive = (pgid) => pgid === 401;
-    deps.signal = () => {
-      throw new Error("panes are not signalled before the session kill");
+    deps.processGroupAlive = () => {
+      throw new Error("the snapshot, not kill(0), says which groups exist");
     };
-    const result = cleanupRunOwnedProcesses(runDir, manifest);
+    // Pane %1's CLI (501) runs a Bash tool shell that leads its own group
+    // (601, as Claude Code does) with a build in it (602); pane %2's CLI (502)
+    // runs an exec command in a group of its own (701, as Codex does). 900 is
+    // unrelated.
+    deps.processTable = () => [
+      { pgid: 401, pid: 4011, ppid: 1, startedAtMs: early },
+      { pgid: 402, pid: 4021, ppid: 1, startedAtMs: at(NOW) - 1000 },
+      { pgid: 501, pid: 501, ppid: 1, startedAtMs: early },
+      { pgid: 502, pid: 502, ppid: 1, startedAtMs: early },
+      { pgid: 503, pid: 503, ppid: 1, startedAtMs: early },
+      { pgid: 505, pid: 505, ppid: 1, startedAtMs: early },
+      { pgid: 601, pid: 601, ppid: 501, startedAtMs: early },
+      { pgid: 601, pid: 602, ppid: 601, startedAtMs: early },
+      { pgid: 701, pid: 701, ppid: 502, startedAtMs: early },
+      { pgid: 900, pid: 900, ppid: 1, startedAtMs: early },
+    ];
+    deps.signal = () => {
+      throw new Error("agent groups are not signalled before the session kill");
+    };
+    // The worker cleanup (before the beat close) no longer lists panes.
+    cleanupRunOwnedProcesses(runDir, manifest);
+    expect(listedFor).toEqual([]);
+    const result = collectRunAgentGroups(runDir, manifest);
     expect(listedFor).toEqual([runDir]);
     expect(result.groups).toEqual([
-      { id: 501, kind: "group", source: "agent pane %1" },
-      { id: 502, kind: "group", source: "agent pane %2" },
+      { id: 401, kind: "group", reference: NOW, source: "agent pane %1" },
+      { id: 501, kind: "group", reference: NOW, source: "agent pane %1" },
+      { id: 502, kind: "group", reference: NOW, source: "agent pane %2" },
+      {
+        id: 601,
+        kind: "group",
+        reference: NOW,
+        source: "agent %1 descendant",
+      },
+      {
+        id: 701,
+        kind: "group",
+        reference: NOW,
+        source: "agent %2 descendant",
+      },
     ]);
     expect(result.skipped).toEqual([
+      { pid: 402, reason: "agent-group-unverified: agent pane %2" },
       { pid: 505, reason: "own-process-group" },
-      { pid: 401, reason: "agent-pane-group-unverified: %1" },
     ]);
     expect(
       readRunPaneProcessRecords(runDir)
         .map((record) => `${record.paneId}:${record.pid}`)
         .sort()
-    ).toEqual(["%1:401", "%1:501", "%2:502", "%5:505"]);
+    ).toEqual(["%1:401", "%1:501", "%2:402", "%2:502", "%5:505"]);
+    expect(readAgentGroupRecords(runDir).map((record) => record.pgid)).toEqual([
+      601, 701,
+    ]);
+    // Without a process table nothing is targeted (and nothing is lost: the
+    // records stay release evidence).
+    deps.processTable = () => undefined;
+    expect(collectRunAgentGroups(runDir, manifest)).toEqual({
+      killed: [],
+      skipped: [{ pid: 0, reason: "process-table-unavailable" }],
+    });
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
@@ -715,14 +820,32 @@ const teardownDeps = (
     appendLog: (_file: string, record: unknown) => {
       events.push(`log:${(record as { event: string }).event}`);
     },
-    cleanupRunProcesses: () => ({
-      groups: [
-        { id: 501, kind: "group", source: "agent pane %1" },
-        { id: 5101, kind: "group", source: "utility job job-a worker" },
-      ],
-      killed: [5101],
-      skipped: [],
-    }),
+    cleanupRunProcesses: () => {
+      events.push("cleanup");
+      return {
+        groups: [
+          { id: 5101, kind: "group", source: "utility job job-a worker" },
+        ],
+        killed: [5101],
+        skipped: [],
+      };
+    },
+    collectAgentGroups: () => {
+      events.push("collect-agent-groups");
+      return {
+        groups: [
+          { id: 501, kind: "group", reference: NOW, source: "agent pane %1" },
+          {
+            id: 601,
+            kind: "group",
+            reference: NOW,
+            source: "agent %1 descendant",
+          },
+        ],
+        killed: [],
+        skipped: [],
+      };
+    },
     fenceCurrent: () => true,
     killSession: () => {
       events.push("kill-session");
@@ -761,12 +884,40 @@ test("teardown ends the verified groups after the session kill and before the ha
     );
     expect(events.filter((event) => !event.startsWith("log:exit"))).toEqual([
       "stopped",
+      "cleanup",
       "log:run-process-cleanup",
+      "collect-agent-groups",
+      "log:agent-groups-collected",
       "kill-session",
-      "terminate:501,5101",
+      "terminate:5101,501,601",
       "log:run-process-groups-ended",
       "release",
       "log:workspace-released",
+    ]);
+    // With a Temporal journal the agent groups are collected after the beat
+    // close, right before the kill, so a tool started meanwhile is seen.
+    const temporal: string[] = [];
+    await stopGovernessLoop(
+      {
+        ...teardownConfig(runDir),
+        journalTemporal: {},
+      } as unknown as GovernessConfig,
+      teardownDeps(temporal, {
+        closeBeatWorkflow: () => {
+          temporal.push("beat-close");
+          return Promise.resolve(undefined);
+        },
+      }),
+      "user requested teardown"
+    );
+    expect(temporal.filter((event) => !event.startsWith("log:"))).toEqual([
+      "stopped",
+      "cleanup",
+      "beat-close",
+      "collect-agent-groups",
+      "kill-session",
+      "terminate:5101,501,601",
+      "release",
     ]);
     // A kill that was not confirmed ends nothing and attempts no handback.
     const failed: string[] = [];
@@ -944,6 +1095,15 @@ test("stale recovery ends a timed-out worker's whole process group, and only an 
     writeTimedOutJob(runDir, "recycled", 4445);
     const world = newWorld([4444, 4445], [4444, 4445]);
     const deps = fakeTermination(world);
+    // The identified group carries the identification instant, so it is
+    // re-identified before the SIGKILL that follows the grace.
+    const reidentified: string[] = [];
+    deps.stillRecorded = (targets) => {
+      reidentified.push(
+        ...targets.map((target) => `${target.id}@${target.reference}`)
+      );
+      return new Set(targets.map((target) => `${target.kind}:${target.id}`));
+    };
     utilityWorkerTerminationInternals.terminationDeps = () => deps;
     utilityWorkerTerminationInternals.commandForPid = (pid) =>
       pid === 4444
@@ -953,6 +1113,12 @@ test("stale recovery ends a timed-out worker's whole process group, and only an 
     // The identified worker's group is ended, escalating past the grace; the
     // recycled pid running something else is never signalled.
     expect(deps.signals).toEqual(["-4444:SIGTERM", "-4444:SIGKILL"]);
+    // The fake clock starts at 0.
+    const identifiedAt = new Date(0).toISOString();
+    expect(reidentified).toEqual([
+      `4444@${identifiedAt}`,
+      `4444@${identifiedAt}`,
+    ]);
     expect(world.liveGroups.has(4445)).toBe(true);
     for (const jobId of ["timed-out", "recycled"]) {
       expect(readUtilityJob(runDir, jobId)?.state, jobId).toBe("failed");
@@ -1243,11 +1409,28 @@ test("ensureBridgeWorker keeps the previous record until the new worker's pid re
       return { pid: 78_787, unref: () => undefined };
     }) as unknown as typeof bridgeRuntimeCommandDeps.spawn;
     expect(ensureBridgeWorker(runDir)).toBe(true);
-    expect(seenAtSpawn).toEqual(['{"pid":45568}']);
+    // While the spawn is in flight the record names this live spawner, so a
+    // release reading it waits; never the previous (dead) worker's pid.
+    expect(seenAtSpawn.map((text) => JSON.parse(text))).toEqual([
+      { pending: true, pid: process.pid },
+    ]);
     expect(JSON.parse(readFileSync(record, "utf8"))).toEqual({ pid: 78_787 });
     expect(readdirSync(runDir).filter((name) => name.endsWith(".tmp"))).toEqual(
       []
     );
+    // A spawn that starts no worker puts the previous record back.
+    writeFileSync(record, '{"pid":45568}\n');
+    bridgeRuntimeCommandDeps.spawn = (() => {
+      throw new Error("spawn failed");
+    }) as unknown as typeof bridgeRuntimeCommandDeps.spawn;
+    expect(ensureBridgeWorker(runDir)).toBe(false);
+    expect(readFileSync(record, "utf8")).toBe('{"pid":45568}\n');
+    rmSync(record);
+    bridgeRuntimeCommandDeps.spawn = (() => ({
+      pid: 0,
+    })) as unknown as typeof bridgeRuntimeCommandDeps.spawn;
+    expect(ensureBridgeWorker(runDir)).toBe(false);
+    expect(existsSync(record)).toBe(false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -1315,19 +1498,38 @@ test("a bridge worker leaves its record in place when it exits, and starts despi
   } finally {
     rmSync(own.root, { force: true, recursive: true });
   }
-  // The spawner has not replaced its predecessor's (gone) pid yet: the new
-  // worker runs instead of exiting as if another worker owned the run.
+  // The record names a gone process (a predecessor, or a spawner that died
+  // before writing the new pid): the new worker runs instead of exiting as if
+  // another worker owned the run, and records its own pid, so a live worker
+  // is never left unrecorded.
   const fresh = writeBridgeRun("working");
   try {
+    const record = join(fresh.runDir, "bridge-worker.json");
     writeFileSync(
-      join(fresh.runDir, "bridge-worker.json"),
-      `${JSON.stringify({ pid: 4_000_002 })}\n`
+      record,
+      `${JSON.stringify({ pending: true, pid: 4_000_002 })}\n`
     );
     const waits = oneWorkerCycle(fresh.runDir);
     await runBridgeWorker(fresh.runDir);
     expect(waits).toHaveLength(1);
+    expect(JSON.parse(readFileSync(record, "utf8"))).toEqual({
+      pid: process.pid,
+    });
   } finally {
     rmSync(fresh.root, { force: true, recursive: true });
+  }
+  // A live spawner's pending record is left for the spawner to replace.
+  const pending = writeBridgeRun("working");
+  try {
+    const record = join(pending.runDir, "bridge-worker.json");
+    const text = `${JSON.stringify({ pending: true, pid: process.ppid })}\n`;
+    writeFileSync(record, text);
+    bridgeRuntimeCommandDeps.commandForPid = () => "bun test";
+    oneWorkerCycle(pending.runDir);
+    await runBridgeWorker(pending.runDir);
+    expect(readFileSync(record, "utf8")).toBe(text);
+  } finally {
+    rmSync(pending.root, { force: true, recursive: true });
   }
   // Control: a live worker of this run owns the record, so this one leaves.
   const owned = writeBridgeRun("working");

@@ -98,6 +98,11 @@ import {
 import { preparePairedRun } from "./paired-options";
 import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import { DETACH_CHILD_PROCESS } from "./process";
+import {
+  processGroupAlive,
+  processGroupOf,
+  readProcessTable,
+} from "./process-group";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import {
   RECIPIENT_API_ENV_KEYS,
@@ -108,6 +113,7 @@ import {
   agentPaneIdsOf,
   PANE_LISTING_FORMAT,
   parsePaneListing,
+  recordAgentDescendantGroups,
   recordRunPaneProcesses,
 } from "./run-pane-processes";
 import {
@@ -4704,6 +4710,20 @@ const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
         runDir,
         session,
       });
+      // The CLIs' tool subprocesses run in groups of their own; record the
+      // groups of whatever descends from the panes already (MCP servers at
+      // launch, running tools on a re-attach). The governess keeps this up.
+      const table = readProcessTable();
+      if (table) {
+        const at = new Date().toISOString();
+        recordAgentDescendantGroups({
+          groupAlive: processGroupAlive,
+          now: () => at,
+          ownGroup: processGroupOf(process.pid),
+          runDir,
+          table,
+        });
+      }
     },
     resolveLaunchSocket: () => launchSocket,
     runGit: (cwd: string, args: string[]) => runGit(cwd, args),

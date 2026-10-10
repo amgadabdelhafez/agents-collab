@@ -136,6 +136,9 @@ const loopDeps = (spies: Spies): GovernessDeps => ({
     totalTokens: 0,
   }),
   readUsageLimits: () => Promise.resolve(undefined),
+  recordAgentDescendants: () => {
+    spies.events.push("record-agent-descendants");
+  },
   // The release finishes on a later timer turn, so a loop that did not await
   // the teardown would return before it.
   releaseWorkspaceAfterTeardown: async () => {
@@ -284,6 +287,10 @@ test("an intake teardown routes no helper for the rest of its cycle and ends the
     // done before the loop returned.
     expect(spies.stops).toEqual([REASON]);
     expect(spies.kills).toEqual(["repo-loop-90"]);
+    // The cycle recorded the agent CLIs' descendant groups before its intake
+    // began the teardown, and never after.
+    const head = spies.events.slice(0, spies.events.indexOf("exit"));
+    expect(head).toContain("record-agent-descendants");
     const tail = spies.events.slice(spies.events.indexOf("exit"));
     expect(tail).toEqual([
       "exit",

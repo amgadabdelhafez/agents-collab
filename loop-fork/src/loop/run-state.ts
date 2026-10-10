@@ -28,7 +28,7 @@ import {
 } from "./git";
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import { processGroupAlive } from "./process-group";
-import { PANE_PROCESS_KIND } from "./run-pane-processes";
+import { AGENT_GROUP_KIND, PANE_PROCESS_KIND } from "./run-pane-processes";
 import { createManifestHandle, type ManifestHandle } from "./tmux-socket";
 import type {
   Agent,
@@ -1003,9 +1003,12 @@ const isPositiveSafePid = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
 /**
- * `undefined` when the file is absent; throws on any other read failure. An
- * agent pane record (`kind: "agent-pane"`) names the pane's process GROUP: its
- * CLI's tool subprocesses run in that group and can outlive the pane process.
+ * `undefined` when the file is absent (a gone descendant group's record may be
+ * pruned between the listing and the read); throws on any other read failure.
+ * An agent pane record (`kind: "agent-pane"`) names the pane's process GROUP,
+ * which can outlive the pane process; a descendant group record (`kind:
+ * "agent-descendant-group"`) names the group of a tool subprocess the CLI
+ * started outside the pane group (see `recordAgentDescendantGroups`).
  */
 const readRecordedPidFile = (
   path: string,
@@ -1030,7 +1033,8 @@ const readRecordedPidFile = (
       pgid?: unknown;
       pid?: unknown;
     } | null;
-    group = record?.kind === PANE_PROCESS_KIND;
+    group =
+      record?.kind === PANE_PROCESS_KIND || record?.kind === AGENT_GROUP_KIND;
     pid = group ? record?.pgid : record?.pid;
   } catch {
     pid = undefined;

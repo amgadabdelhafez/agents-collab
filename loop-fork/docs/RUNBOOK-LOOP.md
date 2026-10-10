@@ -1655,6 +1655,20 @@ teardown's own handback, and startup GC. Recorded processes are:
 - each agent pane's process GROUP (`run-processes/pane-<pane>-<pid>.json`,
   written at launch, on a resume that re-attaches, and by the teardown before
   its session kill; never the governess pane);
+- the process GROUP of every descendant of an agent pane process that is not
+  in the pane's group (`run-processes/agent-group-<pgid>.json`). The real
+  CLIs start their tool subprocesses outside the pane group: Claude Code runs
+  each Bash tool shell as a session leader, and Codex runs each exec command
+  and MCP server in a group of its own. These groups are found by a ppid walk
+  over one `ps -axo pid,ppid,pgid,lstart` snapshot while the CLI is still the
+  parent: at launch, on a re-attach, on every governess cycle (at most every
+  5 s), and by the teardown right before its session kill. A pane process is
+  walked only while it is provably the recorded one (same group, started by
+  the record). A group is provably the recorded one while some member started
+  by the record's instant lives; each snapshot moves the instant of every such
+  record (pane or descendant) up to itself, carrying identity forward after
+  the original members exit. Records of groups that are gone are pruned by
+  later snapshots;
 - each claimed utility job's worker process GROUP (`utility/jobs.jsonl`; a
   worker is spawned detached, so its group id is its pid).
 
@@ -1664,14 +1678,27 @@ holds the group's id is not the group (a pid is never allocated while a group
 with that id exists).
 
 A teardown signals the utility workers' groups (identity: the worker command
-with this exact run directory, epoch and job id) before the session kill, and
-after the kill ends those groups and the agent pane groups that were verified
-in the run's own session: SIGTERM, a 3 s grace, SIGKILL, a 1 s wait. Stale
-recovery ends a timed-out or stale-epoch worker's group the same way. Startup
-GC writes a handback only on the full evidence above; a never-bound launch it
-cannot release yet stays active, so the next GC judges it again. `loop
-reconcile` re-verifies a recorded handback on the full evidence before it
-answers `already-released`.
+with this exact run directory, epoch and job id) before the session kill.
+Right before the kill (after the beat close, when Temporal is on) it records
+the agent panes and their descendants' groups. After the kill it ends the
+worker groups and every recorded agent group that is provably the recorded
+one in that snapshot (one that is not is logged `agent-group-unverified`,
+never signalled, and still blocks the release while it lives): SIGTERM, a 3 s
+grace, SIGKILL, a 1 s wait. Right before each signal
+round every agent group is re-identified on a fresh process table: it is still
+the recorded group only while some member started by the snapshot instant
+lives (a reused group id has only later members), and a target that no longer
+is is reported `unverified` and never signalled. The handback then re-reads
+every record. Stale recovery ends a timed-out or stale-epoch worker's group
+the same way (re-identified before its SIGKILL). Startup GC writes a handback
+only on the full evidence above; a never-bound launch it cannot release yet
+stays active, so the next GC judges it again. `loop reconcile` re-verifies a
+recorded handback on the full evidence before it answers `already-released`.
+
+`bridge-worker.json` never stops naming a live process while a worker may be
+starting: before the spawn it names the spawner (`"pending": true`), right
+after it the new worker, and a worker that finds a record naming no live
+process records itself.
 
 ### Dead-run release: accepted residual risks (2026-10-10)
 
@@ -1691,17 +1718,36 @@ review gap with the process-group repair and then install:
 - Startup GC pays for tmux probing of each candidate run.
 
 Further limits of the same repair, recorded for the owner (not part of the
-2026-10-10 acceptance):
+2026-10-10 acceptance; they need the owner's decision):
 
 - Runs launched before pane records existed have none: until a resume
   re-attaches (or, for a run that recorded its socket, a governess started
   from this binary tears it down), they are judged as before, on session
   absence plus the other evidence. A governess already running from the old
-  binary tears down with the old code.
-- A process that leaves its pane's or worker's process group (setsid or
-  setpgid, for example a CLI that starts each tool in its own group) is not
-  tracked.
-- A group whose leader is gone before the teardown cannot be identified, so it
-  is never signalled automatically; it blocks the release until it exits or
-  the operator ends it.
+  binary tears down with the old code and takes no descendant snapshots.
+- A tool subprocess is tracked through its parent chain to the CLI. One that
+  both leaves every recorded group (setsid) and loses that chain (its parent
+  exits, as in a double fork) between two snapshots, at most about 5 s apart
+  while the governess runs, is not seen. So is one started in the
+  milliseconds between the teardown's last snapshot and the CLI's death on
+  the hangup. If the governess is gone (crashed), no periodic snapshots are
+  taken.
+- Group identity before a signal is judged at `ps`'s one-second start-time
+  resolution: a group id that is freed and reused within the same wall-clock
+  second as the snapshot could be taken for the recorded group. A process
+  older than the snapshot that voluntarily joins a newer group of its own
+  session (setpgid) would make that group look recorded too.
+- A worker group whose leader is gone before the teardown cannot be
+  identified by its command, so it is never signalled automatically; it blocks
+  the release until it exits or the operator ends it.
+- Pane records are never removed: `run-processes/` gains one file per pane
+  process (a respawn adds one). A malformed pane or descendant group record,
+  or one naming a group id of 1 or less, is unreadable evidence: it blocks
+  the release until the operator repairs or removes it.
 - A pane that the manifest does not name (split in by hand) is not recorded.
+- The other side of tracking descendants: a long-lived daemon a tool started
+  from inside the run (a `gpg-agent` while it still descends from the CLI, a
+  dev server) is run-owned once a snapshot saw it. Its life blocks the
+  release, and the teardown ends it.
+- Not verified: whether the Claude or Codex CLI itself ends its detached tool
+  children on a hangup. The repair does not rely on it.

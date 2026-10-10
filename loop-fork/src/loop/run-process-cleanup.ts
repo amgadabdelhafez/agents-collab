@@ -16,16 +16,21 @@ import { tmuxRuntimeAbsentForManifestSync } from "./launch-reservation";
 import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import {
   groupCanStillOwnRun,
+  type ProcessRow,
   processGroupAlive,
   processGroupOf,
+  readProcessTable,
   type TerminationTarget,
 } from "./process-group";
 import {
   agentPaneIdsOf,
+  groupProvenAt,
   type ListedPane,
   PANE_LISTING_FORMAT,
   parsePaneListing,
+  readAgentGroupRecords,
   readRunPaneProcessRecords,
+  recordAgentDescendantGroups,
   recordRunPaneProcesses,
 } from "./run-pane-processes";
 import {
@@ -92,6 +97,8 @@ interface RunProcessCleanupDeps {
   pidAlive: (pid: number) => boolean;
   pidStartedAt: (pid: number) => number | undefined;
   processGroupAlive: (pgid: number) => boolean;
+  /** One snapshot of the whole process table, or `undefined`. */
+  processTable: () => readonly ProcessRow[] | undefined;
   /**
    * Whether the run's tmux runtime is positively gone on the run's own
    * server: its recorded socket, or every legacy candidate socket when it
@@ -175,10 +182,30 @@ const defaultListTmuxSessions = (): ReadonlySet<string> | undefined => {
 };
 
 /**
+ * Keeps the panes of exactly `session` from `#{pane_id} #{pane_pid}
+ * #{session_name}` lines. The session name is the rest of the line after the
+ * two space-free fields and is compared whole, so one session's name being a
+ * prefix of another's (`loop-9` and `loop-9 x`) selects only its own panes.
+ */
+export const panesOfSession = (stdout: string, session: string): ListedPane[] =>
+  parsePaneListing(
+    stdout
+      .split("\n")
+      .flatMap((line) => {
+        const first = line.indexOf(" ");
+        const second = first < 0 ? -1 : line.indexOf(" ", first + 1);
+        return second > 0 && line.slice(second + 1) === session
+          ? [line.slice(0, second)]
+          : [];
+      })
+      .join("\n")
+  );
+
+/**
  * Lists the run's panes through its recorded socket only (`targetArgv`), so
  * neither a legacy socket-less run nor a test ever reaches the ambient tmux
- * server. `-a` lists every pane of that server; the session filter keeps the
- * run's own.
+ * server. `-a` lists every pane of that server; the exact session filter
+ * keeps the run's own.
  */
 const defaultListRunPanes = (runDir: string): ListedPane[] | undefined => {
   const manifestPath = buildManifestPath(runDir);
@@ -193,21 +220,14 @@ const defaultListRunPanes = (runDir: string): ListedPane[] | undefined => {
       targetArgv(target, "list-panes", [
         "-a",
         "-F",
-        `#{session_name} ${PANE_LISTING_FORMAT}`,
+        `${PANE_LISTING_FORMAT} #{session_name}`,
       ]),
       boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" })
     );
     if (result.exitCode !== 0 || tmuxCommandTimedOut(result)) {
       return undefined;
     }
-    const prefix = `${session} `;
-    return parsePaneListing(
-      decode(result.stdout)
-        .split("\n")
-        .filter((line) => line.startsWith(prefix))
-        .map((line) => line.slice(prefix.length))
-        .join("\n")
-    );
+    return panesOfSession(decode(result.stdout), session);
   } catch {
     return undefined;
   }
@@ -224,6 +244,7 @@ const cleanupDeps: RunProcessCleanupDeps = {
   pidAlive: defaultPidAlive,
   pidStartedAt: defaultPidOwnershipDeps.pidStartedAt,
   processGroupAlive,
+  processTable: readProcessTable,
   runtimeAbsent: (manifestPath) =>
     tmuxRuntimeAbsentForManifestSync(manifestPath),
   signal: (pid, signal) => process.kill(pid, signal),
@@ -477,57 +498,177 @@ const pushGroup = (
 };
 
 /**
- * The run's agent pane groups whose identity is proven right now, before the
- * session kill: the pane is in the run's own session on its recorded socket
- * and its process is the one tmux reports for it. Each listed agent pane is
- * recorded first (so a pane respawned since the launch is tracked too). The
- * groups are not signalled here; the teardown ends them after the kill (the
- * hangup reaches the CLI, not a tool subprocess that ignores it). A recorded
- * pane group that is no longer in the session cannot be identified and is
- * never signalled; the release evidence still counts it while it lives. This
- * process's own group is never a target.
+ * The run's agent process groups, collected right before the session kill
+ * while the agent CLIs are still the parents of their tool subprocesses:
+ *
+ * - each agent pane listed in the run's own session on its recorded socket is
+ *   recorded (so a pane respawned since the launch is tracked too);
+ * - one process table snapshot is taken, and the groups of every descendant
+ *   of each recorded pane process are recorded (`recordAgentDescendantGroups`:
+ *   the real CLIs start their tool subprocesses in groups of their own);
+ * - every recorded agent group (pane or descendant) that has a member in that
+ *   snapshot becomes a termination target, with the snapshot instant as its
+ *   reference: right before each signal the target is re-identified (some
+ *   live member started by that instant), so a group id reused after the
+ *   snapshot is never signalled.
+ *
+ * Nothing is signalled here; the teardown ends the targets after the kill
+ * (the hangup reaches the CLI, not a tool subprocess that ignores it). This
+ * process's own group is never a target. Without a table nothing is targeted
+ * and the release evidence keeps judging every record.
  */
-const collectRunPaneGroups = (
-  result: RunProcessCleanupResult,
+const collectRunAgentGroupsWithDeps = (
   runDir: string,
   manifest: RunManifest | undefined,
   deps: RunProcessCleanupDeps
-): void => {
-  if (!manifest?.tmuxSession) {
-    return;
+): RunProcessCleanupResult => {
+  const result: RunProcessCleanupResult = { killed: [], skipped: [] };
+  const listed = manifest?.tmuxSession ? deps.listRunPanes(runDir) : undefined;
+  if (manifest?.tmuxSession && listed) {
+    recordRunPaneProcesses({
+      agentPaneIds: agentPaneIdsOf(manifest),
+      now: deps.now,
+      panes: listed,
+      pgidOf: deps.pgidOf,
+      runDir,
+      session: manifest.tmuxSession,
+    });
   }
-  const listed = deps.listRunPanes(runDir);
-  if (!listed) {
-    return;
+  const table = deps.processTable();
+  const snapshotAt = deps.now();
+  if (!table) {
+    result.skipped.push({ pid: 0, reason: "process-table-unavailable" });
+    return result;
   }
-  const records = recordRunPaneProcesses({
-    agentPaneIds: agentPaneIdsOf(manifest),
-    now: deps.now,
-    panes: listed,
-    pgidOf: deps.pgidOf,
-    runDir,
-    session: manifest.tmuxSession,
-  });
   const own = deps.ownProcessGroup();
-  const verified = new Set(records.map((record) => record.pgid));
-  for (const record of records) {
-    if (record.pgid === own) {
-      result.skipped.push({ pid: record.pgid, reason: "own-process-group" });
+  recordAgentDescendantGroups({
+    groupAlive: deps.processGroupAlive,
+    now: () => snapshotAt,
+    ownGroup: own,
+    runDir,
+    table,
+  });
+  const present = new Set(table.map((row) => row.pgid));
+  const recorded = [
+    ...readRunPaneProcessRecords(runDir).map((record) => ({
+      pgid: record.pgid,
+      recordedAt: record.recordedAt,
+      source: `agent pane ${record.paneId}`,
+    })),
+    ...readAgentGroupRecords(runDir).map((record) => ({
+      pgid: record.pgid,
+      recordedAt: record.recordedAt,
+      source: `agent ${record.paneId} descendant`,
+    })),
+  ].filter((record) => present.has(record.pgid));
+  // A group present in the snapshot is targeted only when some record of it
+  // proves it is still the recorded group (a member started by the record's
+  // instant); otherwise its id may now name an unrelated, later group.
+  const proven = new Map<number, string>();
+  for (const record of recorded) {
+    if (
+      !proven.has(record.pgid) &&
+      groupProvenAt(record.pgid, record.recordedAt, table)
+    ) {
+      proven.set(record.pgid, record.source);
+    }
+  }
+  const seen = new Set<number>();
+  for (const { pgid, source } of recorded) {
+    if (seen.has(pgid)) {
+      continue;
+    }
+    seen.add(pgid);
+    if (pgid === own) {
+      result.skipped.push({ pid: pgid, reason: "own-process-group" });
+      continue;
+    }
+    const provenSource = proven.get(pgid);
+    if (provenSource === undefined) {
+      result.skipped.push({
+        pid: pgid,
+        reason: `agent-group-unverified: ${source}`,
+      });
       continue;
     }
     pushGroup(result, {
-      id: record.pgid,
+      id: pgid,
       kind: "group",
-      source: `agent pane ${record.paneId}`,
+      reference: snapshotAt,
+      source: provenSource,
     });
   }
-  for (const record of readRunPaneProcessRecords(runDir)) {
-    if (!verified.has(record.pgid) && deps.processGroupAlive(record.pgid)) {
-      result.skipped.push({
-        pid: record.pgid,
-        reason: `agent-pane-group-unverified: ${record.paneId}`,
-      });
-    }
+  return result;
+};
+
+/**
+ * Records the groups of the run's agent CLIs' descendants from one fresh
+ * process table snapshot (see `recordAgentDescendantGroups`), and prunes the
+ * records of gone groups. Returns `false` when no table could be read.
+ */
+export const recordRunAgentDescendants = (
+  runDir: string,
+  deps: RunProcessCleanupDeps = cleanupDeps
+): boolean => {
+  const table = deps.processTable();
+  if (!table) {
+    return false;
+  }
+  const at = deps.now();
+  recordAgentDescendantGroups({
+    groupAlive: deps.processGroupAlive,
+    now: () => at,
+    ownGroup: deps.ownProcessGroup(),
+    runDir,
+    table,
+  });
+  return true;
+};
+
+/** How often the governess's cycle snapshots the agent descendants. */
+export const AGENT_DESCENDANT_SNAPSHOT_INTERVAL_MS = 5000;
+const lastDescendantSnapshotMs = new Map<string, number>();
+
+/** `recordRunAgentDescendants` at most once per interval per run. */
+export const recordRunAgentDescendantsThrottled = (
+  runDir: string,
+  nowMs: number = Date.now()
+): void => {
+  const last = lastDescendantSnapshotMs.get(runDir);
+  if (
+    last !== undefined &&
+    nowMs >= last &&
+    nowMs - last < AGENT_DESCENDANT_SNAPSHOT_INTERVAL_MS
+  ) {
+    return;
+  }
+  lastDescendantSnapshotMs.set(runDir, nowMs);
+  recordRunAgentDescendants(runDir);
+};
+
+/**
+ * The teardown's pre-kill collection of the run's agent process groups (see
+ * `collectRunAgentGroupsWithDeps`). Called as late as possible, right before
+ * the session kill, so a tool subprocess started during the beat close is
+ * seen too.
+ */
+export const collectRunAgentGroups = (
+  runDir: string,
+  manifest: RunManifest | undefined
+): RunProcessCleanupResult => {
+  try {
+    return collectRunAgentGroupsWithDeps(runDir, manifest, cleanupDeps);
+  } catch (error) {
+    // Never kill authority; the release evidence still reads the records.
+    return {
+      killed: [],
+      skipped: [
+        {
+          pid: 0,
+          reason: `agent-groups-unreadable: ${(error as Error).message}`,
+        },
+      ],
+    };
   }
 };
 
@@ -541,15 +682,6 @@ const cleanupRunOwnedProcessesWithDeps = (
   if (scope.detachedWorkers) {
     signalRunBridgeWorker(result, runDir, deps);
     signalRunUtilityWorkers(result, runDir, deps);
-    try {
-      collectRunPaneGroups(result, runDir, manifest, deps);
-    } catch (error) {
-      // Never kill authority; the release evidence still reads the records.
-      result.skipped.push({
-        pid: 0,
-        reason: `agent-pane-groups-unreadable: ${(error as Error).message}`,
-      });
-    }
   }
   for (const { path, record } of readBridgeRegistrations(runDir)) {
     const command = deps.commandForPid(record.pid);
@@ -932,4 +1064,6 @@ export const gcAbandonedRunProcesses = (
 
 export const runProcessCleanupInternals = {
   deps: cleanupDeps,
+  /** The production pane listing, for a test against a private server. */
+  listRunPanes: defaultListRunPanes,
 };

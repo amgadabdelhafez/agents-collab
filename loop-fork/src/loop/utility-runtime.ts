@@ -309,13 +309,13 @@ const terminateUtilityWorker = async (
     return false;
   }
   const deps = hooks.terminationDeps();
+  // Identified just now: the SIGKILL after the grace re-identifies the group
+  // against this instant, so an id reused during the grace is not signalled.
+  const reference = new Date(deps.nowMs()).toISOString();
+  const source = `utility job ${identity.jobId} worker`;
   const target: TerminationTarget = deps.processGroupAlive(pid)
-    ? { id: pid, kind: "group", source: `utility job ${identity.jobId} worker` }
-    : {
-        id: pid,
-        kind: "process",
-        source: `utility job ${identity.jobId} worker`,
-      };
+    ? { id: pid, kind: "group", reference, source }
+    : { id: pid, kind: "process", reference, source };
   const result = await terminateTargets([target], deps);
   return result.survivors.length === 0 && result.failed.length === 0;
 };

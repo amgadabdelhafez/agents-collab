@@ -166,7 +166,9 @@ import {
 } from "./process-group";
 import {
   cleanupRunOwnedProcesses,
+  collectRunAgentGroups,
   type RunProcessCleanupResult,
+  recordRunAgentDescendantsThrottled,
 } from "./run-process-cleanup";
 import {
   loadRunState,
@@ -411,6 +413,15 @@ export interface GovernessDeps {
     config: GovernessConfig,
     reason: string
   ) => Promise<GovernessBeatCloseResult | undefined>;
+  /**
+   * Right before the teardown's session kill: records the run's agent pane
+   * processes and the groups of their descendants, and returns every live
+   * recorded agent group as a termination target (see
+   * `collectRunAgentGroups`).
+   */
+  collectAgentGroups?: (
+    config: GovernessConfig
+  ) => RunProcessCleanupResult | undefined;
   connectTemporalJournal?: (
     config: GovernessTemporalConfig,
     ownerRepoId?: string
@@ -466,6 +477,12 @@ export interface GovernessDeps {
   readUsageLimits: (
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  /**
+   * Each cycle: records the process groups of the agent CLIs' descendants
+   * (rate-limited by the default), so a tool subprocess that later loses its
+   * parent chain to the CLI is still release evidence.
+   */
+  recordAgentDescendants?: (config: GovernessConfig) => void;
   // After a teardown's session kill, hand the workspace back once the run's
   // tmux session and every recorded process are positively gone; otherwise
   // leave it unreleased for the next launch to judge.
@@ -5615,6 +5632,14 @@ export const stopGovernessLoop = (
       event: "run-process-cleanup-failed",
     });
   }
+  // Right before the kill, while the agent CLIs are still the parents of
+  // their tool subprocesses (which run in groups of their own), record and
+  // collect the run's agent process groups. As late as possible: a tool
+  // started during a slow beat close is seen too.
+  const collectThenKill = (): boolean => {
+    groups = [...groups, ...collectAgentGroupsBeforeKill(config, deps)];
+    return killTeardownSession(config, deps, record);
+  };
   const afterKill = (): boolean =>
     Boolean(
       deps.releaseWorkspaceAfterTeardown ||
@@ -5622,7 +5647,7 @@ export const stopGovernessLoop = (
     );
   const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
   if (!close) {
-    const killed = killTeardownSession(config, deps, record);
+    const killed = collectThenKill();
     if (!(killed && afterKill())) {
       settleTeardownHangupGrace();
       return Promise.resolve();
@@ -5634,7 +5659,7 @@ export const stopGovernessLoop = (
   const closeThenKill = async (): Promise<void> => {
     await closeBeatBeforeKill(config, deps, reason, close);
     try {
-      if (killTeardownSession(config, deps, record)) {
+      if (collectThenKill()) {
         await endGroupsThenRelease(config, deps, groups);
       }
     } finally {
@@ -5642,6 +5667,36 @@ export const stopGovernessLoop = (
     }
   };
   return closeThenKill();
+};
+
+/** The agent groups to end after the kill; a failure is logged, never fatal. */
+const collectAgentGroupsBeforeKill = (
+  config: GovernessConfig,
+  deps: GovernessDeps
+): readonly TerminationTarget[] => {
+  try {
+    const collected = deps.collectAgentGroups?.(config);
+    if (!collected) {
+      return [];
+    }
+    const groups = collected.groups ?? [];
+    if (groups.length > 0 || collected.skipped.length > 0) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "agent-groups-collected",
+        groups,
+        skipped: collected.skipped,
+      });
+    }
+    return groups;
+  } catch (error) {
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      event: "agent-groups-collect-failed",
+    });
+    return [];
+  }
 };
 
 /**
@@ -5866,6 +5921,30 @@ export const confirmTeardownRelease = async (
     await deps.sleep(deps.retryMs);
   }
   return { detail, released: false };
+};
+
+/**
+ * One cycle's record of the agent CLIs' descendant groups. Skipped once the
+ * teardown began (it takes its own snapshot right before the kill). A failure
+ * is logged and never stops the cycle.
+ */
+export const recordAgentDescendantGroupsOnCycle = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  at: string
+): void => {
+  if (!deps.recordAgentDescendants || governessTeardownInProgress(config)) {
+    return;
+  }
+  try {
+    deps.recordAgentDescendants(config);
+  } catch (error) {
+    deps.appendLog(config.logFile, {
+      at,
+      error: error instanceof Error ? error.message : String(error),
+      event: "agent-descendants-record-failed",
+    });
+  }
 };
 
 /**
@@ -7109,6 +7188,20 @@ export const defaultGovernessDeps = (
       : undefined;
     return cleanupRunOwnedProcesses(config.runDir, manifest);
   },
+  collectAgentGroups: (config) => {
+    if (!config.runDir) {
+      return undefined;
+    }
+    const manifest = config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+    return collectRunAgentGroups(config.runDir, manifest);
+  },
+  recordAgentDescendants: (config) => {
+    if (config.runDir) {
+      recordRunAgentDescendantsThrottled(config.runDir);
+    }
+  },
   terminateRunProcessGroups: (_config, targets) =>
     terminateTargets(targets, defaultTerminationDeps()),
   closeBeatWorkflow: async (config, reason) => {
@@ -8026,6 +8119,9 @@ export const runGoverness = async (
         runState.roles.initialDriver ??
         config.initialDriver ??
         config.agents[0]?.agent;
+      // Every cycle, before the intake (which may begin a teardown): the
+      // groups of the agent CLIs' descendants as of now.
+      recordAgentDescendantGroupsOnCycle(config, deps, lifecycleAt);
       // A teardown the operator requested through the interaction intake.
       const intake: { teardown?: Promise<void> } = {};
       if (result.tmuxControlAvailable) {
