@@ -7,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -903,12 +904,166 @@ export type StoppedRunReconcileResult =
   | { runId: string; status: "already-released"; workspaceReleasedAt: string }
   | { runId: string; status: "refused"; reason: string };
 
-interface StoppedRunReconcileDeps {
+export interface StoppedRunReconcileDeps {
   now: () => string;
   pidCanStillOwnRun: (pid: number, stoppedAt: string) => boolean;
   runtimeAbsent: (manifestPath: string) => Promise<boolean>;
   terminalState?: "failed" | "stopped";
 }
+
+const INVALID_INSTANT = "invalid-instant";
+
+/**
+ * The latest of several instants, as the PID-reuse reference. A live PID is
+ * provably unrelated only when it started strictly after a moment by which the
+ * recorded process had certainly started; the LATER that moment, the fewer PIDs
+ * qualify, so taking the maximum is the conservative choice. In particular a
+ * hand-edited `workspaceReleasedAt` earlier than the run's last recorded
+ * activity cannot license a live run process as "reused". Any unparsable
+ * input yields an unparsable reference, which `pidCanStillOwnRun` reads as
+ * ownership for every live PID.
+ */
+export const latestInstant = (...values: readonly string[]): string => {
+  let latest: number | undefined;
+  for (const value of values) {
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms)) {
+      return INVALID_INSTANT;
+    }
+    latest = latest === undefined ? ms : Math.max(latest, ms);
+  }
+  return latest === undefined
+    ? INVALID_INSTANT
+    : new Date(latest).toISOString();
+};
+
+/** A run-owned PID recorded outside the manifest's own pid fields. */
+export interface RecordedRunPid {
+  readonly pid: number;
+  /** A moment by which the recorded process had certainly started. */
+  readonly reference: string;
+  readonly source: string;
+}
+
+export type AuxiliaryRunPids =
+  | { readonly kind: "read"; readonly pids: readonly RecordedRunPid[] }
+  | { readonly kind: "unreadable"; readonly reason: string };
+
+const isPositiveSafePid = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+/** `undefined` when the file is absent; throws on any other read failure. */
+const readRecordedPidFile = (
+  path: string,
+  reference: string
+): { pid: number | undefined; reference: string } | undefined => {
+  let raw: string;
+  let mtime: Date;
+  try {
+    raw = readFileSync(path, "utf8");
+    mtime = statSync(path).mtime;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+  let pid: unknown;
+  try {
+    pid = (JSON.parse(raw) as { pid?: unknown } | null)?.pid;
+  } catch {
+    pid = undefined;
+  }
+  return {
+    pid: isPositiveSafePid(pid) ? pid : undefined,
+    // The file is written after its process exists, so its mtime is a moment
+    // by which that process had started.
+    reference: latestInstant(reference, mtime.toISOString()),
+  };
+};
+
+/**
+ * Every run-owned PID recorded beside the manifest: the Codex app-server, the
+ * bridge worker (`bridge-worker.json`), and each `run-processes/` entry. A
+ * record that exists but names no valid PID is unreadable evidence, never
+ * absence: the run may own a process we can no longer identify.
+ */
+export const readAuxiliaryRunPids = (
+  manifestPath: string,
+  manifest: RunManifest,
+  reference: string
+): AuxiliaryRunPids => {
+  const runDir = dirname(manifestPath);
+  const pids: RecordedRunPid[] = [];
+  if (manifest.codexAppServerPid !== undefined) {
+    pids.push({
+      pid: manifest.codexAppServerPid,
+      reference,
+      source: "codexAppServerPid",
+    });
+  }
+  const files: { path: string; source: string }[] = [
+    { path: join(runDir, "bridge-worker.json"), source: "bridge-worker.json" },
+  ];
+  const registry = join(runDir, "run-processes");
+  try {
+    for (const entry of readdirSync(registry).sort()) {
+      files.push({
+        path: join(registry, entry),
+        source: `run-processes/${entry}`,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return {
+        kind: "unreadable",
+        reason: `run-processes is unreadable: ${(error as Error).message}`,
+      };
+    }
+  }
+  for (const { path, source } of files) {
+    let record: ReturnType<typeof readRecordedPidFile>;
+    try {
+      record = readRecordedPidFile(path, reference);
+    } catch (error) {
+      return {
+        kind: "unreadable",
+        reason: `${source} is unreadable: ${(error as Error).message}`,
+      };
+    }
+    if (!record) {
+      continue;
+    }
+    if (record.pid === undefined) {
+      return { kind: "unreadable", reason: `${source} names no valid pid` };
+    }
+    pids.push({ pid: record.pid, reference: record.reference, source });
+  }
+  return { kind: "read", pids };
+};
+
+/**
+ * The first recorded auxiliary process that may still belong to the run, or a
+ * reason the records cannot be read. `undefined` means every recorded process
+ * is positively dead or provably a later, unrelated process.
+ */
+export const auxiliaryProcessOwnership = (
+  manifestPath: string,
+  manifest: RunManifest,
+  reference: string,
+  pidCanStillOwnRun: (pid: number, reference: string) => boolean
+): string | undefined => {
+  const auxiliary = readAuxiliaryRunPids(manifestPath, manifest, reference);
+  if (auxiliary.kind === "unreadable") {
+    return `recorded-process-evidence-unreadable: ${auxiliary.reason}`;
+  }
+  const live = auxiliary.pids.find((entry) =>
+    pidCanStillOwnRun(entry.pid, entry.reference)
+  );
+  return live
+    ? `recorded-process-may-be-live: ${live.source} pid ${live.pid}`
+    : undefined;
+};
 
 const sameWorkspaceIdentity = (
   current: RunManifest,
@@ -987,9 +1142,10 @@ export const reconcileLegacyStoppedRun = async (
       status: "refused",
     };
   }
-  if (
-    !(manifest.workspaceBinding && manifest.tmuxSession && manifest.tmuxSocket)
-  ) {
+  // A legacy manifest that recorded its session but no socket still has a
+  // runtime identity: `runtimeAbsent` must then prove the session gone on
+  // every socket the launcher could have used. Only the session is required.
+  if (!(manifest.workspaceBinding && manifest.tmuxSession)) {
     return {
       reason: "missing-runtime-identity",
       runId: expectedRunId,
@@ -1018,6 +1174,15 @@ export const reconcileLegacyStoppedRun = async (
       runId: expectedRunId,
       status: "refused",
     };
+  }
+  const auxiliaryOwner = auxiliaryProcessOwnership(
+    manifestPath,
+    manifest,
+    manifest.updatedAt,
+    deps.pidCanStillOwnRun
+  );
+  if (auxiliaryOwner) {
+    return { reason: auxiliaryOwner, runId: expectedRunId, status: "refused" };
   }
   if (!(await deps.runtimeAbsent(manifestPath))) {
     return {

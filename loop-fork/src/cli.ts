@@ -36,7 +36,7 @@ import {
 } from "./loop/governess-secure-env";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { PairedLaunchClaim } from "./loop/launch-reservation";
-import { runtimeAbsent } from "./loop/launch-reservation";
+import { tmuxRuntimeAbsentForManifest } from "./loop/launch-reservation";
 import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
@@ -57,13 +57,7 @@ import {
   type ReconPaneIndex,
   runReconPane,
 } from "./loop/recon-pane";
-import {
-  readRunManifestHandle,
-  reconcileLegacyStoppedRun,
-  resolveRunStorage,
-} from "./loop/run-state";
-import { tmuxTargetLiveness } from "./loop/tmux-control";
-import { readTmuxEndpointState, targetFromManifest } from "./loop/tmux-socket";
+import { reconcileLegacyStoppedRun, resolveRunStorage } from "./loop/run-state";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import {
@@ -399,13 +393,9 @@ const runStoppedRunReconcileCommand = async (
       pidCanStillOwnRun(pid, stoppedAt, {
         ...defaultPidOwnershipDeps,
       }),
-    runtimeAbsent: async (manifestPath) => {
-      const handle = readRunManifestHandle(manifestPath);
-      const target = handle ? targetFromManifest(handle) : undefined;
-      const endpoint = readTmuxEndpointState(target);
-      const tmux = await Promise.resolve(tmuxTargetLiveness(target));
-      return runtimeAbsent(endpoint, tmux);
-    },
+    // The same rule as the launch scan: the recorded socket, or for a legacy
+    // manifest with no socket, every socket the launcher could have used.
+    runtimeAbsent: (manifestPath) => tmuxRuntimeAbsentForManifest(manifestPath),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (result.status === "refused") {

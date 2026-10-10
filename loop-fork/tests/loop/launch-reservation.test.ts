@@ -328,13 +328,20 @@ test("active legacy and unknown topology fail closed without mutation", async ()
         workspaceBinding: binding,
       })
     );
+    // No recorded socket: every legacy candidate is probed. A reachable
+    // candidate that will not answer about the session is unknown topology,
+    // so the run is neither released nor auto-released.
     await expect(
       reservePairedLaunch(makeOptions(), binding, {
         ...reservationDeps(home),
+        endpointState: () => "present",
         tmuxLiveness: () => "unknown",
       })
     ).rejects.toThrow("repo-loop-1");
     expect(readRunManifest(storage.manifestPath)?.state).toBe("stopped");
+    expect(
+      readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+    ).toBeUndefined();
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(home, { force: true, recursive: true });
@@ -989,10 +996,15 @@ test("a missing or unusable target blocks release", async () => {
       parsed.tmuxSocket = "relative/unusable.sock";
     })
   );
+  // With no recorded socket the session is probed on every legacy candidate
+  // socket (dead-run-release.test.ts covers release). A reachable candidate
+  // that answers "unknown" about the session still blocks. The endpoint is
+  // injected so the verdict does not depend on which sockets this host has.
   await expectReservationRefused(
     run42Mutated((parsed) => {
       parsed.tmuxSocket = undefined;
-    })
+    }),
+    { endpointState: () => "present" as const }
   );
 });
 

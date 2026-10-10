@@ -138,6 +138,7 @@ import {
 import { openPublicAskSequences } from "./human-interaction-ask";
 import { helperModelLabel, judgeEndpointHost } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
+import { tmuxRuntimeAbsentForManifest } from "./launch-reservation";
 import {
   migrateLegacyGovernessState,
   withLegacyGovernessEnv,
@@ -155,6 +156,7 @@ import {
   openRouterAgentLimit,
   readOpenRouterCredit,
 } from "./openrouter-usage";
+import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import {
   cleanupRunOwnedProcesses,
   type RunProcessCleanupResult,
@@ -164,6 +166,8 @@ import {
   type RunManifest,
   readRunManifest,
   readRunManifestHandle,
+  reconcileLegacyStoppedRun,
+  type StoppedRunReconcileDeps,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
@@ -455,6 +459,12 @@ export interface GovernessDeps {
   readUsageLimits: (
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  // After a teardown's session kill, hand the workspace back once the run's
+  // tmux session and every recorded process are positively gone; otherwise
+  // leave it unreleased for the next launch to judge.
+  releaseWorkspaceAfterTeardown?: (
+    config: GovernessConfig
+  ) => Promise<TeardownReleaseResult>;
   render: (text: string) => void;
   replacementSessionAlive?: (
     session: string,
@@ -5570,21 +5580,59 @@ export const stopGovernessLoop = (
   }
   const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
   if (!close) {
-    killTeardownSession(config, deps, record);
-    return Promise.resolve();
+    const killed = killTeardownSession(config, deps, record);
+    return killed && deps.releaseWorkspaceAfterTeardown
+      ? releaseAfterTeardown(config, deps)
+      : Promise.resolve();
   }
   const closeThenKill = async (): Promise<void> => {
     await closeBeatBeforeKill(config, deps, reason, close);
-    killTeardownSession(config, deps, record);
+    if (killTeardownSession(config, deps, record)) {
+      await releaseAfterTeardown(config, deps);
+    }
   };
   return closeThenKill();
 };
 
+/**
+ * Hands the workspace back after a teardown whose session kill was issued.
+ * The release itself is `loop reconcile stopped-run`'s handback under its full
+ * evidence, so it happens only once the run's tmux session and every recorded
+ * process are positively gone. Anything less leaves the run unreleased for the
+ * next launch's auto-release, and says so in the log.
+ */
+const releaseAfterTeardown = async (
+  config: GovernessConfig,
+  deps: GovernessDeps
+): Promise<void> => {
+  const release = deps.releaseWorkspaceAfterTeardown;
+  if (!release) {
+    return;
+  }
+  let result: TeardownReleaseResult;
+  try {
+    result = await release(config);
+  } catch (error) {
+    result = {
+      detail: error instanceof Error ? error.message : String(error),
+      released: false,
+    };
+  }
+  deps.appendLog(config.logFile, {
+    at: new Date(deps.now()).toISOString(),
+    detail: result.detail,
+    event: result.released
+      ? "workspace-released"
+      : "workspace-release-deferred",
+  });
+};
+
+/** Whether the kill was issued without error. Never confirms absence. */
 const killTeardownSession = (
   config: GovernessConfig,
   deps: GovernessDeps,
   record: GovernessControlRecord | undefined
-): void => {
+): boolean => {
   try {
     deps.killSession?.(config.session);
     if (record && config.journalFile) {
@@ -5595,6 +5643,7 @@ const killTeardownSession = (
         new Date(deps.now()).toISOString()
       );
     }
+    return true;
   } catch (error) {
     if (record && config.journalFile) {
       transitionGovernessControl(
@@ -5611,7 +5660,85 @@ const killTeardownSession = (
       event: "tmux-session-kill-unconfirmed",
       session: config.session,
     });
+    return false;
   }
+};
+
+export interface TeardownReleaseResult {
+  readonly detail: string;
+  readonly released: boolean;
+}
+
+const TEARDOWN_RELEASE_ATTEMPTS = 10;
+const TEARDOWN_RELEASE_RETRY_MS = 300;
+const TEARDOWN_HANGUP_GRACE_MS = 10_000;
+let teardownHangupGraceArmed = false;
+
+/**
+ * Killing the session also hangs up this process, which runs in one of its
+ * panes. Without this the governess dies before it can observe that the
+ * session and the run's processes are gone, so a clean teardown could never
+ * hand back its workspace. On hangup the process keeps running for a bounded
+ * grace window, long enough for `releaseAfterTeardown`, and then exits.
+ */
+const armTeardownHangupGrace = (): void => {
+  if (teardownHangupGraceArmed) {
+    return;
+  }
+  teardownHangupGraceArmed = true;
+  process.on("SIGHUP", () => {
+    setTimeout(() => process.exit(0), TEARDOWN_HANGUP_GRACE_MS);
+  });
+};
+
+// Refusals that can clear on their own within moments of a session kill: the
+// signaled processes and the session are still exiting.
+const TRANSIENT_RELEASE_REFUSALS = [
+  "launch-process-may-be-live",
+  "recorded-process-may-be-live",
+  "run-process-may-be-live",
+  "tmux-runtime-not-absent",
+];
+
+/**
+ * Bounded wait for the teardown's own effects to be observable, then the
+ * reconcile handback. Each attempt is the full `reconcileLegacyStoppedRun`
+ * conjunction; an attempt that still sees a live or unknown process or
+ * session is retried, and the last refusal is returned unreleased.
+ */
+export const confirmTeardownRelease = async (
+  manifestPath: string,
+  runId: string,
+  deps: Omit<StoppedRunReconcileDeps, "terminalState"> & {
+    attempts: number;
+    sleep: (ms: number) => Promise<void>;
+    retryMs: number;
+  }
+): Promise<TeardownReleaseResult> => {
+  let detail = "no release attempt was made";
+  for (let attempt = 1; attempt <= deps.attempts; attempt += 1) {
+    const result = await reconcileLegacyStoppedRun(manifestPath, runId, {
+      now: deps.now,
+      pidCanStillOwnRun: deps.pidCanStillOwnRun,
+      runtimeAbsent: deps.runtimeAbsent,
+      terminalState: "stopped",
+    });
+    if (result.status !== "refused") {
+      return {
+        detail: `${result.status} at ${result.workspaceReleasedAt}`,
+        released: true,
+      };
+    }
+    detail = result.reason;
+    const transient = TRANSIENT_RELEASE_REFUSALS.some((prefix) =>
+      result.reason.startsWith(prefix)
+    );
+    if (!transient || attempt === deps.attempts) {
+      break;
+    }
+    await deps.sleep(deps.retryMs);
+  }
+  return { detail, released: false };
 };
 
 export const driveHandoverControl = async (
@@ -6969,8 +7096,24 @@ export const defaultGovernessDeps = (
       );
   },
   killSession: (session) => {
+    armTeardownHangupGrace();
     runBoundedTmux(["kill-session", "-t", session]);
   },
+  releaseWorkspaceAfterTeardown: (config) =>
+    config.manifestPath
+      ? confirmTeardownRelease(config.manifestPath, config.runId, {
+          attempts: TEARDOWN_RELEASE_ATTEMPTS,
+          now: () => new Date().toISOString(),
+          pidCanStillOwnRun: (pid, at) =>
+            pidCanStillOwnRun(pid, at, defaultPidOwnershipDeps),
+          retryMs: TEARDOWN_RELEASE_RETRY_MS,
+          runtimeAbsent: (path) => tmuxRuntimeAbsentForManifest(path),
+          sleep: (ms) =>
+            new Promise((resolve) => {
+              setTimeout(resolve, ms);
+            }),
+        })
+      : Promise.resolve({ detail: "no run manifest", released: false }),
   notify: (ntfyUrl, event, escalationFile, nowIso) => {
     appendEscalation(escalationFile, event, nowIso ?? new Date().toISOString());
     sendNtfy(ntfyUrl, event);

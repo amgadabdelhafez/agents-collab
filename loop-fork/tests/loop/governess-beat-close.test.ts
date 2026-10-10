@@ -717,6 +717,8 @@ describe("governess teardown closes the beat", () => {
       "close:user requested teardown",
       "log:journal-temporal-closed",
       "kill",
+      // No run manifest in this config, so there is no handback to confirm.
+      "log:workspace-release-deferred",
     ]);
   });
 
@@ -737,6 +739,7 @@ describe("governess teardown closes the beat", () => {
       "close",
       "log:journal-temporal-close-failed",
       "kill",
+      "log:workspace-release-deferred",
     ]);
   });
 
