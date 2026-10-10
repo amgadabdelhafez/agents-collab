@@ -862,7 +862,18 @@ const appServerIdentityGap = (
  * unreadable run could hold only a walk record of it (ignored for an explicit
  * record) or a recycled pid (rejected by the binding). An unbound one is
  * never signalled, whatever the other runs say; the skip is logged with why,
- * and with the unreadable state when there is one.
+ * and with the unreadable state when there is one. An app-server that is not
+ * running is skipped before the other runs are read: either way nothing is
+ * signalled, and the index read costs seconds on a large storage root.
+ *
+ * The app-server is spawned detached, so it leads a process group of its own,
+ * and Codex starts some children in it (the plugin `git fetch` on start).
+ * When the snapshot shows the bound app-server leading its group, and that is
+ * not this process's own group, the whole group is signalled, so those
+ * children end with it instead of re-parenting to launchd. The sharing check
+ * above already judged every member of that group (`membersOf` "process"
+ * covers the pid and its group). Children Codex moves into groups of their
+ * own (MCP servers) are not reached this way; they exit with the app-server.
  */
 const signalRunAppServer = (
   result: RunProcessCleanupResult,
@@ -871,6 +882,11 @@ const signalRunAppServer = (
   pid: number,
   deps: RunProcessCleanupDeps
 ): void => {
+  const command = deps.commandForPid(pid);
+  if (!command) {
+    result.skipped.push({ pid, reason: "app-server-not-running" });
+    return;
+  }
   const table = deps.processTable();
   const shared = appServerSharedWith(runDir, manifest, pid, table, deps);
   if (shared.kind === "shared") {
@@ -882,11 +898,6 @@ const signalRunAppServer = (
     });
     return;
   }
-  const command = deps.commandForPid(pid);
-  if (!command) {
-    result.skipped.push({ pid, reason: "app-server-not-running" });
-    return;
-  }
   const gap = appServerIdentityGap(manifest, pid, command, table, deps);
   if (gap) {
     result.skipped.push({
@@ -896,7 +907,14 @@ const signalRunAppServer = (
     });
     return;
   }
-  signalOwnedProcess(result, pid, true, "", deps.signal);
+  const ownGroup = deps.ownProcessGroup();
+  const leadsGroup =
+    ownGroup !== undefined &&
+    ownGroup !== pid &&
+    table?.find((entry) => entry.pid === pid)?.pgid === pid;
+  signalOwnedProcess(result, pid, true, "", (target, signal) =>
+    deps.signal(leadsGroup ? -target : target, signal)
+  );
 };
 
 /**

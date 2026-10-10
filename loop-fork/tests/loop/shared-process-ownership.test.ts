@@ -646,7 +646,7 @@ test("A's own manifest app-server that live B records too is never signalled by 
         codexAppServerPid: undefined,
       });
       cleanupRunOwnedProcesses(a.runDir, manifest);
-      expect(signals).toEqual(["7000:SIGTERM"]);
+      expect(signals).toEqual(["-7000:SIGTERM"]);
     }
   );
 });
@@ -700,7 +700,7 @@ test("with another run unreadable, A's own app-server is signalled only when its
     expect(cleanupWith({ command: bound, url: APP_SERVER_URL }).killed).toEqual(
       [APP_SERVER]
     );
-    expect(signals).toEqual(["7000:SIGTERM"]);
+    expect(signals).toEqual(["-7000:SIGTERM"]);
     signals.length = 0;
     // Unbound in each way: left alone, and the skip says why and that the
     // other runs were unreadable.
@@ -1236,7 +1236,7 @@ test("the app-server's owner B tears down first while live A's walk records it t
         b.runDir,
         readRunManifest(b.manifestPath)
       );
-      expect(signals).toEqual(["7000:SIGTERM"]);
+      expect(signals).toEqual(["-7000:SIGTERM"]);
       expect(
         result.skipped.filter(
           (entry) => entry.reason === "shared-process-skipped"
@@ -1287,7 +1287,7 @@ test("the app-server's owner B tears down first while live A's walk records it t
         kind: "unknown",
       });
       cleanupRunOwnedProcesses(b.runDir, readRunManifest(b.manifestPath));
-      expect(signals).toEqual(["7000:SIGTERM", "7000:SIGTERM"]);
+      expect(signals).toEqual(["-7000:SIGTERM", "-7000:SIGTERM"]);
       rmSync(c, { force: true, recursive: true });
       expect(await reconcileB([])).toMatchObject({ status: "changed" });
     }

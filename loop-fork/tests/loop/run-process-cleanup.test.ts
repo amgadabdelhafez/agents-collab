@@ -203,7 +203,120 @@ test("teardown requires the app-server command on the recorded listen URL and th
     runProcessCleanupInternals.deps.listeningPids = () => [4501];
     const ownedResult = cleanupRunOwnedProcesses(runDir, manifest);
     expect(ownedResult.killed).toEqual([4501]);
-    expect(signals).toEqual([4501]);
+    // It leads its own group in this table: the group is signalled.
+    expect(signals).toEqual([-4501]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+// Codex starts children of its own in the app-server's process group (the
+// plugin `git fetch` on start, for one). Signalling the leader alone left them
+// running, re-parented to launchd, after the run had ended its app-server.
+test("teardown ends the bound app-server's whole process group when it leads one, never a group it does not lead or this process's own", () => {
+  const runDir = makeRunDir();
+  const signals: string[] = [];
+  const original = { ...runProcessCleanupInternals.deps };
+  const manifest = createRunManifest({
+    codexAppServerPid: 4501,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 100,
+    repoId: "repo-1",
+    runId: "1",
+  });
+  const rows = (appServerGroup: number): ProcessRow[] => [
+    { pgid: appServerGroup, pid: 4501, ppid: 1, startedAtMs: 0 },
+    // The plugin sync, in the app-server's group when it leads one.
+    { pgid: appServerGroup, pid: 4510, ppid: 4501, startedAtMs: 0 },
+    // An MCP server Codex started in a group of its own.
+    { pgid: 4520, pid: 4520, ppid: 4501, startedAtMs: 0 },
+  ];
+  try {
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "codex app-server --listen ws://127.0.0.1:4500";
+    runProcessCleanupInternals.deps.listeningPids = () => [4501];
+    runProcessCleanupInternals.deps.ownProcessGroup = () => 999;
+    runProcessCleanupInternals.deps.otherRunIndex = () => ({
+      kind: "read",
+      references: [],
+      runs: [],
+    });
+    runProcessCleanupInternals.deps.signal = (pid, signal) => {
+      signals.push(`${pid}:${signal}`);
+    };
+
+    runProcessCleanupInternals.deps.processTable = () => rows(4501);
+    const leader = cleanupRunOwnedProcesses(runDir, manifest);
+    expect(leader.killed).toEqual([4501]);
+    expect(signals).toEqual(["-4501:SIGTERM"]);
+
+    // Not its group's leader: the group is someone else's, only the pid.
+    signals.length = 0;
+    runProcessCleanupInternals.deps.processTable = () => rows(4400);
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(signals).toEqual(["4501:SIGTERM"]);
+
+    // Its group is this process's own: never signalled as a group.
+    signals.length = 0;
+    runProcessCleanupInternals.deps.processTable = () => rows(4501);
+    runProcessCleanupInternals.deps.ownProcessGroup = () => 4501;
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(signals).toEqual(["4501:SIGTERM"]);
+
+    // This process's own group unknown: the pid only, as before.
+    signals.length = 0;
+    runProcessCleanupInternals.deps.ownProcessGroup = () => undefined;
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(signals).toEqual(["4501:SIGTERM"]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+// The other-run index reads every run under the storage root (seconds on a
+// root of hundreds of runs). An app-server already gone skips the signal
+// whatever the index says, so it must not pay for one.
+test("an app-server that is no longer running is skipped without reading the other runs", () => {
+  const runDir = makeRunDir();
+  const original = { ...runProcessCleanupInternals.deps };
+  const manifest = createRunManifest({
+    codexAppServerPid: 4501,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 100,
+    repoId: "repo-1",
+    runId: "1",
+  });
+  let indexReads = 0;
+  const signals: number[] = [];
+  try {
+    runProcessCleanupInternals.deps.processTable = startedLongAgo(4501);
+    runProcessCleanupInternals.deps.commandForPid = () => undefined;
+    runProcessCleanupInternals.deps.otherRunIndex = () => {
+      indexReads += 1;
+      return { kind: "read", references: [], runs: [] };
+    };
+    runProcessCleanupInternals.deps.signal = (pid) => {
+      signals.push(pid);
+    };
+    expect(cleanupRunOwnedProcesses(runDir, manifest).skipped).toEqual([
+      { pid: 4501, reason: "app-server-not-running" },
+    ]);
+    expect(indexReads).toBe(0);
+    expect(signals).toEqual([]);
+
+    // Running and bound: the index is read (the shared check still holds).
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "codex app-server --listen ws://127.0.0.1:4500";
+    runProcessCleanupInternals.deps.listeningPids = () => [4501];
+    runProcessCleanupInternals.deps.ownProcessGroup = () => 999;
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(indexReads).toBe(1);
   } finally {
     Object.assign(runProcessCleanupInternals.deps, original);
     rmSync(runDir, { force: true, recursive: true });
@@ -462,7 +575,8 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
       skipped: [],
     });
     expect(tmuxListCalls).toBe(1);
-    expect(signals).toEqual([8802, 8801]);
+    // The app-server leads its own group in this table: its group.
+    expect(signals).toEqual([8802, -8801]);
     expect(logs).toEqual([
       '[loop] cleaned 1 abandoned run for "repo-current" (2 processes signaled)',
     ]);
@@ -789,7 +903,7 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
       storageRoot,
     });
     expect(retried).toMatchObject({ cleaned: 1, killed: [9301], skipped: [] });
-    expect(retriedSignals).toEqual([9301]);
+    expect(retriedSignals).toEqual([-9301]);
     expect(readRunManifest(manifestPath)?.codexAppServerPid).toBeUndefined();
     expect(readRunManifest(manifestPath)?.codexRemoteUrl).toBeUndefined();
   } finally {

@@ -1358,7 +1358,7 @@ test("startup GC keeps an app-server it signalled recorded while it is still exi
         },
       },
     });
-    expect(signals).toEqual([8801]);
+    expect(signals).toEqual([-8801]);
     const after = readRunManifest(join(runDir, "manifest.json"));
     expect(after?.codexAppServerPid).toBe(8801);
     expect(after?.workspaceReleasedAt).toBeUndefined();
