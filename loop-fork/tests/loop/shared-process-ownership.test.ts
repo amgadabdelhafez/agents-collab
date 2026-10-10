@@ -37,8 +37,10 @@ import {
 } from "../../src/loop/governess";
 import { reservePairedLaunch } from "../../src/loop/launch-reservation";
 import {
+  defaultStillRecorded,
   defaultTerminationDeps,
   type ProcessRow,
+  type ProcessSnapshot,
   processGroupAlive,
   stillRecordedOn,
   type TerminationDeps,
@@ -215,7 +217,14 @@ const fakeProbes = (
   commandTable: () =>
     new Map(Object.entries(commands).map(([pid, cmd]) => [Number(pid), cmd])),
   cwdOfPid: (pid) => cwds[pid],
-  otherRunIndex: (runDir) => readOtherRunIndex(runDir, [storage]),
+  // A terminal run is dead only when what it records is gone from the fake
+  // table; every run's tmux runtime is faked as positively gone (no tmux
+  // server is contacted).
+  otherRunIndex: (runDir, snapshot) =>
+    readOtherRunIndex(runDir, [storage], {
+      runtimeAbsent: () => true,
+      table: snapshot ?? table,
+    }),
   processTable: () => table,
 });
 
@@ -416,10 +425,100 @@ test("startup GC never signals A's app-server that live B records too, and hands
   );
 });
 
-test("same, but B is dead (terminal): A may end the app-server it started in its workspace", async () => {
+test("same, but B is terminal and the app-server it records still lives: B is not provably dead, so A never ends it", async () => {
   await withTwoRuns(
     "stopped",
     { codexAppServerPid: APP_SERVER },
+    async ({ a, storage }) => {
+      recordWalkedGroup(a.runDir, APP_SERVER);
+      const table = [row(PANE, 1, PANE), row(APP_SERVER, 1, APP_SERVER)];
+      const probes = fakeProbes(storage, table, {
+        [APP_SERVER]: join(a.workspace, "sub"),
+      });
+      useCleanupProbes(probes);
+      const collected = collectRunAgentGroups(
+        a.runDir,
+        readRunManifest(a.manifestPath)
+      );
+      expect(collected.groups?.map((target) => target.id)).toEqual([PANE]);
+      expect(collected.skipped).toMatchObject([
+        { otherRunId: "2", pid: APP_SERVER, reason: "shared-process-skipped" },
+      ]);
+      const signals: string[] = [];
+      await terminateTargets(
+        [inferredTarget(APP_SERVER)],
+        fakeTermination(signals, {
+          processGroupAlive: () => false,
+          sharedSkips: sharedTargetCheck(
+            a.runDir,
+            () => readRunManifest(a.manifestPath),
+            probes
+          ),
+        })
+      );
+      expect(signals).toEqual([]);
+    }
+  );
+});
+
+test("a terminal run is dead only when its pids and groups are gone AND its tmux runtime is positively gone", async () => {
+  await withTwoRuns(
+    "stopped",
+    { codexAppServerPid: APP_SERVER, launchAttemptPid: 7001 },
+    ({ a, b, storage }) => {
+      mkdirSync(join(b.runDir, "run-processes"), { recursive: true });
+      writeFileSync(
+        join(b.runDir, "run-processes", "agent-group-7002.json"),
+        `${JSON.stringify({
+          kind: "agent-descendant-group",
+          paneId: "%1",
+          pgid: 7002,
+          recordedAt: RECORDED_AT,
+          runDir: b.runDir,
+        })}\n`
+      );
+      const runIds = (
+        table: readonly ProcessRow[],
+        runtimeAbsent: boolean
+      ): string[] => {
+        const index = readOtherRunIndex(a.runDir, [storage], {
+          runtimeAbsent: () => runtimeAbsent,
+          table,
+        });
+        return index.kind === "read" ? index.runs.map((run) => run.runId) : [];
+      };
+      // Every record gone and the runtime gone: dead.
+      expect(runIds([], true)).toEqual([]);
+      // Any one of them still live, or the runtime not positively gone: B
+      // still counts as live.
+      expect(runIds([], false)).toEqual(["2"]);
+      expect(runIds([row(APP_SERVER, 1, APP_SERVER)], true)).toEqual(["2"]);
+      expect(runIds([row(7001, 1, 7001)], true)).toEqual(["2"]);
+      expect(runIds([row(7003, 1, 7002)], true)).toEqual(["2"]);
+      // A pid held only by a process started after B's last update (and
+      // after the record) is a later process: B is still dead.
+      expect(runIds([row(APP_SERVER, 1, APP_SERVER, AFTER)], true)).toEqual([]);
+      // A terminal run whose records cannot be read is not provably dead.
+      writeFileSync(
+        join(b.runDir, "run-processes", "agent-group-7004.json"),
+        "{ torn"
+      );
+      expect(
+        readOtherRunIndex(a.runDir, [storage], {
+          runtimeAbsent: () => true,
+          table: [],
+        })
+      ).toMatchObject({ kind: "unknown" });
+    }
+  );
+});
+
+test("same, but B is provably dead (terminal, nothing it records live, its tmux runtime gone): A may end the app-server it started in its workspace", async () => {
+  await withTwoRuns(
+    "stopped",
+    // B's own teardown settled its app-server record; the process A's walk
+    // recorded is no longer B's.
+    {},
     async ({ a, storage }) => {
       recordWalkedGroup(a.runDir, APP_SERVER);
       const table = [row(PANE, 1, PANE), row(APP_SERVER, 1, APP_SERVER)];
@@ -530,16 +629,183 @@ test("A's own manifest app-server that live B records too is never signalled by 
         pid: APP_SERVER,
         reason: "shared-process-skipped",
       });
-      // Control: once B is dead, the same cleanup ends A's app-server.
+      // B's manifest turning terminal while it still records the live
+      // app-server does not make B dead: still never signalled.
       writeRunManifest(b.manifestPath, {
         ...(readRunManifest(b.manifestPath) as RunManifest),
         state: "stopped",
         status: "stopped",
       });
       cleanupRunOwnedProcesses(a.runDir, manifest);
+      expect(signals).toEqual([]);
+      // Control: once B is provably dead (it no longer records a live
+      // process, and its runtime is gone), the same cleanup ends A's
+      // app-server.
+      writeRunManifest(b.manifestPath, {
+        ...(readRunManifest(b.manifestPath) as RunManifest),
+        codexAppServerPid: undefined,
+      });
+      cleanupRunOwnedProcesses(a.runDir, manifest);
       expect(signals).toEqual(["7000:SIGTERM"]);
     }
   );
+});
+
+// --- The run's own explicit records while other runs cannot be read -----------
+
+const APP_SERVER_URL = "ws://127.0.0.1:4500";
+
+/** Run B's records are unreadable (a torn `run-processes/` record). */
+const makeUnreadable = (runDir: string): void => {
+  mkdirSync(join(runDir, "run-processes"), { recursive: true });
+  writeFileSync(join(runDir, "run-processes", "bridge-9.json"), "{ torn");
+};
+
+test("with another run unreadable, A's own app-server is signalled only when its identity is bound positively: the exact recorded listen URL, its listener, and a start no later than the record", async () => {
+  await withTwoRuns("working", {}, ({ a, b, storage }) => {
+    makeUnreadable(b.runDir);
+    expect(
+      readOtherRunIndex(a.runDir, [storage], { runtimeAbsent: () => true })
+    ).toMatchObject({ kind: "unknown" });
+    const signals: string[] = [];
+    const cleanupWith = (input: {
+      command: string;
+      startedAt?: number | "unknown";
+      url?: string;
+    }) => {
+      const startedAtMs =
+        input.startedAt === "unknown" ? undefined : (input.startedAt ?? BEFORE);
+      useCleanupProbes(
+        fakeProbes(
+          storage,
+          [{ pgid: APP_SERVER, pid: APP_SERVER, ppid: 1, startedAtMs }],
+          { [APP_SERVER]: "/elsewhere" }
+        )
+      );
+      const deps = runProcessCleanupInternals.deps;
+      deps.commandForPid = () => input.command;
+      deps.listeningPids = (port) => (port === 4500 ? [APP_SERVER] : []);
+      deps.signal = (pid, signal) => {
+        signals.push(`${pid}:${signal}`);
+      };
+      const manifest = {
+        ...(readRunManifest(a.manifestPath) as RunManifest),
+        codexAppServerPid: APP_SERVER,
+        ...(input.url ? { codexRemoteUrl: input.url } : {}),
+      };
+      return cleanupRunOwnedProcesses(a.runDir, manifest);
+    };
+    const bound = `codex app-server --listen ${APP_SERVER_URL}`;
+    // Bound: ended, whatever the unreadable run holds.
+    expect(cleanupWith({ command: bound, url: APP_SERVER_URL }).killed).toEqual(
+      [APP_SERVER]
+    );
+    expect(signals).toEqual(["7000:SIGTERM"]);
+    signals.length = 0;
+    // Unbound in each way: left alone, and the skip says why and that the
+    // other runs were unreadable.
+    const unbound: [string, Parameters<typeof cleanupWith>[0]][] = [
+      [
+        `its command does not listen on ${APP_SERVER_URL}`,
+        {
+          command: "codex app-server --listen ws://127.0.0.1:4501",
+          url: APP_SERVER_URL,
+        },
+      ],
+      [
+        "it started after the record",
+        { command: bound, startedAt: AFTER, url: APP_SERVER_URL },
+      ],
+      [
+        "its start time is unknown",
+        { command: bound, startedAt: "unknown", url: APP_SERVER_URL },
+      ],
+      // An older run recorded no URL: unproven.
+      ["the manifest records no codexRemoteUrl", { command: bound }],
+    ];
+    for (const [why, input] of unbound) {
+      const result = cleanupWith(input);
+      expect(signals, why).toEqual([]);
+      expect(result.skipped, why).toEqual([
+        {
+          detail: expect.stringContaining("; other runs unreadable: "),
+          pid: APP_SERVER,
+          reason: "app-server-identity-mismatch",
+        },
+      ]);
+      expect(result.skipped[0]?.detail, why).toStartWith(
+        `identity not proven: ${why}`
+      );
+    }
+  });
+});
+
+test("with another run unreadable, a readable live run that records A's explicit record still makes it shared: A's app-server and A's pane group are never signalled", async () => {
+  await withTwoRuns("working", {}, ({ a, b, storage }) => {
+    makeUnreadable(b.runDir);
+    // C is live and readable, and records both (its manifest's app-server,
+    // and its bridge worker pid naming A's pane group's leader).
+    const c = writeRun(storage, "3", join(a.workspace, "..", "ws-c"), {
+      codexAppServerPid: APP_SERVER,
+      state: "working",
+      status: "running",
+    });
+    writeFileSync(
+      join(c.runDir, "bridge-worker.json"),
+      `${JSON.stringify({ pid: PANE })}\n`
+    );
+    const table = [row(PANE, 1, PANE), row(APP_SERVER, 1, APP_SERVER)];
+    const probes = fakeProbes(storage, table, { [APP_SERVER]: "/elsewhere" });
+    useCleanupProbes(probes);
+    const signals: string[] = [];
+    const deps = runProcessCleanupInternals.deps;
+    deps.commandForPid = () => `codex app-server --listen ${APP_SERVER_URL}`;
+    deps.listeningPids = () => [APP_SERVER];
+    deps.signal = (pid, signal) => {
+      signals.push(`${pid}:${signal}`);
+    };
+    const result = cleanupRunOwnedProcesses(a.runDir, {
+      ...(readRunManifest(a.manifestPath) as RunManifest),
+      codexAppServerPid: APP_SERVER,
+      codexRemoteUrl: APP_SERVER_URL,
+    });
+    expect(signals).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        detail: expect.stringContaining(
+          "recorded by run 3 as codexAppServerPid"
+        ),
+        otherRunId: "3",
+        pid: APP_SERVER,
+        reason: "shared-process-skipped",
+      },
+    ]);
+    const check = sharedTargetCheck(
+      a.runDir,
+      () => readRunManifest(a.manifestPath),
+      probes
+    );
+    expect(
+      check([
+        { id: PANE, kind: "group", reference: SNAPSHOT_AT, source: "pane" },
+      ]).get(`group:${PANE}`)
+    ).toMatchObject({ otherRunId: "3", reason: "shared-process-skipped" });
+    // Without C's record the pane group (bound by its reference instant) is
+    // signalled; an explicit target that carries no identity at all is not
+    // while the other runs cannot be read.
+    rmSync(c.runDir, { force: true, recursive: true });
+    expect(
+      check([
+        { id: PANE, kind: "group", reference: SNAPSHOT_AT, source: "pane" },
+      ]).size
+    ).toBe(0);
+    expect(
+      check([{ id: PANE, kind: "group", source: "pane" }]).get(`group:${PANE}`)
+    ).toMatchObject({
+      detail: expect.stringContaining("no identity binds it to this run"),
+      reason: "ownership-unknown",
+    });
+  });
 });
 
 test("a command line that names another live run's directory, socket, session or run id makes the process shared; this run's own session or run id does not", async () => {
@@ -1310,6 +1576,81 @@ test("termination re-verifies a utility worker before SIGKILL: one whose pid now
   expect(ended.killed).toEqual([]);
 });
 
+test("each signal round judges identity and sharing on ONE process snapshot, and the SIGKILL round takes a new one", async () => {
+  const signals: string[] = [];
+  const taken: ProcessSnapshot[] = [];
+  const seen: [string, ProcessSnapshot | undefined][] = [];
+  const ended = await terminateTargets(
+    [{ id: 5201, kind: "group", reference: SNAPSHOT_AT, source: "pane" }],
+    fakeTermination(signals, {
+      sharedSkips: (_targets, snapshot) => {
+        seen.push(["shared", snapshot]);
+        return new Map();
+      },
+      snapshot: () => {
+        const snapshot: ProcessSnapshot = {
+          commands: () => new Map(),
+          table: [row(5201, 1, 5201)],
+        };
+        taken.push(snapshot);
+        return snapshot;
+      },
+      stillRecorded: (targets, snapshot) => {
+        seen.push(["identity", snapshot]);
+        return new Set(targets.map((target) => `${target.kind}:${target.id}`));
+      },
+    })
+  );
+  expect(signals).toEqual(["-5201:SIGTERM", "-5201:SIGKILL"]);
+  expect(ended.killed).toEqual(["pane process group 5201"]);
+  expect(taken).toHaveLength(2);
+  expect(seen).toEqual([
+    ["identity", taken[0]],
+    ["shared", taken[0]],
+    ["identity", taken[1]],
+    ["shared", taken[1]],
+  ]);
+});
+
+test("the production checks read the round's snapshot, not tables of their own", () => {
+  const forbidden = (): never => {
+    throw new Error("a check read its own table");
+  };
+  const snapshot: ProcessSnapshot = {
+    commands: () => new Map([[5301, workerCommand("/runs/r/1", 1, "job-a")]]),
+    table: [row(5301, 1, 5301)],
+  };
+  const worker: TerminationTarget = {
+    id: 5301,
+    identity: { epoch: 1, jobId: "job-a", runDir: "/runs/r/1" },
+    kind: "group",
+    reference: SNAPSHOT_AT,
+    source: "utility job job-a worker",
+  };
+  expect(defaultStillRecorded([worker], snapshot)).toEqual(
+    new Set(["group:5301"])
+  );
+  // The identity re-check reads the snapshot's command line: a leader that
+  // runs another command in that snapshot is not the worker.
+  expect(
+    defaultStillRecorded([worker], {
+      ...snapshot,
+      commands: () => new Map([[5301, "/usr/bin/vim notes.txt"]]),
+    })
+  ).toEqual(new Set());
+  const check = sharedTargetCheck("/nonexistent/run", () => undefined, {
+    commandTable: forbidden,
+    cwdOfPid: forbidden,
+    otherRunIndex: (_runDir, table) => {
+      expect(table).toBe(snapshot.table);
+      return { kind: "read", references: [], runs: [] };
+    },
+    processTable: forbidden,
+  });
+  expect(check([inferredTarget(5301)], snapshot).size).toBe(0);
+  expect(defaultTerminationDeps().snapshot).toBeDefined();
+});
+
 // --- The governess logs every shared skip ---------------------------------------
 
 test("the teardown logs shared-process-skipped with the other run's id at collection and at termination", async () => {
@@ -1632,12 +1973,38 @@ test("real: A's teardown leaves the app-server live B records running and releas
       });
       expect(release).toMatchObject({ status: "changed" });
       expect(processGroupAlive(stub)).toBe(true);
-      // B ends: its manifest is terminal. A (resumed and torn down again, or
-      // any later teardown that records the stub) may now end it.
+      // B's manifest turns terminal while the app-server it records still
+      // lives: a terminal manifest alone does not make B dead, so the stub is
+      // still B's and A's teardown leaves it alone.
       writeRunManifest(b.manifestPath, {
         ...(readRunManifest(b.manifestPath) as RunManifest),
         state: "stopped",
         status: "stopped",
+      });
+      const terminalOnly = await terminateTargets(
+        [
+          {
+            id: stub,
+            kind: "group",
+            ownership: "inferred",
+            reference: new Date(Date.now() + 2000).toISOString(),
+            source: "agent %1 descendant",
+          },
+        ],
+        { ...defaultTerminationDeps(), graceMs: 300, sharedSkips }
+      );
+      expect(terminalOnly.shared).toMatchObject([
+        { otherRunId: "2", reason: "shared-process-skipped" },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(processGroupAlive(stub)).toBe(true);
+      // B is provably dead: terminal, nothing it records is live, and its
+      // tmux runtime is gone (its recorded socket has no server; the
+      // production probe asks that socket only). A (resumed and torn down
+      // again, or any later teardown that records the stub) may now end it.
+      writeRunManifest(b.manifestPath, {
+        ...(readRunManifest(b.manifestPath) as RunManifest),
+        codexAppServerPid: undefined,
       });
       const later = await terminateTargets(
         [

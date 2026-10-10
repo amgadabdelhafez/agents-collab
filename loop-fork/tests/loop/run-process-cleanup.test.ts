@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ProcessRow } from "../../src/loop/process-group";
 import {
   cleanupRunOwnedProcesses,
   gcAbandonedRunProcesses,
@@ -26,6 +27,16 @@ import { gcStaleBridgeProcesses } from "../../src/loop/stale-bridge-cleanup";
 
 const makeRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-process-cleanup-"));
+
+/**
+ * A process table in which each pid leads its own group and started long
+ * before any manifest a test writes: the start-time half of the app-server's
+ * identity binding holds for them.
+ */
+const startedLongAgo =
+  (...pids: number[]) =>
+  (): ProcessRow[] =>
+    pids.map((pid) => ({ pgid: pid, pid, ppid: 1, startedAtMs: 0 }));
 
 test("teardown owns a recorded bridge worker only with exact live argv", () => {
   const runDir = makeRunDir();
@@ -139,7 +150,7 @@ test("teardown signals only bridge processes registered to the exact run", () =>
   }
 });
 
-test("teardown requires both app-server command and owned listener port", () => {
+test("teardown requires the app-server command on the recorded listen URL and the owned listener port", () => {
   const runDir = makeRunDir();
   const signals: number[] = [];
   const original = { ...runProcessCleanupInternals.deps };
@@ -153,6 +164,7 @@ test("teardown requires both app-server command and owned listener port", () => 
     runId: "1",
   });
   try {
+    runProcessCleanupInternals.deps.processTable = startedLongAgo(4501);
     runProcessCleanupInternals.deps.commandForPid = () =>
       "/Applications/ChatGPT.app/Contents/Resources/codex app-server --listen stdio://";
     runProcessCleanupInternals.deps.listeningPids = () => [44_149];
@@ -163,7 +175,29 @@ test("teardown requires both app-server command and owned listener port", () => 
     const protectedResult = cleanupRunOwnedProcesses(runDir, manifest);
     expect(protectedResult.killed).toEqual([]);
     expect(protectedResult.skipped).toEqual([
-      { pid: 4501, reason: "app-server-identity-mismatch" },
+      {
+        detail:
+          "identity not proven: its command does not listen on ws://127.0.0.1:4500",
+        pid: 4501,
+        reason: "app-server-identity-mismatch",
+      },
+    ]);
+
+    // The listener alone is not the binding: an app-server on another URL
+    // that holds the port's listener is still not signalled.
+    runProcessCleanupInternals.deps.listeningPids = () => [4501];
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([]);
+
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "/Applications/ChatGPT.app/Contents/Resources/codex app-server --listen ws://127.0.0.1:4500";
+    runProcessCleanupInternals.deps.listeningPids = () => [44_149];
+    expect(cleanupRunOwnedProcesses(runDir, manifest).skipped).toEqual([
+      {
+        detail:
+          "identity not proven: it does not hold the listener of ws://127.0.0.1:4500",
+        pid: 4501,
+        reason: "app-server-identity-mismatch",
+      },
     ]);
 
     runProcessCleanupInternals.deps.listeningPids = () => [4501];
@@ -402,6 +436,7 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
           return new Set(["unknown-loop", "harvto-loop-98"]);
         },
         listeningPids: (port) => (port === 4500 ? [8801] : []),
+        processTable: startedLongAgo(8801),
         pidAlive: (pid) => {
           if (pid === 8700) {
             throw new Error(
@@ -611,7 +646,12 @@ test("startup GC never signals stale-run processes that fail ownership proof", (
     expect(result).toMatchObject({ cleaned: 1, killed: [] });
     expect(result.skipped).toEqual([
       { pid: 9202, reason: "bridge-command-mismatch" },
-      { pid: 9201, reason: "app-server-identity-mismatch" },
+      {
+        detail:
+          "identity not proven: it does not hold the listener of ws://127.0.0.1:4520",
+        pid: 9201,
+        reason: "app-server-identity-mismatch",
+      },
     ]);
     expect(signals).toEqual([]);
     expect(readRunManifest(join(runDir, "manifest.json"))).toMatchObject({
@@ -709,6 +749,7 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
     listTmuxSessions: () => new Set<string>(),
     listeningPids: () => [9301],
     pidAlive: () => false,
+    processTable: startedLongAgo(9301),
   };
   try {
     const failed = gcAbandonedRunProcesses({

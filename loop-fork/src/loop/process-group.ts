@@ -146,6 +146,60 @@ export const readProcessTable = (): ProcessRow[] | undefined => {
   return rows.length > 0 ? rows : undefined;
 };
 
+const COMMAND_ROW_RE = /^\s*(\d+)\s+(.*)$/;
+
+/** One snapshot of every process's command line, or `undefined`. */
+export const readCommandTable = (): Map<number, string> | undefined => {
+  const result = spawnSync("/bin/ps", ["-axww", "-o", "pid=,command="], {
+    encoding: "utf8",
+    env: { ...process.env, LANG: "C", LC_ALL: "C" },
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 5000,
+  });
+  if (result.status !== 0 || result.error) {
+    return undefined;
+  }
+  const commands = new Map<number, string>();
+  for (const line of result.stdout.split("\n")) {
+    const match = COMMAND_ROW_RE.exec(line);
+    if (match) {
+      commands.set(Number.parseInt(match[1] ?? "", 10), match[2] ?? "");
+    }
+  }
+  return commands.size > 0 ? commands : undefined;
+};
+
+/**
+ * What one signal round of a teardown or a stale recovery judges its targets
+ * on: ONE process table snapshot, and the command lines of that moment (read
+ * at most once, and only when a check needs them). The identity re-check and
+ * the shared-process check of a round both read this snapshot, never a table
+ * of their own; the next round (the SIGKILL after the grace) takes a new one.
+ */
+export interface ProcessSnapshot {
+  readonly commands: () => ReadonlyMap<number, string> | undefined;
+  /** `undefined` when `ps` could not say. */
+  readonly table: readonly ProcessRow[] | undefined;
+}
+
+const once = <T>(read: () => T): (() => T) => {
+  let done = false;
+  let value: T;
+  return () => {
+    if (!done) {
+      value = read();
+      done = true;
+    }
+    return value;
+  };
+};
+
+/** One process table snapshot, with its command lines read lazily. */
+export const readProcessSnapshot = (): ProcessSnapshot => ({
+  commands: once(readCommandTable),
+  table: readProcessTable(),
+});
+
 /**
  * Every live descendant of `roots` (the roots excluded), by a ppid walk over
  * one snapshot of the table. A process whose parent already exited has been
@@ -356,17 +410,28 @@ export interface TerminationDeps {
    * reported in `shared` and never signalled. Absent, none is skipped.
    */
   sharedSkips?: (
-    targets: readonly TerminationTarget[]
+    targets: readonly TerminationTarget[],
+    snapshot?: ProcessSnapshot
   ) => ReadonlyMap<string, SharedTargetSkipEntry>;
   /** `process.kill`: a negative id signals the group. */
   signal: (id: number, signal: NodeJS.Signals) => void;
   sleep: (ms: number) => Promise<void>;
   /**
-   * Re-identifies the targets that carry a reference instant, right before a
-   * signal round, as the set of `kind:id` keys still provably the recorded
-   * group or process. Absent, every target is trusted as identified.
+   * One process snapshot per signal round (see `ProcessSnapshot`), handed to
+   * both `stillRecorded` and `sharedSkips` of that round. Absent, each check
+   * reads its own.
    */
-  stillRecorded?: (targets: readonly TerminationTarget[]) => Set<string>;
+  snapshot?: () => ProcessSnapshot;
+  /**
+   * Re-identifies the targets that carry a reference instant or a worker
+   * identity, right before a signal round, as the set of `kind:id` keys
+   * still provably the recorded group or process. Absent, every target is
+   * trusted as identified.
+   */
+  stillRecorded?: (
+    targets: readonly TerminationTarget[],
+    snapshot?: ProcessSnapshot
+  ) => Set<string>;
 }
 
 export interface TerminationResult {
@@ -465,9 +530,17 @@ export const terminateTargets = async (
     targets: readonly TerminationTarget[]
   ): TerminationTarget[] => {
     const referenced = targets.filter(checked);
+    const identityCheck = Boolean(deps.stillRecorded && referenced.length > 0);
+    const sharedCheck = Boolean(deps.sharedSkips && targets.length > 0);
+    // One snapshot for the whole round: the identity re-check and the
+    // shared-process check judge the same process table.
+    const snapshot =
+      deps.snapshot && (identityCheck || sharedCheck)
+        ? deps.snapshot()
+        : undefined;
     const still =
-      deps.stillRecorded && referenced.length > 0
-        ? deps.stillRecorded(referenced)
+      deps.stillRecorded && identityCheck
+        ? deps.stillRecorded(referenced, snapshot)
         : undefined;
     const recorded = targets.filter((target) => {
       if (
@@ -483,7 +556,7 @@ export const terminateTargets = async (
     });
     const skips =
       deps.sharedSkips && recorded.length > 0
-        ? deps.sharedSkips(recorded)
+        ? deps.sharedSkips(recorded, snapshot)
         : undefined;
     if (!skips || skips.size === 0) {
       return recorded;
@@ -573,16 +646,24 @@ export const readCommandOf = (pid: number): string | undefined => {
   return result.status === 0 && !result.error && command ? command : undefined;
 };
 
-/** The default re-identification: one process table snapshot per round. */
-const defaultStillRecorded = (
-  targets: readonly TerminationTarget[]
+/**
+ * The default re-identification, on the round's snapshot (its table, and its
+ * command lines for a worker target), or on a fresh read without one.
+ */
+export const defaultStillRecorded = (
+  targets: readonly TerminationTarget[],
+  snapshot?: ProcessSnapshot
 ): Set<string> => {
-  const table = readProcessTable();
+  const table = snapshot ? snapshot.table : readProcessTable();
   if (!table) {
     // Without a table nothing can be re-identified: signal none of them.
     return new Set();
   }
-  return stillRecordedOn(targets, table, readCommandOf);
+  return stillRecordedOn(
+    targets,
+    table,
+    snapshot ? (pid) => snapshot.commands()?.get(pid) : readCommandOf
+  );
 };
 
 const defaultPidAlive = (pid: number): boolean => {
@@ -615,5 +696,6 @@ export const defaultTerminationDeps = (): TerminationDeps => ({
     new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
+  snapshot: readProcessSnapshot,
   stillRecorded: defaultStillRecorded,
 });

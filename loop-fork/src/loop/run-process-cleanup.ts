@@ -53,6 +53,7 @@ import {
   type OwnershipProbes,
   ownershipContext,
   recordedProcessClassifier,
+  type SharedWith,
   selfOf,
   sharedWithOtherRun,
 } from "./shared-process-ownership";
@@ -784,75 +785,153 @@ const cleanupRunOwnedProcessesWithDeps = (
   }
 
   const appServerPid = manifest?.codexAppServerPid;
-  const port = appServerPort(manifest?.codexRemoteUrl);
-  const sharedAppServer = appServerPid
-    ? appServerSharedWith(runDir, manifest, appServerPid, deps)
-    : undefined;
-  if (appServerPid && sharedAppServer) {
-    result.skipped.push({
-      detail: `codexAppServerPid: ${sharedAppServer.source}`,
-      otherRunId: sharedAppServer.otherRunId,
-      pid: appServerPid,
-      reason: "shared-process-skipped",
-    });
-  } else if (appServerPid) {
-    const command = deps.commandForPid(appServerPid);
-    const appServerCommand = Boolean(command?.includes("app-server"));
-    const ownsListener = Boolean(
-      appServerCommand &&
-        port &&
-        deps.listeningPids(port).includes(appServerPid)
-    );
-    signalOwnedProcess(
-      result,
-      appServerPid,
-      appServerCommand && ownsListener,
-      command ? "app-server-identity-mismatch" : "app-server-not-running",
-      deps.signal
-    );
+  if (manifest && appServerPid) {
+    signalRunAppServer(result, runDir, manifest, appServerPid, deps);
   }
   return result;
 };
 
+const WHITESPACE_SPLIT_RE = /\s+/;
+
 /**
- * Another live run that records the run's Codex app-server (its pid or
- * group) in a record other than its ppid walk, or whose run directory,
- * socket, session or run id its command line names, or `undefined`. The
- * app-server is the run's own explicit record: the only other-run record
- * that can name it too is a walk record (`agent-group-*`), which does not
- * count for it, so other runs that cannot be read do not stop its cleanup;
- * one that is shared does.
- * Without a process table the recorded pid itself is compared (as a process
- * of unknown start, which errs toward shared).
+ * Whether `command` is a Codex app-server listening on exactly `url`: an
+ * `app-server` argument and `--listen <url>` (or `--listen=<url>`) as whole
+ * arguments, as `codex-app-server.ts` launches it.
+ */
+export const commandListensOn = (command: string, url: string): boolean => {
+  const words = command.split(WHITESPACE_SPLIT_RE);
+  return (
+    words.includes("app-server") &&
+    words.some(
+      (word, index) =>
+        word === `--listen=${url}` ||
+        (word === "--listen" && words[index + 1] === url)
+    )
+  );
+};
+
+/**
+ * Why the live process `pid` is not provably this run's Codex app-server, or
+ * `undefined` when it is. The identity is bound positively, never by the
+ * absence of other runs' records: the manifest records the exact listen URL
+ * (`codexRemoteUrl`; a run recorded before it has none, and is unproven); the
+ * live command line is `app-server --listen <that URL>`; the process holds
+ * that port's listener; and it started no later than the manifest's last
+ * update (the record), on one process table snapshot. Ports and pids are
+ * reused, but a process created after the record is not the recorded one,
+ * and one that is not listening on the recorded URL is not this run's
+ * app-server.
+ */
+const appServerIdentityGap = (
+  manifest: RunManifest,
+  pid: number,
+  command: string,
+  table: readonly ProcessRow[] | undefined,
+  deps: RunProcessCleanupDeps
+): string | undefined => {
+  const url = manifest.codexRemoteUrl;
+  if (!url) {
+    return "the manifest records no codexRemoteUrl";
+  }
+  if (!commandListensOn(command, url)) {
+    return `its command does not listen on ${url}`;
+  }
+  const port = appServerPort(url);
+  if (!(port && deps.listeningPids(port).includes(pid))) {
+    return `it does not hold the listener of ${url}`;
+  }
+  if (!table) {
+    return "process table unavailable";
+  }
+  const row = table.find((entry) => entry.pid === pid);
+  const recordedMs = Date.parse(manifest.updatedAt);
+  if (!row || row.startedAtMs === undefined) {
+    return "its start time is unknown";
+  }
+  if (!(Number.isFinite(recordedMs) && row.startedAtMs <= recordedMs)) {
+    return `it started after the record (${manifest.updatedAt})`;
+  }
+  return undefined;
+};
+
+/**
+ * Ends the run's own Codex app-server only when its identity is bound
+ * positively (`appServerIdentityGap`) and no readable live run records it (in
+ * a record other than its ppid walk) or names it on its command line. Whether
+ * the other runs can all be read does not matter for a bound app-server: an
+ * unreadable run could hold only a walk record of it (ignored for an explicit
+ * record) or a recycled pid (rejected by the binding). An unbound one is
+ * never signalled, whatever the other runs say; the skip is logged with why,
+ * and with the unreadable state when there is one.
+ */
+const signalRunAppServer = (
+  result: RunProcessCleanupResult,
+  runDir: string,
+  manifest: RunManifest,
+  pid: number,
+  deps: RunProcessCleanupDeps
+): void => {
+  const table = deps.processTable();
+  const shared = appServerSharedWith(runDir, manifest, pid, table, deps);
+  if (shared.kind === "shared") {
+    result.skipped.push({
+      detail: `codexAppServerPid: ${shared.source}`,
+      otherRunId: shared.otherRunId,
+      pid,
+      reason: "shared-process-skipped",
+    });
+    return;
+  }
+  const command = deps.commandForPid(pid);
+  if (!command) {
+    result.skipped.push({ pid, reason: "app-server-not-running" });
+    return;
+  }
+  const gap = appServerIdentityGap(manifest, pid, command, table, deps);
+  if (gap) {
+    result.skipped.push({
+      detail: `identity not proven: ${gap}${shared.kind === "unknown" ? `; other runs unreadable: ${shared.reason}` : ""}`,
+      pid,
+      reason: "app-server-identity-mismatch",
+    });
+    return;
+  }
+  signalOwnedProcess(result, pid, true, "", deps.signal);
+};
+
+/**
+ * Whether a live run records the run's Codex app-server (its pid or group) in
+ * a record other than its ppid walk, or its command line names that run's
+ * directory, socket, session or run id. The app-server is the run's own
+ * explicit record: another run's walk only saw it descend from that run's
+ * panes (this run was launched from one of them), and must not stop its
+ * owner's teardown from ending it. With some runs unreadable, the readable
+ * ones are still consulted (`sharedWithOtherRun`). Without a process table
+ * the recorded pid itself is compared (as a process of unknown start, which
+ * errs toward shared).
  */
 const appServerSharedWith = (
   runDir: string,
   manifest: RunManifest | undefined,
   pid: number,
+  table: readonly ProcessRow[] | undefined,
   deps: RunProcessCleanupDeps
-): { otherRunId: string; source: string } | undefined => {
-  const table = deps.processTable();
+): SharedWith => {
   const members = table
     ? membersOf(pid, "process", table)
     : [{ pgid: pid, pid, ppid: 0, startedAtMs: undefined }];
   let index: ReturnType<OwnershipProbes["otherRunIndex"]> | undefined;
-  const shared = sharedWithOtherRun({
+  return sharedWithOtherRun({
     commands: deps.commandTable,
-    // The app-server is this run's explicit record: another run's walk only
-    // saw it descend from that run's panes (this run was launched from one
-    // of them), and must not stop its owner's teardown from ending it.
     ignoreWalkRecords: true,
     index: () => {
-      index ??= deps.otherRunIndex(runDir);
+      index ??= deps.otherRunIndex(runDir, table);
       return index;
     },
     members,
     pgid: pid,
     self: selfOf(manifest),
   });
-  return shared.kind === "shared"
-    ? { otherRunId: shared.otherRunId, source: shared.source }
-    : undefined;
 };
 
 /**

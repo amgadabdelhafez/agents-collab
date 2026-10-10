@@ -1,11 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { tmuxRuntimeAbsentForManifestSync } from "./launch-reservation";
 import {
   ancestorsOf,
   descendantsOf,
+  isSignallableGroup,
   type ProcessRow,
+  type ProcessSnapshot,
   parentChainOf,
+  readCommandTable,
   readProcessTable,
   type TerminationTarget,
 } from "./process-group";
@@ -16,6 +20,7 @@ import {
 import {
   buildManifestPath,
   isActiveRunState,
+  latestInstant,
   type RecordedRunPid,
   type RunManifest,
   readAuxiliaryRunPids,
@@ -39,7 +44,9 @@ import {
  * Rules (`classifyGroup`), first match wins:
  *
  * 1. `shared-process-skipped`: another run that is not provably dead (its
- *    manifest is active, or unreadable) records the process or its group (its
+ *    manifest is active or unreadable, or terminal while a process it
+ *    records still lives or its tmux runtime is not positively gone, see
+ *    `terminalRunMayBeLive`) records the process or its group (its
  *    pid, launch attempt, Codex app-server, bridge worker, `run-processes/`
  *    records or utility worker claims), or a member's command line names that
  *    run's directory, tmux socket, tmux session or `--run-id`. For a walked
@@ -55,9 +62,14 @@ import {
  *    another run.
  * 2. `ownership-unknown`: the other runs cannot all be read, or the group is
  *    not in the process table. A walked group is never signalled; release
- *    evidence. An explicit record of the run's own is judged by rule 1 alone:
- *    the only other-run record that could name it is a walk record, which
- *    rule 1 ignores for it.
+ *    evidence. An explicit record of the run's own is judged by rule 1 on the
+ *    runs that CAN be read, and is signalled only when a positive identity
+ *    binds it to this run, never because the other runs say nothing: the
+ *    app-server by its exact recorded listen URL, listener and start time
+ *    (`run-process-cleanup`), a pane group or worker target by the reference
+ *    instant it is re-identified against before every signal, a worker also
+ *    by its exact command. An explicit target with no such identity is not
+ *    signalled while the other runs cannot be read.
  * 3. `run-owned`: a recorded process of the run's own (an agent pane group,
  *    its manifest's app-server), or a walked group that still has a member
  *    descending from one of the run's live pane processes.
@@ -107,13 +119,37 @@ export interface OtherRunReference extends RecordedRunPid {
   readonly runId: string;
 }
 
+export interface ReadOtherRuns {
+  readonly references: readonly OtherRunReference[];
+  readonly runs: readonly OtherRunIdentity[];
+}
+
 export type OtherRunIndex =
+  | ({ readonly kind: "read" } & ReadOtherRuns)
   | {
-      readonly kind: "read";
-      readonly references: readonly OtherRunReference[];
-      readonly runs: readonly OtherRunIdentity[];
-    }
-  | { readonly kind: "unknown"; readonly reason: string };
+      readonly kind: "unknown";
+      /**
+       * The runs that could be read, when some could not. Only the run's
+       * own explicit records consult it (see `sharedWithOtherRun`): a
+       * readable live run that records or names one makes it shared,
+       * whatever the unreadable ones hold.
+       */
+      readonly readable?: ReadOtherRuns;
+      readonly reason: string;
+    };
+
+export interface OtherRunIndexOptions {
+  /**
+   * Whether a run's tmux runtime is positively gone, by the release rule
+   * (`tmuxRuntimeAbsentForManifestSync`).
+   */
+  readonly runtimeAbsent?: (manifestPath: string) => boolean;
+  /**
+   * The process table snapshot a terminal run's recorded processes are
+   * judged on. Absent, one is read (once) when a terminal run needs it.
+   */
+  readonly table?: readonly ProcessRow[];
+}
 
 const realOrResolved = (path: string): string => {
   try {
@@ -229,12 +265,103 @@ const readLooseManifest = (
   };
 };
 
+/** What a terminal run's death is judged on (see `terminalRunMayBeLive`). */
+interface DeadRunProbe {
+  readonly runtimeAbsent: (manifestPath: string) => boolean;
+  readonly table: () => readonly ProcessRow[] | undefined;
+}
+
+/** A launch GC released without ever binding a tmux session. */
+const neverBound = (manifest: RunManifest): boolean =>
+  manifest.workspaceReleaseKind === "abandoned-never-bound" &&
+  !manifest.tmuxSession &&
+  !manifest.tmuxPaneLeft &&
+  !manifest.tmuxPaneRight &&
+  !manifest.tmuxPaneGoverness &&
+  !manifest.tmuxPaneAuPair &&
+  !manifest.tmuxPaneNanny &&
+  !manifest.tmuxPaneRecon?.length;
+
 /**
- * A run is provably dead only when its manifest is readable and in a terminal
- * state; an active or unreadable manifest is live. A directory with neither a
- * manifest nor process records is not a run.
+ * Why a run whose manifest is terminal may still be live, or `undefined` when
+ * it is provably dead, on the release's own evidence: its pid and launch
+ * attempt, and every process and group it records (app-server, bridge worker,
+ * `run-processes/` records, utility worker claims), are gone from one process
+ * table snapshot or provably later processes (started after the later of its
+ * handback and its last update, or after the record's own instant), AND its
+ * tmux runtime is positively gone (the release rule; a never-bound launch has
+ * none). A terminal manifest alone proves nothing: a run marked stopped whose
+ * teardown could not end a process still holds it.
  */
-const readOtherRunManifest = (runDir: string): OtherRunManifest => {
+const terminalRunMayBeLive = (
+  manifestPath: string,
+  manifest: RunManifest,
+  probe: DeadRunProbe
+): string | undefined => {
+  const table = probe.table();
+  if (!table) {
+    return "process table unavailable";
+  }
+  const rows = new Map(table.map((row) => [row.pid, row]));
+  const pidLive = (pid: number, at: string): boolean => {
+    const row = rows.get(pid);
+    const atMs = Date.parse(at);
+    return Boolean(
+      row &&
+        (row.startedAtMs === undefined ||
+          !Number.isFinite(atMs) ||
+          row.startedAtMs <= atMs)
+    );
+  };
+  // The group rule of the release (`groupCanStillOwnRun`): a live leader is
+  // judged by its start alone; with it gone, any member keeps the group live.
+  const groupLive = (pgid: number, at: string): boolean =>
+    isSignallableGroup(pgid) &&
+    (rows.has(pgid)
+      ? pidLive(pgid, at)
+      : table.some((row) => row.pgid === pgid));
+  const reference = latestInstant(
+    ...[manifest.workspaceReleasedAt, manifest.updatedAt].filter(
+      (value): value is string => typeof value === "string"
+    )
+  );
+  for (const [source, pid] of [
+    ["pid", manifest.pid],
+    ["launchAttemptPid", manifest.launchAttemptPid],
+  ] as const) {
+    if (isPositiveSafe(pid) && pidLive(pid, reference)) {
+      return `its ${source} ${pid} may be live`;
+    }
+  }
+  const auxiliary = readAuxiliaryRunPids(manifestPath, manifest, reference);
+  if (auxiliary.kind === "unreadable") {
+    return auxiliary.reason;
+  }
+  const live = auxiliary.pids.find((entry) =>
+    entry.group
+      ? groupLive(entry.pid, entry.reference)
+      : pidLive(entry.pid, entry.reference)
+  );
+  if (live) {
+    return `its ${live.source} ${live.pid} may be live`;
+  }
+  if (!(neverBound(manifest) || probe.runtimeAbsent(manifestPath))) {
+    return `its tmux session ${manifest.tmuxSession ?? "(none recorded)"} is not positively gone`;
+  }
+  return undefined;
+};
+
+/**
+ * A run is provably dead only when its manifest is readable, in a terminal
+ * state, and every process it records and its tmux runtime are positively
+ * gone (`terminalRunMayBeLive`); an active, unreadable, or terminal but not
+ * provably dead manifest is live. A directory with neither a manifest nor
+ * process records is not a run.
+ */
+const readOtherRunManifest = (
+  runDir: string,
+  probe: DeadRunProbe
+): OtherRunManifest => {
   const manifestPath = buildManifestPath(runDir);
   if (!existsSync(manifestPath)) {
     const hasEvidence =
@@ -248,17 +375,20 @@ const readOtherRunManifest = (runDir: string): OtherRunManifest => {
   if (!manifest) {
     return readLooseManifest(manifestPath, basename(runDir));
   }
-  return isActiveRunState(manifest.state)
-    ? { kind: "live", manifest, runId: manifest.runId }
-    : { kind: "dead" };
+  if (isActiveRunState(manifest.state)) {
+    return { kind: "live", manifest, runId: manifest.runId };
+  }
+  return terminalRunMayBeLive(manifestPath, manifest, probe) === undefined
+    ? { kind: "dead" }
+    : { kind: "live", manifest, runId: manifest.runId };
 };
 
 /**
  * One other run directory and every process it records. A live run whose
  * evidence cannot be read makes the whole index unknown.
  */
-const readOtherRun = (runDir: string): OtherRunRead => {
-  const read = readOtherRunManifest(runDir);
+const readOtherRun = (runDir: string, probe: DeadRunProbe): OtherRunRead => {
+  const read = readOtherRunManifest(runDir, probe);
   if (read.kind !== "live") {
     return read;
   }
@@ -326,33 +456,44 @@ const listRunDirectories = (
 /**
  * Every run other than `selfRunDir` under `roots` that is not provably dead,
  * with every process it records. `unknown` when any of them (or a root)
- * cannot be read.
+ * cannot be read; it then still carries the runs that could be (`readable`).
  */
 export const readOtherRunIndex = (
   selfRunDir: string,
-  roots: readonly string[]
+  roots: readonly string[],
+  options: OtherRunIndexOptions = {}
 ): OtherRunIndex => {
   const self = new Set([resolve(selfRunDir), realOrResolved(selfRunDir)]);
   const listed = listRunDirectories(roots);
   if (listed.kind === "unknown") {
-    return listed;
+    return { ...listed, readable: { references: [], runs: [] } };
   }
+  const probe: DeadRunProbe = {
+    runtimeAbsent:
+      options.runtimeAbsent ??
+      ((manifestPath) => tmuxRuntimeAbsentForManifestSync(manifestPath)),
+    table: options.table ? () => options.table : memo(readProcessTable),
+  };
   const runs: OtherRunIdentity[] = [];
   const references: OtherRunReference[] = [];
+  let unreadable: string | undefined;
   for (const runDir of listed.runDirs) {
     if (self.has(resolve(runDir)) || self.has(realOrResolved(runDir))) {
       continue;
     }
-    const read = readOtherRun(runDir);
+    const read = readOtherRun(runDir, probe);
     if (read.kind === "unknown") {
-      return read;
+      unreadable ??= read.reason;
+      continue;
     }
     if (read.kind === "live") {
       runs.push(read.identity);
       references.push(...read.references);
     }
   }
-  return { kind: "read", references, runs };
+  return unreadable === undefined
+    ? { kind: "read", references, runs }
+    : { kind: "unknown", readable: { references, runs }, reason: unreadable };
 };
 
 const REGEX_META_RE = /[.*+?^${}()|[\]\\]/g;
@@ -509,7 +650,17 @@ export const WALK_RECORD_SOURCE_RE = /^run-processes\/agent-group-\d+\.json$/;
 export const sharedWithOtherRun = (input: SharedCheckInput): SharedWith => {
   const index = input.index();
   if (index.kind === "unknown") {
-    return index;
+    // For an explicit record of this run's own, a readable live run that
+    // records or names it still makes it shared, whatever the unreadable
+    // runs hold. A walked group stays unknown.
+    const readable = input.ignoreWalkRecords ? index.readable : undefined;
+    const shared = readable
+      ? (recordedByOtherRun(readable.references, input) ??
+        namedByOtherRun(readable.runs, input))
+      : undefined;
+    return shared?.kind === "shared"
+      ? shared
+      : { kind: "unknown", reason: index.reason };
   }
   return (
     recordedByOtherRun(index.references, input) ??
@@ -810,29 +961,6 @@ const walkedGroupsOf = (runDir: string): Map<number, WalkedGroup> =>
     ])
   );
 
-const COMMAND_ROW_RE = /^\s*(\d+)\s+(.*)$/;
-
-/** One snapshot of every process's command line, or `undefined`. */
-export const readCommandTable = (): Map<number, string> | undefined => {
-  const result = spawnSync("/bin/ps", ["-axww", "-o", "pid=,command="], {
-    encoding: "utf8",
-    env: { ...process.env, LANG: "C", LC_ALL: "C" },
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: 5000,
-  });
-  if (result.status !== 0 || result.error) {
-    return undefined;
-  }
-  const commands = new Map<number, string>();
-  for (const line of result.stdout.split("\n")) {
-    const match = COMMAND_ROW_RE.exec(line);
-    if (match) {
-      commands.set(Number.parseInt(match[1] ?? "", 10), match[2] ?? "");
-    }
-  }
-  return commands.size > 0 ? commands : undefined;
-};
-
 const SYSTEM_LSOF = "/usr/sbin/lsof";
 
 /** The cwd of `pid` (`lsof -a -p <pid> -d cwd`), or `undefined`. */
@@ -871,15 +999,24 @@ const memo = <T>(read: () => T): (() => T) => {
 export interface OwnershipProbes {
   commandTable: () => ReadonlyMap<number, string> | undefined;
   cwdOfPid: (pid: number) => string | undefined;
-  otherRunIndex: (runDir: string) => OtherRunIndex;
+  /**
+   * The other runs, judged (for a terminal one, whether it is provably dead)
+   * on `table` when the caller has a snapshot.
+   */
+  otherRunIndex: (
+    runDir: string,
+    table?: readonly ProcessRow[]
+  ) => OtherRunIndex;
   processTable: () => readonly ProcessRow[] | undefined;
 }
 
 export const defaultOwnershipProbes: OwnershipProbes = {
   commandTable: readCommandTable,
   cwdOfPid: readCwdOfPid,
-  otherRunIndex: (runDir) =>
-    readOtherRunIndex(runDir, defaultStorageRoots(runDir)),
+  otherRunIndex: (runDir, table) =>
+    readOtherRunIndex(runDir, defaultStorageRoots(runDir), {
+      ...(table ? { table } : {}),
+    }),
   processTable: readProcessTable,
 };
 
@@ -914,7 +1051,7 @@ export const ownershipContext = (input: {
   return {
     commands: memo(input.probes.commandTable),
     cwdOfPid: input.probes.cwdOfPid,
-    index: memo(() => input.probes.otherRunIndex(input.runDir)),
+    index: memo(() => input.probes.otherRunIndex(input.runDir, input.table)),
     livePaneIds: new Set(panes.map((pane) => pane.paneId)),
     paneRoots: panes.map((pane) => pane.pid),
     paneStops: paneStopsOf(input.runDir),
@@ -991,13 +1128,17 @@ export interface SharedTargetSkip {
 }
 
 /**
- * The pre-signal shared-process check of a teardown: on a fresh table and a
- * fresh read of the other runs, every target another live run records or
- * names is skipped (for an `inferred` target, also when it names one of its
- * members' ancestors; for any other target, never by another run's walk
- * record alone), and so is every `inferred` target when the other runs
- * cannot be read. Keys are `kind:id`. Without a table every inferred target
- * is skipped (its ownership cannot be judged) and the others pass.
+ * The pre-signal shared-process check of a teardown: on the signal round's
+ * process snapshot (`ProcessSnapshot`: the same table and command lines the
+ * round's identity re-check reads; a fresh read without one) and a fresh read
+ * of the other runs, every target another live run records or names is
+ * skipped (for an `inferred` target, also when it names one of its members'
+ * ancestors; for any other target, never by another run's walk record alone,
+ * and also when a readable run records it while others cannot be read). When
+ * the other runs cannot all be read, every `inferred` target is skipped, and
+ * so is an explicit target that carries no positive identity (neither a
+ * reference instant nor a worker identity). Keys are `kind:id`. Without a
+ * table every inferred target is skipped (its ownership cannot be judged).
  */
 export const sharedTargetCheck =
   (
@@ -1005,11 +1146,14 @@ export const sharedTargetCheck =
     manifest: () => RunManifest | undefined,
     probes: OwnershipProbes = defaultOwnershipProbes
   ) =>
-  (targets: readonly TerminationTarget[]): Map<string, SharedTargetSkip> => {
+  (
+    targets: readonly TerminationTarget[],
+    snapshot?: ProcessSnapshot
+  ): Map<string, SharedTargetSkip> => {
     const skips = new Map<string, SharedTargetSkip>();
-    const table = probes.processTable();
-    const commands = memo(probes.commandTable);
-    const index = memo(() => probes.otherRunIndex(runDir));
+    const table = snapshot ? snapshot.table : probes.processTable();
+    const commands = snapshot ? snapshot.commands : memo(probes.commandTable);
+    const index = memo(() => probes.otherRunIndex(runDir, table));
     const self = selfOf(manifest());
     const stops = memo(() => paneStopsOf(runDir));
     for (const target of targets) {
@@ -1034,7 +1178,12 @@ export const sharedTargetCheck =
     return skips;
   };
 
-/** A target is skipped when shared, or when inferred and not judgeable. */
+/**
+ * A target is skipped when shared. When its ownership cannot be judged, an
+ * inferred target always is, and an explicit one unless a positive identity
+ * binds it to this run (a reference instant it is re-identified against, or
+ * a worker identity).
+ */
 const targetSkip = (
   shared: SharedWith,
   target: TerminationTarget
@@ -1046,7 +1195,16 @@ const targetSkip = (
       reason: "shared-process-skipped",
     };
   }
-  return shared.kind === "unknown" && target.ownership === "inferred"
-    ? { detail: shared.reason, reason: "ownership-unknown" }
+  if (shared.kind !== "unknown") {
+    return undefined;
+  }
+  if (target.ownership === "inferred") {
+    return { detail: shared.reason, reason: "ownership-unknown" };
+  }
+  return target.reference === undefined && target.identity === undefined
+    ? {
+        detail: `${shared.reason}; no identity binds it to this run`,
+        reason: "ownership-unknown",
+      }
     : undefined;
 };

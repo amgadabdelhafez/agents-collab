@@ -46,6 +46,7 @@ import {
   pidCanStillOwnRun,
 } from "../../src/loop/pid-ownership";
 import {
+  defaultStillRecorded,
   type GroupOwnershipProbe,
   groupCanStillOwnRun,
   processGroupAlive,
@@ -1145,6 +1146,58 @@ test("stale recovery ends a timed-out worker's whole process group, and only an 
   }
 });
 
+test("stale recovery re-checks the worker's exact run, epoch and job command on each round's snapshot, right before the SIGTERM and right before the SIGKILL", async () => {
+  // `round` counts the snapshots taken; `commandAt(round)` is the leader's
+  // command line in that snapshot.
+  const run = async (commandAt: (round: number, runDir: string) => string) => {
+    const { repoRoot, runDir } = staleRun();
+    try {
+      writeTimedOutJob(runDir, "timed-out", 4444);
+      const world = newWorld([4444], [4444]);
+      let round = 0;
+      const deps = fakeTermination(world, {
+        snapshot: () => {
+          round += 1;
+          const command = commandAt(round, runDir);
+          return {
+            commands: () => new Map([[4444, command]]),
+            table: [{ pgid: 4444, pid: 4444, ppid: 1, startedAtMs: -1 }],
+          };
+        },
+        // The production re-identification, on the round's snapshot.
+        stillRecorded: defaultStillRecorded,
+      });
+      utilityWorkerTerminationInternals.terminationDeps = () => deps;
+      // The identification before the first round sees the worker.
+      utilityWorkerTerminationInternals.commandForPid = () =>
+        workerCommand(runDir, 22, "timed-out");
+      await processStaleJobs(repoRoot, runDir);
+      return deps.signals;
+    } finally {
+      rmSync(repoRoot, { force: true, recursive: true });
+    }
+  };
+  // Still the worker in both rounds: SIGTERM, then SIGKILL.
+  expect(
+    await run((_round, runDir) => workerCommand(runDir, 22, "timed-out"))
+  ).toEqual(["-4444:SIGTERM", "-4444:SIGKILL"]);
+  // The leader runs something else by the SIGKILL round: no SIGKILL.
+  expect(
+    await run((round, runDir) =>
+      round === 1
+        ? workerCommand(runDir, 22, "timed-out")
+        : "/usr/bin/vim notes.txt"
+    )
+  ).toEqual(["-4444:SIGTERM"]);
+  // Another epoch's or job's worker by the first round: never signalled.
+  expect(
+    await run((_round, runDir) => workerCommand(runDir, 23, "timed-out"))
+  ).toEqual([]);
+  expect(
+    await run((_round, runDir) => workerCommand(runDir, 22, "other-job"))
+  ).toEqual([]);
+});
+
 // --- Startup GC ---------------------------------------------------------------
 
 const writeGcRun = (
@@ -1295,6 +1348,10 @@ test("startup GC keeps an app-server it signalled recorded while it is still exi
         pidAlive: (pid) => world.livePids.has(pid),
         pidStartedAt: () => undefined,
         processGroupAlive: () => false,
+        // The app-server started before the run's manifest recorded it.
+        processTable: () => [
+          { pgid: 8801, pid: 8801, ppid: 1, startedAtMs: 0 },
+        ],
         runtimeAbsent: () => true,
         signal: (pid) => {
           signals.push(pid);

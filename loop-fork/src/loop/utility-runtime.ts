@@ -309,13 +309,18 @@ const terminateUtilityWorker = async (
     return false;
   }
   const deps = hooks.terminationDeps();
-  // Identified just now: the SIGKILL after the grace re-identifies the group
-  // against this instant, so an id reused during the grace is not signalled.
+  // Identified just now. Right before every signal round (the SIGTERM, and
+  // the SIGKILL after the grace) the target is re-identified on that round's
+  // process snapshot: against this instant, so an id reused since is not
+  // signalled, and, while the leader lives, against the worker command of
+  // exactly this run directory, epoch and job, so a leader that no longer
+  // runs it is not signalled either.
   const reference = new Date(deps.nowMs()).toISOString();
   const source = `utility job ${identity.jobId} worker`;
+  const identified = { id: pid, identity, reference, source };
   const target: TerminationTarget = deps.processGroupAlive(pid)
-    ? { id: pid, kind: "group", reference, source }
-    : { id: pid, kind: "process", reference, source };
+    ? { ...identified, kind: "group" }
+    : { ...identified, kind: "process" };
   const result = await terminateTargets([target], deps);
   return result.survivors.length === 0 && result.failed.length === 0;
 };
