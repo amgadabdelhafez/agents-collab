@@ -1,7 +1,14 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawn } from "bun";
 import type { ImmediateInfoRequest } from "../src/loop/args";
 import { HELP, RECONCILE_USAGE } from "../src/loop/constants";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
@@ -1193,6 +1200,64 @@ for (const kind of ["failed-terminal", "failed-start"] as const) {
     });
   });
 }
+
+test("runCli reconcile stopped-run does not wait on a live process another live run records, when it works outside the workspace", async () => {
+  await withSyntheticHome(async (home) => {
+    const storage = writeSyntheticTerminalRun(home, "32", "stopped");
+    const elsewhere = mkdtempSync(join(tmpdir(), "loop-reconcile-other-ws-"));
+    // Another run's app-server: its own group, working in that run's
+    // workspace, recorded by this run's ppid walk.
+    const stub = spawn(["/bin/sleep", "30"], {
+      cwd: elsewhere,
+      detached: true,
+      stderr: "ignore",
+      stdin: "ignore",
+      stdout: "ignore",
+    });
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const later = new Date(Date.now() + 2000).toISOString();
+      mkdirSync(join(storage.runDir, "run-processes"), { recursive: true });
+      writeFileSync(
+        join(storage.runDir, "run-processes", `agent-group-${stub.pid}.json`),
+        `${JSON.stringify({
+          kind: "agent-descendant-group",
+          paneId: "%1",
+          pgid: stub.pid,
+          recordedAt: later,
+          runDir: storage.runDir,
+        })}\n`
+      );
+      const other = join(storage.storageRoot, "repo-other", "5");
+      writeRunManifest(join(other, "manifest.json"), {
+        ...createRunManifest({
+          codexAppServerPid: stub.pid,
+          cwd: elsewhere,
+          mode: "paired",
+          pid: 999_998,
+          repoId: "repo-other",
+          runId: "5",
+          state: "working",
+        }),
+        updatedAt: later,
+      });
+      const { runCli } = await loadRunCli({
+        closeGovernessBeatForTerminalRun: () => Promise.resolve(undefined),
+      });
+      await runCli(["reconcile", "stopped-run", "32"]);
+      expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toMatchObject({
+        runId: "32",
+        status: "changed",
+      });
+      expect(stub.killed).toBe(false);
+      expect(stub.exitCode).toBeNull();
+    } finally {
+      write.mockRestore();
+      stub.kill("SIGKILL");
+      rmSync(elsewhere, { force: true, recursive: true });
+    }
+  });
+});
 
 test("runCli reconcile kinds refuse a run in the other terminal state without writing", async () => {
   const cases = [

@@ -28,10 +28,12 @@ import { join } from "node:path";
 import { spawn } from "bun";
 import {
   confirmTeardownRelease,
+  defaultGovernessDeps,
   type GovernessConfig,
   type GovernessDeps,
   stopGovernessLoop,
 } from "../../src/loop/governess";
+import { reservePairedLaunch } from "../../src/loop/launch-reservation";
 import {
   defaultTerminationDeps,
   type ProcessRow,
@@ -69,6 +71,7 @@ import {
   recordedProcessClassifier,
   sharedTargetCheck,
 } from "../../src/loop/shared-process-ownership";
+import type { LaunchWorkspaceBinding, Options } from "../../src/loop/types";
 import { UTILITY_WORKER_SUBCOMMAND } from "../../src/loop/utility-constants";
 
 const RECORDED_AT = "2026-10-05T21:00:00.000Z";
@@ -989,6 +992,123 @@ const startStubAppServer = async (
   const stub = Number.parseInt(await readLine(shell.stdout), 10);
   return { shell, stub };
 };
+
+test("real: the launch auto-release of dead run A does not wait on the app-server live B records, and the new launch proceeds", async () => {
+  await withTwoRuns("working", {}, async ({ a, b, storage }) => {
+    const { shell, stub } = await startStubAppServer(b.workspace);
+    try {
+      expect(await waitFor(() => processGroupAlive(stub))).toBe(true);
+      const later = new Date(Date.now() + 2000).toISOString();
+      writeRunManifest(b.manifestPath, {
+        ...(readRunManifest(b.manifestPath) as RunManifest),
+        codexAppServerPid: stub,
+        updatedAt: later,
+      });
+      mkdirSync(join(a.runDir, "run-processes"), { recursive: true });
+      writeFileSync(
+        join(a.runDir, "run-processes", `agent-group-${stub}.json`),
+        `${JSON.stringify({
+          kind: "agent-descendant-group",
+          paneId: "%1",
+          pgid: stub,
+          recordedAt: later,
+          runDir: a.runDir,
+        })}\n`
+      );
+      const binding = readRunManifest(a.manifestPath)
+        ?.workspaceBinding as LaunchWorkspaceBinding;
+      const logs: string[] = [];
+      // Production probes and classifier (the reservation's defaults); only
+      // the tmux facts are faked: A's session is gone.
+      const claim = await reservePairedLaunch(
+        {
+          agent: "claude",
+          pairWith: "codex",
+          pairedMode: true,
+          tmux: true,
+        } as Options,
+        binding,
+        {
+          endpointState: () => "absent",
+          env: { LOOP_TMUX_SOCKET: "/tmp/ls-shared-test/launch.sock" },
+          home: join(storage, "..", ".."),
+          log: (line) => {
+            logs.push(line);
+          },
+          makeClaimId: () => "claim-shared",
+          now: () => new Date().toISOString(),
+          tmuxLiveness: () => "unknown",
+          uid: 501,
+        }
+      );
+      expect(claim).toMatchObject({ reserved: true });
+      expect(readRunManifest(a.manifestPath)?.workspaceReleasedAt).toEqual(
+        expect.any(String)
+      );
+      expect(logs.join("\n")).toContain("released workspace of dead run 1 ");
+      expect(processGroupAlive(stub)).toBe(true);
+    } finally {
+      killGroup(shell.pid);
+      killGroup(stub);
+    }
+  });
+});
+
+test("real: the governess's production termination and handback (its default deps) skip the group live B records and release A", async () => {
+  await withTwoRuns("working", {}, async ({ a, b }) => {
+    const { shell, stub } = await startStubAppServer(b.workspace);
+    try {
+      expect(await waitFor(() => processGroupAlive(stub))).toBe(true);
+      const later = new Date(Date.now() + 2000).toISOString();
+      writeRunManifest(b.manifestPath, {
+        ...(readRunManifest(b.manifestPath) as RunManifest),
+        codexAppServerPid: stub,
+        updatedAt: later,
+      });
+      mkdirSync(join(a.runDir, "run-processes"), { recursive: true });
+      writeFileSync(
+        join(a.runDir, "run-processes", `agent-group-${stub}.json`),
+        `${JSON.stringify({
+          kind: "agent-descendant-group",
+          paneId: "%1",
+          pgid: stub,
+          recordedAt: later,
+          runDir: a.runDir,
+        })}\n`
+      );
+      const config = {
+        manifestPath: a.manifestPath,
+        runDir: a.runDir,
+        runId: "1",
+      } as unknown as GovernessConfig;
+      const deps = defaultGovernessDeps();
+      const ended = await deps.terminateRunProcessGroups?.(config, [
+        {
+          id: stub,
+          kind: "group",
+          ownership: "inferred",
+          reference: later,
+          source: "agent %1 descendant",
+        },
+      ]);
+      expect(ended?.shared).toMatchObject([
+        { otherRunId: "2", reason: "shared-process-skipped" },
+      ]);
+      expect(processGroupAlive(stub)).toBe(true);
+      // The handback probes the run's own recorded socket, which no server
+      // listens on here, so the runtime is absent.
+      const released = await deps.releaseWorkspaceAfterTeardown?.(config);
+      expect(released).toMatchObject({ released: true });
+      expect(released?.detail).toContain(
+        `not counted: run-processes/agent-group-${stub}.json pid ${stub} (shared-process-skipped`
+      );
+      expect(processGroupAlive(stub)).toBe(true);
+    } finally {
+      killGroup(shell.pid);
+      killGroup(stub);
+    }
+  });
+});
 
 test("real: A's teardown leaves the app-server live B records running and releases; once B is dead, A ends it", async () => {
   await withTwoRuns("working", {}, async ({ a, b }) => {
