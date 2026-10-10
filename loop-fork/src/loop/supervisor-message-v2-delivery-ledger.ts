@@ -638,7 +638,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
    * message names none, so every deployment treats it as its own, as for
    * recovery (callers narrow it to a tenant).
    */
-  async #nonPrimaryKeyBindings(tenantId?: string): Promise<StoredBindingRow[]> {
+  async #nonPrimaryKeyBindings(
+    tenantId: string | undefined,
+    withoutSettled: boolean
+  ): Promise<StoredBindingRow[]> {
     const primary = this.#resultGraphKey?.fingerprint ?? null;
     return await this.#sql<StoredBindingRow[]>`
       SELECT binding.workflow_id, binding.a2a_task_id, binding.tenant_id, binding.principal,
@@ -651,15 +654,27 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         AND (binding.bound_by_deployment = ${this.#deployment} OR (binding.bound_by_deployment IS NULL AND (
           (intent.deployment = ${this.#deployment} AND intent.workflow_id LIKE ${DEPLOYMENT_WORKFLOW_ID_LIKE})
           OR (intent.deployment IS NULL AND intent.workflow_id NOT LIKE ${DEPLOYMENT_WORKFLOW_ID_LIKE}))))
+        AND NOT (${withoutSettled} AND EXISTS (SELECT 1 FROM loop_supervisor_message_v2_settled_result_binding settled
+          WHERE settled.workflow_id = binding.workflow_id AND settled.a2a_task_id = binding.a2a_task_id
+            AND settled.deployment = ${this.#deployment}))
       ORDER BY binding.tenant_id, binding.a2a_task_id, binding.workflow_id`;
   }
 
   /**
    * Drops the bindings the host reports as settled (`settled`), which need
-   * no result graph key any more. A failing check keeps the binding: an
-   * entry is never hidden because the A2A task store could not be read.
+   * no result graph key any more, and records each for this deployment so
+   * it is not read or checked again (#nonPrimaryKeyBindings). A failing
+   * check keeps the binding and records nothing: an entry is never hidden
+   * because the A2A task store could not be read. A failing record only
+   * means the binding is checked again next time.
    */
-  async #unsettled<T extends { a2aTaskId: string; tenantId: string }>(
+  async #unsettled<
+    T extends {
+      a2aTaskId: string;
+      messageWorkflowId: string;
+      tenantId: string;
+    },
+  >(
     entries: readonly (T & {
       binding: SupervisorA2AResultBinding;
       principal: string;
@@ -676,7 +691,12 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         : false;
       if (!done) {
         kept.push(entry as unknown as T);
+        continue;
       }
+      await this
+        .#sql`INSERT INTO loop_supervisor_message_v2_settled_result_binding (workflow_id, a2a_task_id, deployment)
+        VALUES (${entry.messageWorkflowId}, ${entry.a2aTaskId}, ${this.#deployment})
+        ON CONFLICT DO NOTHING`.catch(() => undefined);
     }
     return kept;
   }
@@ -697,7 +717,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       binding: SupervisorA2AResultBinding;
       principal: string;
     })[] = [];
-    for (const row of await this.#nonPrimaryKeyBindings(tenantId)) {
+    for (const row of await this.#nonPrimaryKeyBindings(
+      tenantId,
+      options.settled !== undefined
+    )) {
       const classified = this.#classify(row);
       if (
         classified?.standing.kind === "keyed" &&
@@ -825,6 +848,17 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       graph_workflow_id TEXT NOT NULL, graph_task_id TEXT NOT NULL,
       recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (workflow_id, a2a_task_id)
+    )`;
+    // Bindings a deployment's host found settled (published, or their A2A
+    // task ended without a result). Settling is final, so the binding is
+    // never checked again by that deployment: without this every rotation
+    // grew the set re-checked at each start and listing. Additive: an older
+    // build never reads it, and a missing row only means "check again".
+    await this
+      .#sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_settled_result_binding (
+      workflow_id TEXT NOT NULL, a2a_task_id TEXT NOT NULL, deployment TEXT NOT NULL,
+      settled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (workflow_id, a2a_task_id, deployment)
     )`;
     await this.#migrateResultGraphKeys();
     await this.#backfillResultGraphTasks();
@@ -1260,7 +1294,10 @@ export class PostgresSupervisorMessageV2DeliveryLedger
       binding: SupervisorA2AResultBinding;
       principal: string;
     })[] = [];
-    for (const row of await this.#nonPrimaryKeyBindings(tenantId)) {
+    for (const row of await this.#nonPrimaryKeyBindings(
+      tenantId,
+      options.settled !== undefined
+    )) {
       const classified = this.#classify(row);
       if (
         classified?.standing.kind === "unknown-key" &&

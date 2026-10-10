@@ -83,10 +83,6 @@ import {
 } from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
 import { resolveLaunchModel } from "./launch-defaults";
-import {
-  defaultPidOwnershipDeps,
-  pidCanStillOwnRun,
-} from "./launch-reservation";
 import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import {
   CLAUDE_NATIVE_FALLBACK_PROFILE,
@@ -100,6 +96,7 @@ import {
   ossConfigEnv,
 } from "./oss-adapter";
 import { preparePairedRun } from "./paired-options";
+import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import {

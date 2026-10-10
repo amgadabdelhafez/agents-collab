@@ -1107,8 +1107,11 @@ Roll forward again: put the V2 config back, point `LOOP_BIN` at the V2
 candidate, and kickstart. Held V2 executions resume (tested). Before the
 kickstart, check `bridge-dedupe-claims/` for stale claim files (Pre-upgrade
 checklist, item 4): a V2 process that step 4 ended inside an enqueue leaves
-one, 455ccc32 never removes it, and the V2 build would answer `deferred` to
-that message for as long as it stays. How the V2 runtime treats claim,
+one and 455ccc32 never removes it. A V2 build without claude/fix6-hygiene
+(r5 integration and earlier) would answer `deferred` to that message for as
+long as it stays; one with it reclaims the claim on the next enqueue once
+its owner pid is not running or was reused (see item 4). How the V2
+runtime treats claim,
 retry and escalation deadlines that passed during the rollback is
 unverified.
 
@@ -1269,10 +1272,11 @@ Before the V2 line replaces the live service:
      (0600, created with exclusive create, holding `<pid>:<uuid>`) for the
      length of the enqueue, removes it when the enqueue returns or throws,
      and answers `deferred` while the file exists; 455ccc32 has no claim
-     files and ignores the directory. Nothing recovers a stale claim: no
-     code checks the pid or the file's age, so a process that dies
-     mid-enqueue (a crash, `kill -9`, a restart that lands inside the
-     enqueue) leaves the file behind, and every later enqueue of that
+     files and ignores the directory. Up to r5 integration (9b3dca36)
+     nothing recovers a stale claim: no code checks the pid or the
+     file's age, so a process that dies mid-enqueue (a crash, `kill -9`,
+     a restart that lands inside the enqueue) leaves the file behind, and
+     every later enqueue of that
      message, same source, target and key, answers `deferred` until
      someone removes it. Supervisor delivery treats `deferred` as a
      transient failure, so that message is retried but not queued while
@@ -1280,10 +1284,19 @@ Before the V2 line replaces the live service:
      `enqueueBridgeMessage`, bridge-supervisor-message-delivery.ts at
      9b3dca36; reproduced 2026-10-09 in a scratch run directory: a claim
      acquired and never released, three enqueues under its key all
-     `deferred`, another key `queued`). Pre-existing on the V2 line, not
-     fixed here. So before an upgrade, after it, and before and after any
-     rollback or roll forward, list `bridge-dedupe-claims/` in the run
-     directory of every supervisor with a `manifestPath`, and of any
+     `deferred`, another key `queued`). Pre-existing on the V2 line up to
+     r5 integration. Since claude/fix6-hygiene (6f560720, merged on r6
+     integration, claude/fix-integration-r6-2026-10-09), an enqueue that
+     finds a claim reclaims it only when its owner pid is not running, or
+     is running but started after the claim was written (a reused pid); a
+     claim whose owner is alive with an unknown or not later start time,
+     or whose owner token cannot be parsed, is never reclaimed and still
+     answers `deferred` (bridge-store.ts, pid-ownership.ts
+     `pidCanStillOwnRun`; tests/loop/bridge-dedupe-claim-reclaim.test.ts).
+     Earlier V2 builds never reclaim. So before an upgrade, after it, and
+     before and after any rollback or roll forward, list
+     `bridge-dedupe-claims/` in the run directory of every supervisor
+     with a `manifestPath`, and of any
      run whose own processes run a V2-line build (governess controls and
      the bridge tool's `dedupe_key` take claims too). With every process
      that writes that run's bridge stopped, any file there is stale. While
@@ -1381,14 +1394,14 @@ What a host does with its keys:
   bind naming a graph derived under one is refused, 409
   `{"code": "result-graph-under-previous-key"}` (a2a-supervisor-assignment-http.ts:71-77),
   except an exact retry of the binding already recorded while it still holds
-  its graph task (supervisor-message-v2-delivery-ledger.ts:1334-1381).
+  its graph task (supervisor-message-v2-delivery-ledger.ts:1371-1418).
 - A binding derived under a previous key still publishes. A binding derived
   under a key the host does not hold is refused on publish with an error
   naming the key's fingerprint, and reported (`unknown-result-graph-key`).
 - Each binding records the fingerprint of its key
   (`rgk:` + 16 hex digits, not reversible) and the deployment (task queue)
   that recorded it, in the additive column `bound_by_deployment`
-  (supervisor-message-v2-delivery-ledger.ts:1145-1149).
+  (supervisor-message-v2-delivery-ledger.ts:1179-1183).
 - `loop orchestration result-graph-key-fingerprints <config-path>` prints
   `<ENV> <primary|previous> <fingerprint>` per configured key, never a key
   (loop-orchestration-server.ts:1650-1675). Use it to match a fingerprint in
@@ -1397,7 +1410,7 @@ What a host does with its keys:
 Whose bindings a host classifies (round-4 major 1). Keys belong to a
 deployment, so a host classifies, lists and reports only its own
 deployment's bindings, never those of another deployment sharing the ledger
-database (supervisor-message-v2-delivery-ledger.ts:626-659):
+database (supervisor-message-v2-delivery-ledger.ts:626-661):
 
 - a binding recorded by this build belongs to the deployment that recorded
   it;
@@ -1424,7 +1437,7 @@ result (failed, canceled or rejected), since publication is then refused
 forever. A missing task, a COMPLETED task that does not hold the message's
 accepted artifact, or a task-store read that fails, counts as not settled,
 so nothing is hidden (supervisor-a2a-v2-service.ts:644-673;
-supervisor-message-v2-delivery-ledger.ts:661-686; owner decision
+supervisor-message-v2-delivery-ledger.ts:663-702; owner decision
 2026-10-09). Tests: "a host holding no result graph key names the key …"
 and "with legacy workflow ids, …" (a missing task), and, added 2026-10-09
 on claude/fix6-runbook-tests, "a COMPLETED A2A task without the message's
@@ -1436,10 +1449,49 @@ start lines and listing once their key is removed. A settled binding stays
 recorded under its key; after that key is removed, re-publishing its
 already published result is refused with the unknown-key error.
 
+Settling is final, so a deployment checks a binding against its A2A task
+store until it settles and never again (claude/fix6-hygiene). Each settled
+binding is recorded per deployment in the additive table
+`loop_supervisor_message_v2_settled_result_binding` (workflow id, A2A task
+id, deployment), and the start report and the GET read only bindings not
+recorded there. Before, every start and every GET re-checked every binding
+under a non-primary key, and each rotation added more. A missing task, a
+task without its accepted-result artifact and a failing read are never
+recorded, so they are checked again each time. An older build never reads
+the table; deleting its rows only makes the host check those bindings again
+(supervisor-a2a-result-key-rotation, 20 tests on claude/fix6-hygiene and
+22 on r6 integration with claude/fix6-runbook-tests' two: "a settled binding is
+remembered durably: ..." and "a settled binding is remembered per
+deployment: ...").
+
 Authenticated `GET <routePath>/assignment` adds
 `"underPreviousResultGraphKey": [{"a2aTaskId", "graphTaskId", "graphWorkflowId", "keyFingerprint", "messageWorkflowId"}]`:
 this route tenant's unsettled bindings under a previous key of this
 deployment. /healthz carries no binding, key or fingerprint.
+
+Do not rename the task queue during a key rotation. The host's task queue
+(`taskQueue`, the orchestration config key) is its deployment: the ledger
+classifies, lists and reports only the bindings whose `bound_by_deployment`
+is that name (or whose deployment-format message its start intent assigns
+to it), and the settled record above is kept per deployment. A host
+restarted under a new task queue name owns none of the bindings recorded
+under the old name, so:
+
+- `underPreviousResultGraphKey` and the `unknown-result-graph-key` start
+  lines stop naming them, and the retirement check below passes while
+  bindings under the previous key are still waiting to publish. Removing
+  that key then strands them: they can never publish;
+- deployment-format message ids are minted for the deployment, so messages
+  started under the old name are another deployment's messages to the
+  renamed host;
+- every binding is checked against the A2A task store again, once, under
+  the new name.
+
+Keep the task queue name unchanged from step 1 of the rotation until the
+retirement check has passed and the previous key's variable is removed. If
+a rename is needed, do it on its own, outside any rotation, after every
+previous key has been retired and every binding the host still lists has
+settled.
 
 Rotation procedure:
 

@@ -45,12 +45,60 @@ import {
   type WorkflowSignalCommand,
   type WorkflowStartCommand,
 } from "../../src/loop/workflow-port";
-import {
-  deriveSupervisorMessageV2WorkflowId as baseEraContractId,
-  deriveSupervisorMessageV2ResultGraphWorkflowId as baseEraResultGraphId,
-} from "../fixtures/base-era-40097564/supervisor-message-v2-contract";
-import { PostgresSupervisorMessageV2DeliveryLedger as BaseEraLedger } from "../fixtures/base-era-40097564/supervisor-message-v2-delivery-ledger";
 import { DisposablePostgres } from "../support/disposable-postgres";
+
+/**
+ * The base-era build's own ledger code: the files of 40097564 this ledger
+ * class needs, vendored unmodified under tests/fixtures. Each is pinned to
+ * its git blob id at that commit, so the rollback tests below run the code a
+ * rollback runs, not a re-statement of it. They are an old build, so the
+ * project typecheck excludes them and they load by path, like the deployed
+ * builds in orchestration-rollback-to-deployed.test.ts; the shapes below are
+ * only what these tests call.
+ */
+const BASE_ERA_DIR = join(import.meta.dir, "../fixtures/base-era-40097564");
+interface BaseEraLedgerInstance {
+  bindResult(
+    scope: TrustedSupervisorMessageV2Scope,
+    binding: SupervisorA2AResultBinding
+  ): Promise<void>;
+  close(): Promise<void>;
+  migrate(): Promise<void>;
+  recordStartIntent(
+    workflowId: string,
+    scope: TrustedSupervisorMessageV2Scope,
+    input: SupervisorMessageV2Input
+  ): Promise<SupervisorMessageV2Input>;
+  recordTerminalOutcome(
+    workflowId: string,
+    scope: TrustedSupervisorMessageV2Scope,
+    outcome: "acknowledged"
+  ): Promise<void>;
+  recoverableStarts(): Promise<readonly { workflowId: string }[]>;
+  resultBinding(
+    scope: TrustedSupervisorMessageV2Scope,
+    workflowId: string,
+    taskId: string
+  ): Promise<SupervisorA2AResultBinding | undefined>;
+}
+const baseEraContract: {
+  deriveSupervisorMessageV2ResultGraphWorkflowId(
+    scope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): string;
+  deriveSupervisorMessageV2WorkflowId(
+    scope: TrustedSupervisorMessageV2Scope,
+    dedupeKey: string
+  ): string;
+} = await import(join(BASE_ERA_DIR, "supervisor-message-v2-contract.ts"));
+const baseEraContractId = baseEraContract.deriveSupervisorMessageV2WorkflowId;
+const baseEraResultGraphId =
+  baseEraContract.deriveSupervisorMessageV2ResultGraphWorkflowId;
+const BaseEraLedger: {
+  connect(databaseUrl: string): Promise<BaseEraLedgerInstance>;
+} = (
+  await import(join(BASE_ERA_DIR, "supervisor-message-v2-delivery-ledger.ts"))
+).PostgresSupervisorMessageV2DeliveryLedger;
 
 const fixture = structuredClone(supervisorMessageV2ReplayFixtures[0]);
 if (!fixture) {
@@ -1689,13 +1737,7 @@ describe("V2 workflow id format marker on PostgreSQL", () => {
   });
 });
 
-/**
- * The base-era build's own ledger code: the files of 40097564 this ledger
- * class needs, vendored unmodified under tests/fixtures. Each is pinned to
- * its git blob id at that commit, so the rollback tests below run the code a
- * rollback runs, not a re-statement of it.
- */
-const BASE_ERA_DIR = join(import.meta.dir, "../fixtures/base-era-40097564");
+/** Each vendored base-era file and its git blob id at 40097564. */
 const BASE_ERA_BLOBS = {
   "supervisor-message-v2-contract.ts":
     "d0817f1d208cfa571f199de91ef9820301294e06",

@@ -837,3 +837,14 @@ applied on its own and reverted byte for byte.
   roll-forward paragraph now tell operators to look for and remove stale
   claim files. A pre-existing code risk on the V2 line, not introduced or
   fixed by this branch; see status.md, "Status at r5 integration", item 6.
+
+## 2026-10-09: claude/fix6-hygiene against the owner decisions
+
+Merged from claude/fix6-hygiene (52e9d31e), which recorded the same owner
+decisions in a nine-item list of its own; on integration
+(claude/fix-integration-r6-2026-10-09) that list is folded into the ten
+decisions above: its item 1 is decisions 1 and 2, and its items 2 to 9 are
+decisions 3 to 10. claude/fix6-hygiene honours decisions 1 to 7: it changes
+no default, no /healthz field and no terminal outcome path, and records a
+binding as settled only when the host's check says so, so decision 7's
+bindings are never recorded and are checked again at each start and GET.

@@ -3,7 +3,9 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -16,6 +18,11 @@ import { resolveClaudeChannelServerName } from "./bridge-config";
 import { BRIDGE_SERVER } from "./bridge-constants";
 import { normalizeBridgeMessage } from "./bridge-message-format";
 import {
+  defaultPidOwnershipDeps,
+  type PidOwnershipDeps,
+  pidCanStillOwnRun,
+} from "./pid-ownership";
+import {
   appendRunTranscriptEntry,
   buildTranscriptPath,
   readRunManifest,
@@ -27,6 +34,11 @@ export type BridgeTarget = Agent | "supervisor";
 
 const BRIDGE_FILE = "bridge.jsonl";
 const BRIDGE_DEDUPE_CLAIM_DIR = "bridge-dedupe-claims";
+const DEDUPE_CLAIM_TOKEN_RE = /^([1-9]\d*):[0-9a-f-]{36}\n$/;
+// A claim, its reclaim marker, and that marker's own marker: deeper nesting
+// needs a reclaimer killed at every level, and then fails closed (deferred).
+const DEDUPE_RECLAIM_MAX_DEPTH = 3;
+const DEDUPE_RECLAIM_MARKER_DIGEST = 16;
 const LINE_SPLIT_RE = /\r?\n/;
 const MAX_STATUS_MESSAGES = 100;
 export const DEFAULT_BRIDGE_MAX_OUTSTANDING = 32;
@@ -231,7 +243,7 @@ const ensureParentDir = (path: string): void => {
   mkdirSync(dirname(path), { recursive: true });
 };
 
-const dedupeClaimPath = (
+export const bridgeDedupeClaimPath = (
   runDir: string,
   source: BridgeSource,
   target: BridgeTarget,
@@ -243,6 +255,15 @@ const dedupeClaimPath = (
   return join(runDir, BRIDGE_DEDUPE_CLAIM_DIR, `${digest}.lock`);
 };
 
+/** The claim that serializes reclaiming one dead claim, named for its token. */
+export const bridgeDedupeReclaimMarkerPath = (
+  claimPath: string,
+  token: string
+): string => {
+  const digest = createHash("sha256").update(token, "utf8").digest("hex");
+  return `${claimPath}.reclaim-${digest.slice(0, DEDUPE_RECLAIM_MARKER_DIGEST)}`;
+};
+
 export interface BridgeDedupeClaim {
   descriptor: number;
   path: string;
@@ -250,38 +271,149 @@ export interface BridgeDedupeClaim {
   token: string;
 }
 
+interface HeldDedupeClaim {
+  ownerPid: number | undefined;
+  token: string;
+  writtenAtMs: number;
+}
+
+const isErrno = (error: unknown, code: string): boolean =>
+  error instanceof Error && "code" in error && error.code === code;
+
+/**
+ * Creates the claim at `path` holding this process's `pid:uuid` token, or
+ * returns undefined when a claim already exists. The token is written and
+ * synced in a private staging file and then linked into place, so a claim is
+ * never visible without its owner, even when its writer is killed mid-write.
+ */
+const createDedupeClaimFile = (path: string): BridgeDedupeClaim | undefined => {
+  const token = `${process.pid}:${randomUUID()}\n`;
+  const staging = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const descriptor = openSync(staging, "wx", 0o600);
+  try {
+    writeSync(descriptor, token);
+    fsyncSync(descriptor);
+    linkSync(staging, path);
+  } catch (error) {
+    closeSync(descriptor);
+    if (isErrno(error, "EEXIST")) {
+      return undefined;
+    }
+    throw error;
+  } finally {
+    try {
+      unlinkSync(staging);
+    } catch {
+      // The staging name is private to this attempt and never read as a claim.
+    }
+  }
+  return { descriptor, path, released: false, token };
+};
+
+/** The claim at `path` with its owner and write time, "absent", or
+ * undefined when it cannot be read. */
+const readDedupeClaim = (
+  path: string
+): HeldDedupeClaim | "absent" | undefined => {
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, "r");
+  } catch (error) {
+    return isErrno(error, "ENOENT") ? "absent" : undefined;
+  }
+  try {
+    const token = readFileSync(descriptor, "utf8");
+    const owner = DEDUPE_CLAIM_TOKEN_RE.exec(token)?.[1];
+    return {
+      ownerPid: owner ? Number(owner) : undefined,
+      token,
+      writtenAtMs: fstatSync(descriptor).mtimeMs,
+    };
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(descriptor);
+  }
+};
+
+/**
+ * Removes the claim at `path` only when its owner provably cannot hold it,
+ * on the run-release standard (`pidCanStillOwnRun`): the owner PID is not
+ * alive, or is alive but started after the claim was written, so it is a
+ * reused PID. A claim without a parsable owner, or whose live owner's start
+ * time is unknown, stays. Reclaimers of one dead claim are serialized by a
+ * claim on a marker named for its token, so a reclaimer that judged it dead
+ * cannot remove a successor's live claim; a marker left by a killed
+ * reclaimer is reclaimed the same way. True when `path` is free to create.
+ */
+const reclaimDeadDedupeClaim = (
+  path: string,
+  deps: PidOwnershipDeps,
+  depth: number
+): boolean => {
+  const held = readDedupeClaim(path);
+  if (held === "absent") {
+    return true;
+  }
+  if (!held?.ownerPid || depth >= DEDUPE_RECLAIM_MAX_DEPTH) {
+    return false;
+  }
+  const writtenAt = new Date(held.writtenAtMs).toISOString();
+  if (pidCanStillOwnRun(held.ownerPid, writtenAt, deps)) {
+    return false;
+  }
+  const marker = acquireDedupeClaimFile(
+    bridgeDedupeReclaimMarkerPath(path, held.token),
+    deps,
+    depth + 1
+  );
+  if (!marker) {
+    return false;
+  }
+  try {
+    const current = readDedupeClaim(path);
+    if (current === "absent") {
+      return true;
+    }
+    if (current?.token !== held.token) {
+      return false;
+    }
+    unlinkSync(path);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    releaseBridgeDedupeClaim(marker);
+  }
+};
+
+const acquireDedupeClaimFile = (
+  path: string,
+  deps: PidOwnershipDeps,
+  depth: number
+): BridgeDedupeClaim | undefined => {
+  const claim = createDedupeClaimFile(path);
+  if (claim || !reclaimDeadDedupeClaim(path, deps, depth)) {
+    return claim;
+  }
+  return createDedupeClaimFile(path);
+};
+
+/**
+ * Claims one logical dedupe slot across processes. A claim left by a killed
+ * process is reclaimed by the next claimant once its owner is provably dead;
+ * a live owner's claim is never taken.
+ */
 export const acquireBridgeDedupeClaim = (
   runDir: string,
   source: BridgeSource,
   target: BridgeTarget,
-  dedupeKey: string
+  dedupeKey: string,
+  deps: PidOwnershipDeps = defaultPidOwnershipDeps
 ): BridgeDedupeClaim | undefined => {
-  const path = dedupeClaimPath(runDir, source, target, dedupeKey);
+  const path = bridgeDedupeClaimPath(runDir, source, target, dedupeKey);
   ensureParentDir(path);
-  try {
-    const descriptor = openSync(path, "wx", 0o600);
-    const token = `${process.pid}:${randomUUID()}\n`;
-    try {
-      writeSync(descriptor, token);
-      fsyncSync(descriptor);
-      return { descriptor, path, released: false, token };
-    } catch (error) {
-      closeSync(descriptor);
-      try {
-        if (readFileSync(path, "utf8") === token) {
-          unlinkSync(path);
-        }
-      } catch {
-        // Never remove a replacement owner after a failed initialization.
-      }
-      throw error;
-    }
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-      return undefined;
-    }
-    throw error;
-  }
+  return acquireDedupeClaimFile(path, deps, 0);
 };
 
 export const releaseBridgeDedupeClaim = (claim: BridgeDedupeClaim): void => {

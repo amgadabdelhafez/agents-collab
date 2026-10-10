@@ -1673,3 +1673,142 @@ test("a COMPLETED A2A task without the message's accepted artifact does not sett
     unknownKeyLine(scope, retiring, unpublishedBinding),
   ]);
 }, 60_000);
+
+test("a settled binding is remembered durably: after more rotations and on a fresh host the settled check is never asked about it again, while an unsettled binding is checked every time", async () => {
+  const scope = tenant("memo");
+  const first = throwawayKey();
+  const second = throwawayKey();
+  const third = throwawayKey();
+  const before = await ledgerWith(first);
+  const settledMessage = await sendMessage(before, scope, "memo-settled");
+  const openMessage = await sendMessage(before, scope, "memo-open");
+  const failingMessage = await sendMessage(before, scope, "memo-failing");
+  const settledBinding = bindingUnder(
+    first,
+    scope,
+    settledMessage,
+    "task:memo-settled"
+  );
+  const openBinding = bindingUnder(first, scope, openMessage, "task:memo-open");
+  const failingBinding = bindingUnder(
+    first,
+    scope,
+    failingMessage,
+    "task:memo-failing"
+  );
+  for (const binding of [settledBinding, openBinding, failingBinding]) {
+    await before.bindResult(scope, binding);
+  }
+  const asked: string[] = [];
+  // The host's check: one binding has settled, one has not (its task is
+  // still running or missing), and one cannot be read (the check fails).
+  const settled = (binding: SupervisorA2AResultBinding) => {
+    asked.push(binding.messageWorkflowId);
+    if (binding.messageWorkflowId === failingMessage) {
+      return Promise.reject(new Error("task store unavailable"));
+    }
+    return Promise.resolve(binding.messageWorkflowId === settledMessage);
+  };
+  const askedAbout = (workflowId: string) =>
+    asked.filter((entry) => entry === workflowId).length;
+  const previousListed = async (
+    ledger: PostgresSupervisorMessageV2DeliveryLedger
+  ) =>
+    (await ledger.previousKeyResultBindings(scope.tenantId, { settled }))
+      .map((entry) => entry.messageWorkflowId)
+      .sort();
+  const stillNeeded = [openMessage, failingMessage].sort();
+
+  // Rotation 1: the first key is a previous key.
+  const rotated = await ledgerWith(second, [first]);
+  expect(await previousListed(rotated)).toEqual(stillNeeded);
+  expect(await previousListed(rotated)).toEqual(stillNeeded);
+  expect(askedAbout(settledMessage)).toBe(1);
+  expect(askedAbout(openMessage)).toBe(2);
+  expect(askedAbout(failingMessage)).toBe(2);
+
+  // Rotation 2, on a fresh host (new connection): still never asked again.
+  const again = await ledgerWith(third, [second, first]);
+  expect(await previousListed(again)).toEqual(stillNeeded);
+  expect(askedAbout(settledMessage)).toBe(1);
+  expect(askedAbout(openMessage)).toBe(3);
+
+  // The first key removed: the unsettled bindings are under an unknown key,
+  // and the settled one is neither listed nor asked about.
+  const removed = await ledgerWith(third, [second]);
+  expect(
+    (await removed.unpublishableResultBindings(scope.tenantId, { settled }))
+      .map((entry) => [entry.messageWorkflowId, entry.reason])
+      .sort()
+  ).toEqual(
+    stillNeeded.map((workflowId) => [workflowId, "unknown-result-graph-key"])
+  );
+  expect(askedAbout(settledMessage)).toBe(1);
+  expect(askedAbout(openMessage)).toBe(4);
+  expect(askedAbout(failingMessage)).toBe(4);
+
+  // Without a settled check nothing is hidden: the binding stays recorded.
+  expect(
+    (await again.previousKeyResultBindings(scope.tenantId))
+      .map((entry) => entry.messageWorkflowId)
+      .sort()
+  ).toEqual([settledMessage, ...stillNeeded].sort());
+  expect(await fingerprintOf(settledMessage, "task:memo-settled")).toBe(
+    first.fingerprint
+  );
+}, 60_000);
+
+test("a settled binding is remembered per deployment: another deployment sharing the database still asks its own check", async () => {
+  // Legacy ids on a database of their own: a legacy binding an older build
+  // recorded names no deployment, so every deployment treats it as its own.
+  const isolated = await DisposablePostgres.create();
+  try {
+    const databaseUrl = isolated.databaseUrl();
+    const scope = tenant("memo-shared");
+    const key = throwawayKey();
+    const legacy = await deploymentLedger({
+      databaseUrl,
+      resultGraphKey: key,
+      workflowIdFormat: "legacy",
+    });
+    const message = await sendMessage(legacy, scope, "memo-shared");
+    await legacy.bindResult(
+      scope,
+      bindingUnder(key, scope, message, "task:memo-shared")
+    );
+    const isolatedSql = new SQL(databaseUrl);
+    try {
+      await isolatedSql.connect();
+      await forgetBinder([message], isolatedSql);
+    } finally {
+      await isolatedSql.close();
+    }
+    const asked: string[] = [];
+    const listedBy = async (deployment: string, answer: boolean) => {
+      const ledger = await deploymentLedger({
+        databaseUrl,
+        deployment,
+        previousResultGraphKeys: [key],
+        resultGraphKey: NEW_KEY,
+        workflowIdFormat: "legacy",
+      });
+      return (
+        await ledger.previousKeyResultBindings(scope.tenantId, {
+          settled: () => {
+            asked.push(deployment);
+            return Promise.resolve(answer);
+          },
+        })
+      ).map((entry) => entry.messageWorkflowId);
+    };
+    expect(await listedBy("memo-queue-a", true)).toEqual([]);
+    expect(await listedBy("memo-queue-a", true)).toEqual([]);
+    expect(await listedBy("memo-queue-b", false)).toEqual([message]);
+    expect(asked).toEqual(["memo-queue-a", "memo-queue-b"]);
+  } finally {
+    for (const resource of opened.splice(0)) {
+      await resource.close().catch(() => undefined);
+    }
+    await isolated.close();
+  }
+}, 120_000);

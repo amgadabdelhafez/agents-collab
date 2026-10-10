@@ -1,10 +1,14 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
 import { resolveLaunchModel } from "./launch-defaults";
+import {
+  defaultPidLiveness,
+  defaultPidStartedAt,
+  pidCanStillOwnRun,
+} from "./pid-ownership";
 import {
   createRunManifest,
   isActiveRunState,
@@ -72,38 +76,6 @@ export interface PairedLaunchClaim {
   workspaceBinding: LaunchWorkspaceBinding;
 }
 
-const defaultPidLiveness = (pid: number): boolean => {
-  if (!(Number.isInteger(pid) && pid > 0)) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-
-const defaultPidStartedAt = (pid: number): number | undefined => {
-  if (!(Number.isSafeInteger(pid) && pid > 0)) {
-    return undefined;
-  }
-  const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
-    encoding: "utf8",
-    timeout: 1000,
-  });
-  if (result.status !== 0 || result.error) {
-    return undefined;
-  }
-  const value = Date.parse(result.stdout.trim());
-  return Number.isFinite(value) ? value : undefined;
-};
-
-export const defaultPidOwnershipDeps = {
-  isPidAlive: defaultPidLiveness,
-  pidStartedAt: defaultPidStartedAt,
-};
-
 const defaultDeps = (): LaunchReservationDeps => ({
   env: process.env,
   home: process.env.HOME ?? "",
@@ -149,30 +121,6 @@ const workspaceConflict = (
   );
 
 const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
-
-/**
- * A live numeric PID is ownership evidence only when it can still be the
- * process recorded before workspace handback. PID values are reusable. A
- * process whose independently observed start time is strictly after the valid
- * release timestamp is positively unrelated to the released run. Missing or
- * ambiguous start evidence remains fail-closed.
- */
-export const pidCanStillOwnRun = (
-  pid: number,
-  releasedAt: string,
-  deps: Pick<LaunchReservationDeps, "isPidAlive" | "pidStartedAt">
-): boolean => {
-  if (!deps.isPidAlive(pid)) {
-    return false;
-  }
-  const startedAt = deps.pidStartedAt(pid);
-  const releasedAtMs = Date.parse(releasedAt);
-  return (
-    startedAt === undefined ||
-    !Number.isFinite(releasedAtMs) ||
-    startedAt <= releasedAtMs
-  );
-};
 
 /**
  * Is the run's tmux runtime positively gone?

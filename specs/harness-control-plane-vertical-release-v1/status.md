@@ -454,3 +454,7 @@ Changes to the round-5 list above:
    directory). The runbook now has operators check for stale files around
    an upgrade, a rollback and a roll forward. A code fix (stale-owner
    recovery by pid or age) is not on this branch or on r5 integration.
+   Later: claude/fix6-hygiene (6f560720) reclaims a claim whose owner pid
+   is not running or was reused, and keeps any other; it is merged on r6
+   integration (claude/fix-integration-r6-2026-10-09), not on r5
+   integration or main.
