@@ -13,17 +13,39 @@ import {
   BRIDGE_WORKER_SUBCOMMAND,
 } from "./bridge-constants";
 import { tmuxRuntimeAbsentForManifestSync } from "./launch-reservation";
+import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import {
+  groupCanStillOwnRun,
+  processGroupAlive,
+  processGroupOf,
+  type TerminationTarget,
+} from "./process-group";
+import {
+  agentPaneIdsOf,
+  type ListedPane,
+  PANE_LISTING_FORMAT,
+  parsePaneListing,
+  readRunPaneProcessRecords,
+  recordRunPaneProcesses,
+} from "./run-pane-processes";
+import {
+  auxiliaryProcessOwnership,
   buildManifestPath,
   isActiveRunState,
   type RunManifest,
   readRunManifest,
+  readRunManifestHandle,
   resolveRepoId,
   resolveStorageRoot,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
-import { UTILITY_WORKER_SUBCOMMAND } from "./utility-constants";
+import { boundedTmuxOptions, tmuxCommandTimedOut } from "./tmux-control";
+import { targetArgv, targetFromManifest } from "./tmux-socket";
+import {
+  commandEndsWithArgs,
+  isUtilityWorkerCommand,
+} from "./utility-constants";
 import {
   readUtilityJobsAsEvidence,
   type UtilityJobSnapshot,
@@ -42,6 +64,13 @@ interface RegisteredBridgeProcess {
 }
 
 export interface RunProcessCleanupResult {
+  /**
+   * Process groups (or, for a worker that leads none, single processes)
+   * whose identity this cleanup verified, for the teardown to end after the
+   * session kill: SIGTERM, a bounded grace, then SIGKILL. Present only when
+   * non-empty.
+   */
+  groups?: TerminationTarget[];
   killed: number[];
   skipped: Array<{ pid: number; reason: string }>;
 }
@@ -49,9 +78,20 @@ export interface RunProcessCleanupResult {
 interface RunProcessCleanupDeps {
   commandForPid: (pid: number) => string | undefined;
   listeningPids: (port: number) => number[];
+  /**
+   * The panes of the run's tmux session on the run's own recorded socket, or
+   * `undefined` when they cannot be listed (no recorded socket, no session,
+   * or tmux failed). Never the ambient server.
+   */
+  listRunPanes: (runDir: string) => ListedPane[] | undefined;
   listTmuxSessions: () => ReadonlySet<string> | undefined;
   now: () => string;
+  /** This process's own group, never signalled. `undefined` if unknown. */
+  ownProcessGroup: () => number | undefined;
+  pgidOf: (pid: number) => number | undefined;
   pidAlive: (pid: number) => boolean;
+  pidStartedAt: (pid: number) => number | undefined;
+  processGroupAlive: (pgid: number) => boolean;
   /**
    * Whether the run's tmux runtime is positively gone on the run's own
    * server: its recorded socket, or every legacy candidate socket when it
@@ -134,12 +174,56 @@ const defaultListTmuxSessions = (): ReadonlySet<string> | undefined => {
   }
 };
 
+/**
+ * Lists the run's panes through its recorded socket only (`targetArgv`), so
+ * neither a legacy socket-less run nor a test ever reaches the ambient tmux
+ * server. `-a` lists every pane of that server; the session filter keeps the
+ * run's own.
+ */
+const defaultListRunPanes = (runDir: string): ListedPane[] | undefined => {
+  const manifestPath = buildManifestPath(runDir);
+  const handle = readRunManifestHandle(manifestPath);
+  const session = readRunManifest(manifestPath)?.tmuxSession;
+  const target = handle ? targetFromManifest(handle) : undefined;
+  if (!(target && session)) {
+    return undefined;
+  }
+  try {
+    const result = spawnSync(
+      targetArgv(target, "list-panes", [
+        "-a",
+        "-F",
+        `#{session_name} ${PANE_LISTING_FORMAT}`,
+      ]),
+      boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" })
+    );
+    if (result.exitCode !== 0 || tmuxCommandTimedOut(result)) {
+      return undefined;
+    }
+    const prefix = `${session} `;
+    return parsePaneListing(
+      decode(result.stdout)
+        .split("\n")
+        .filter((line) => line.startsWith(prefix))
+        .map((line) => line.slice(prefix.length))
+        .join("\n")
+    );
+  } catch {
+    return undefined;
+  }
+};
+
 const cleanupDeps: RunProcessCleanupDeps = {
   commandForPid: defaultCommandForPid,
+  listRunPanes: defaultListRunPanes,
   listTmuxSessions: defaultListTmuxSessions,
   listeningPids: defaultListeningPids,
   now: () => new Date().toISOString(),
+  ownProcessGroup: () => processGroupOf(process.pid),
+  pgidOf: processGroupOf,
   pidAlive: defaultPidAlive,
+  pidStartedAt: defaultPidOwnershipDeps.pidStartedAt,
+  processGroupAlive,
   runtimeAbsent: (manifestPath) =>
     tmuxRuntimeAbsentForManifestSync(manifestPath),
   signal: (pid, signal) => process.kill(pid, signal),
@@ -220,20 +304,6 @@ const appServerPort = (remoteUrl: string | undefined): number | undefined => {
   } catch {
     return undefined;
   }
-};
-
-/**
- * `ps -o command=` joins argv with single spaces, so a runDir containing
- * spaces cannot be recovered by splitting, and a bare substring match also
- * accepts another run whose directory merely starts with this one. Both
- * bridge processes are spawned with the run directory in a fixed trailing
- * position (`<subcommand> <runDir> [source]`), so only that exact tail proves
- * ownership; anything else is left unsignaled.
- */
-const commandEndsWithArgs = (command: string, args: string[]): boolean => {
-  const trimmed = command.trimEnd();
-  const tail = args.join(" ");
-  return trimmed === tail || trimmed.endsWith(` ${tail}`);
 };
 
 const signalOwnedProcess = (
@@ -368,22 +438,16 @@ const signalUtilityWorker = (
 ): void => {
   const pid = claim.workerPid;
   if (!deps.pidAlive(pid)) {
+    // The worker is gone. Members of its group (bounded commands it ran) may
+    // remain, but with the leader gone nothing proves whose group that is, so
+    // it is never signalled here; the release evidence still counts it live.
+    if (deps.processGroupAlive(pid)) {
+      result.skipped.push({ pid, reason: "utility-worker-group-orphaned" });
+    }
     return;
   }
   const command = deps.commandForPid(pid);
-  // Spawned as `<loop> __utility-worker <runDir> <epoch> <jobId>`: only that
-  // exact argv tail proves ownership (a spaced or prefixing run directory
-  // never matches).
-  const owned = Boolean(
-    command &&
-      commandEndsWithArgs(command, [
-        UTILITY_WORKER_SUBCOMMAND,
-        runDir,
-        String(claim.epoch),
-        jobId,
-      ])
-  );
-  if (!owned) {
+  if (!isUtilityWorkerCommand(command, { epoch: claim.epoch, jobId, runDir })) {
     result.skipped.push({
       pid,
       reason: command
@@ -392,14 +456,79 @@ const signalUtilityWorker = (
     });
     return;
   }
+  const source = `utility job ${jobId} worker`;
   try {
     deps.signal(-pid, "SIGTERM");
     result.killed.push(pid);
+    pushGroup(result, { id: pid, kind: "group", source });
     return;
   } catch {
     // Not a process-group leader: signal the worker alone below.
   }
   signalOwnedProcess(result, pid, true, "", deps.signal);
+  pushGroup(result, { id: pid, kind: "process", source });
+};
+
+const pushGroup = (
+  result: RunProcessCleanupResult,
+  target: TerminationTarget
+): void => {
+  result.groups = [...(result.groups ?? []), target];
+};
+
+/**
+ * The run's agent pane groups whose identity is proven right now, before the
+ * session kill: the pane is in the run's own session on its recorded socket
+ * and its process is the one tmux reports for it. Each listed agent pane is
+ * recorded first (so a pane respawned since the launch is tracked too). The
+ * groups are not signalled here; the teardown ends them after the kill (the
+ * hangup reaches the CLI, not a tool subprocess that ignores it). A recorded
+ * pane group that is no longer in the session cannot be identified and is
+ * never signalled; the release evidence still counts it while it lives. This
+ * process's own group is never a target.
+ */
+const collectRunPaneGroups = (
+  result: RunProcessCleanupResult,
+  runDir: string,
+  manifest: RunManifest | undefined,
+  deps: RunProcessCleanupDeps
+): void => {
+  if (!manifest?.tmuxSession) {
+    return;
+  }
+  const listed = deps.listRunPanes(runDir);
+  if (!listed) {
+    return;
+  }
+  const records = recordRunPaneProcesses({
+    agentPaneIds: agentPaneIdsOf(manifest),
+    now: deps.now,
+    panes: listed,
+    pgidOf: deps.pgidOf,
+    runDir,
+    session: manifest.tmuxSession,
+  });
+  const own = deps.ownProcessGroup();
+  const verified = new Set(records.map((record) => record.pgid));
+  for (const record of records) {
+    if (record.pgid === own) {
+      result.skipped.push({ pid: record.pgid, reason: "own-process-group" });
+      continue;
+    }
+    pushGroup(result, {
+      id: record.pgid,
+      kind: "group",
+      source: `agent pane ${record.paneId}`,
+    });
+  }
+  for (const record of readRunPaneProcessRecords(runDir)) {
+    if (!verified.has(record.pgid) && deps.processGroupAlive(record.pgid)) {
+      result.skipped.push({
+        pid: record.pgid,
+        reason: `agent-pane-group-unverified: ${record.paneId}`,
+      });
+    }
+  }
 };
 
 const cleanupRunOwnedProcessesWithDeps = (
@@ -412,6 +541,15 @@ const cleanupRunOwnedProcessesWithDeps = (
   if (scope.detachedWorkers) {
     signalRunBridgeWorker(result, runDir, deps);
     signalRunUtilityWorkers(result, runDir, deps);
+    try {
+      collectRunPaneGroups(result, runDir, manifest, deps);
+    } catch (error) {
+      // Never kill authority; the release evidence still reads the records.
+      result.skipped.push({
+        pid: 0,
+        reason: `agent-pane-groups-unreadable: ${(error as Error).message}`,
+      });
+    }
   }
   for (const { path, record } of readBridgeRegistrations(runDir)) {
     const command = deps.commandForPid(record.pid);
@@ -509,6 +647,56 @@ const runIsProvablyAbandoned = (
   return !manifest.tmuxSession || deps.runtimeAbsent(manifestPath);
 };
 
+interface GcOwnership {
+  group: (pgid: number, at?: string) => boolean;
+  pid: (pid: number, at?: string) => boolean;
+  reference: string;
+}
+
+/**
+ * The release rules (PID reuse, group membership) on GC's own probes, with
+ * the manifest's last update as the default PID-reuse reference.
+ */
+const gcOwnership = (
+  deps: RunProcessCleanupDeps,
+  reference: string
+): GcOwnership => {
+  const probe = {
+    isPidAlive: deps.pidAlive,
+    pidStartedAt: deps.pidStartedAt,
+    processGroupAlive: deps.processGroupAlive,
+  };
+  return {
+    group: (pgid, at = reference) => groupCanStillOwnRun(pgid, at, probe),
+    pid: (pid, at = reference) => pidCanStillOwnRun(pid, at, probe),
+    reference,
+  };
+};
+
+/** Why GC may not write the handback, or `undefined` when it may. */
+const gcReleaseBlocker = (
+  manifestPath: string,
+  manifest: RunManifest,
+  ownership: GcOwnership
+): string | undefined => {
+  if (ownership.pid(manifest.pid)) {
+    return "run-process-may-be-live";
+  }
+  if (
+    manifest.launchAttemptPid !== undefined &&
+    ownership.pid(manifest.launchAttemptPid)
+  ) {
+    return "launch-process-may-be-live";
+  }
+  return auxiliaryProcessOwnership(
+    manifestPath,
+    manifest,
+    ownership.reference,
+    (pid, at) => ownership.pid(pid, at),
+    (pgid, at) => ownership.group(pgid, at)
+  );
+};
+
 const cleanupAbandonedRun = (input: {
   deps: RunProcessCleanupDeps;
   liveTmuxSessions: ReadonlySet<string> | undefined;
@@ -534,7 +722,13 @@ const cleanupAbandonedRun = (input: {
   ) {
     return undefined;
   }
-  if (needsStateRepair) {
+  // A launch that never bound tmux is released by nothing but this GC (no
+  // `loop reconcile` can prove a session-less run gone), so its repair and its
+  // handback are one write: if a recorded process blocks the handback, the
+  // run stays active and the next GC judges it again. A tmux-bound run is
+  // repaired at once; once failed, the launch auto-release judges it.
+  const neverBound = !input.manifest.tmuxSession;
+  if (needsStateRepair && !neverBound) {
     input.deps.updateManifest(input.manifestPath, (current) =>
       current ? setRunManifestState(current, "failed") : undefined
     );
@@ -561,25 +755,46 @@ const cleanupAbandonedRun = (input: {
     if (!current) {
       return undefined;
     }
-    const withoutSettledOwnership = retainAppServerOwnership
-      ? current
-      : {
-          ...current,
-          codexAppServerPid: undefined,
-          codexRemoteUrl: undefined,
-        };
+    const ownership = gcOwnership(input.deps, current.updatedAt);
+    // An app-server this pass signalled is settled only once it is gone; one
+    // still exiting stays recorded, so it keeps the workspace owned and the
+    // next pass re-checks it.
+    const appServerPid = current.codexAppServerPid;
+    const withoutSettledOwnership =
+      retainAppServerOwnership ||
+      (appServerPid !== undefined && ownership.pid(appServerPid))
+        ? current
+        : {
+            ...current,
+            codexAppServerPid: undefined,
+            codexRemoteUrl: undefined,
+          };
     const cleanupMayRelease = !cleanup.skipped.some((entry) =>
       entry.reason.startsWith("signal-failed:")
     );
     if (!(cleanupMayRelease && !withoutSettledOwnership.workspaceReleasedAt)) {
       return withoutSettledOwnership;
     }
+    // The handback is written on the same full evidence as `loop reconcile`
+    // and the launch auto-release: no recorded process of the run (its pid,
+    // launch attempt, app-server, bridge worker, run-processes entries and
+    // agent pane groups, and every utility worker's process group) may still
+    // be live. Short of that the run is only repaired, not released.
+    if (
+      gcReleaseBlocker(input.manifestPath, withoutSettledOwnership, ownership)
+    ) {
+      return withoutSettledOwnership;
+    }
     const releasedAt = input.deps.now();
+    const repaired =
+      neverBound && isActiveRunState(withoutSettledOwnership.state)
+        ? setRunManifestState(withoutSettledOwnership, "failed", releasedAt)
+        : withoutSettledOwnership;
     return {
-      ...withoutSettledOwnership,
+      ...repaired,
       updatedAt: releasedAt,
       workspaceReleasedAt: releasedAt,
-      ...(withoutSettledOwnership.tmuxSession
+      ...(repaired.tmuxSession
         ? {}
         : { workspaceReleaseKind: "abandoned-never-bound" as const }),
     };

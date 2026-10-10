@@ -158,6 +158,13 @@ import {
 } from "./openrouter-usage";
 import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import {
+  defaultTerminationDeps,
+  groupCanStillOwnRun,
+  type TerminationResult,
+  type TerminationTarget,
+  terminateTargets,
+} from "./process-group";
+import {
   cleanupRunOwnedProcesses,
   type RunProcessCleanupResult,
 } from "./run-process-cleanup";
@@ -489,6 +496,15 @@ export interface GovernessDeps {
   setPaneLabel: (pane: string, label: string) => void;
   sleep: (ms: number) => Promise<void>;
   summarize: (req: SummaryRequest) => Promise<SummaryResult>;
+  /**
+   * Ends the process groups the cleanup verified (utility workers' groups and
+   * agent pane groups) once the session is killed: SIGTERM, a bounded grace,
+   * then SIGKILL, and reports what is still alive.
+   */
+  terminateRunProcessGroups?: (
+    config: GovernessConfig,
+    targets: readonly TerminationTarget[]
+  ) => Promise<TerminationResult>;
 }
 
 // Cumulative, observed-since-start time budget per agent + both-idle time.
@@ -5576,9 +5592,16 @@ export const stopGovernessLoop = (
   // teardown in the workspace being handed back.
   teardownsInProgress.add(config);
   deps.markRunStopped?.(config, reason);
+  let groups: readonly TerminationTarget[] = [];
   try {
     const cleanup = deps.cleanupRunProcesses?.(config);
-    if (cleanup && (cleanup.killed.length > 0 || cleanup.skipped.length > 0)) {
+    groups = cleanup?.groups ?? [];
+    if (
+      cleanup &&
+      (cleanup.killed.length > 0 ||
+        cleanup.skipped.length > 0 ||
+        groups.length > 0)
+    ) {
       deps.appendLog(config.logFile, {
         at: new Date(deps.now()).toISOString(),
         event: "run-process-cleanup",
@@ -5592,14 +5615,19 @@ export const stopGovernessLoop = (
       event: "run-process-cleanup-failed",
     });
   }
+  const afterKill = (): boolean =>
+    Boolean(
+      deps.releaseWorkspaceAfterTeardown ||
+        (groups.length > 0 && deps.terminateRunProcessGroups)
+    );
   const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
   if (!close) {
     const killed = killTeardownSession(config, deps, record);
-    if (!(killed && deps.releaseWorkspaceAfterTeardown)) {
+    if (!(killed && afterKill())) {
       settleTeardownHangupGrace();
       return Promise.resolve();
     }
-    return releaseAfterTeardown(config, deps).finally(
+    return endGroupsThenRelease(config, deps, groups).finally(
       settleTeardownHangupGrace
     );
   }
@@ -5607,13 +5635,45 @@ export const stopGovernessLoop = (
     await closeBeatBeforeKill(config, deps, reason, close);
     try {
       if (killTeardownSession(config, deps, record)) {
-        await releaseAfterTeardown(config, deps);
+        await endGroupsThenRelease(config, deps, groups);
       }
     } finally {
       settleTeardownHangupGrace();
     }
   };
   return closeThenKill();
+};
+
+/**
+ * After the session kill: end the verified process groups (SIGTERM, grace,
+ * SIGKILL), then attempt the handback. The kill hangs up the agent CLIs, not
+ * a tool subprocess or a utility worker's bounded command that ignores the
+ * hangup, and those must be gone before the workspace is handed back. The
+ * handback itself re-reads every recorded group as evidence, so a survivor
+ * (or a group that could not be identified) leaves the run unreleased.
+ */
+const endGroupsThenRelease = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  groups: readonly TerminationTarget[]
+): Promise<void> => {
+  if (groups.length > 0 && deps.terminateRunProcessGroups) {
+    try {
+      const ended = await deps.terminateRunProcessGroups(config, groups);
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "run-process-groups-ended",
+        ...ended,
+      });
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+        event: "run-process-groups-end-failed",
+      });
+    }
+  }
+  await releaseAfterTeardown(config, deps);
 };
 
 /**
@@ -5784,6 +5844,7 @@ export const confirmTeardownRelease = async (
   let detail = "no release attempt was made";
   for (let attempt = 1; attempt <= deps.attempts; attempt += 1) {
     const result = await reconcileLegacyStoppedRun(manifestPath, runId, {
+      groupCanStillOwnRun: deps.groupCanStillOwnRun,
       now: deps.now,
       pidCanStillOwnRun: deps.pidCanStillOwnRun,
       runtimeAbsent: deps.runtimeAbsent,
@@ -7048,6 +7109,8 @@ export const defaultGovernessDeps = (
       : undefined;
     return cleanupRunOwnedProcesses(config.runDir, manifest);
   },
+  terminateRunProcessGroups: (_config, targets) =>
+    terminateTargets(targets, defaultTerminationDeps()),
   closeBeatWorkflow: async (config, reason) => {
     if (!(config.journalTemporal && config.manifestPath && config.repoId)) {
       return undefined;
@@ -7248,6 +7311,8 @@ export const defaultGovernessDeps = (
     config.manifestPath
       ? confirmTeardownRelease(config.manifestPath, config.runId, {
           attempts: TEARDOWN_RELEASE_ATTEMPTS,
+          groupCanStillOwnRun: (pgid, at) =>
+            groupCanStillOwnRun(pgid, at, defaultPidOwnershipDeps),
           now: () => new Date().toISOString(),
           pidCanStillOwnRun: (pid, at) =>
             pidCanStillOwnRun(pid, at, defaultPidOwnershipDeps),

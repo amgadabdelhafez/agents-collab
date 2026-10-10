@@ -288,20 +288,20 @@ const readBridgeWorkerPid = (runDir: string): number | undefined => {
   return undefined;
 };
 
+/**
+ * Replaces the record in one rename, so a reader (the release evidence) sees
+ * either the previous worker's pid or the new one, never a missing or partial
+ * record.
+ */
 const writeBridgeWorkerPid = (runDir: string, pid: number): void => {
-  writeFileSync(
-    bridgeWorkerPath(runDir),
-    `${JSON.stringify({ pid })}\n`,
-    "utf8"
-  );
-};
-
-const clearBridgeWorkerPid = (runDir: string, pid?: number): void => {
-  const current = readBridgeWorkerPid(runDir);
-  if (pid !== undefined && current !== pid) {
-    return;
+  const path = bridgeWorkerPath(runDir);
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify({ pid })}\n`, "utf8");
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
   }
-  rmSync(bridgeWorkerPath(runDir), { force: true });
 };
 
 const isProcessAlive = (pid: number): boolean => {
@@ -1504,7 +1504,11 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
   if (currentPid && isBridgeWorkerProcess(currentPid, runDir)) {
     return true;
   }
-  clearBridgeWorkerPid(runDir);
+  // The previous record stays until the new pid replaces it, written at once
+  // after the spawn. Clearing it first left a window in which a live worker
+  // (the old one exiting, or the new one) had no record, and the release
+  // evidence read that as no worker. A stale record names a dead pid or one
+  // provably started after it was written, both absence evidence.
   try {
     const child = bridgeRuntimeCommandDeps.spawn(
       [...buildLaunchArgv(), BRIDGE_WORKER_SUBCOMMAND, runDir],
@@ -2034,8 +2038,16 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
   const fairnessBackoff: BridgeFairnessBackoff = new Map();
   try {
     while (true) {
+      // Another live worker of this run owns the record: leave it to that one.
+      // A record that still names a previous, gone worker is not ownership:
+      // the spawner replaces it with this pid right after the spawn, without
+      // clearing it first, so this worker may read it before that write.
       const claimedPid = readBridgeWorkerPid(runDir);
-      if (claimedPid && claimedPid !== process.pid) {
+      if (
+        claimedPid &&
+        claimedPid !== process.pid &&
+        isBridgeWorkerProcess(claimedPid, runDir)
+      ) {
         return;
       }
       const status = readBridgeStatus(runDir);
@@ -2072,7 +2084,9 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       reconciliationReason = wake.reason;
     }
   } finally {
+    // The record is left in place: this process is still alive until it
+    // exits, and it exits exactly when its run turns terminal, which is when
+    // a release reads the record. A dead pid is absence evidence.
     wakeSession.close();
-    clearBridgeWorkerPid(runDir, process.pid);
   }
 };

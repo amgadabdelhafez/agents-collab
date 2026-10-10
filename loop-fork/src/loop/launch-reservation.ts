@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
 import { resolveLaunchModel } from "./launch-defaults";
+import { groupCanStillOwnRun, processGroupAlive } from "./process-group";
 import {
   defaultPidLiveness,
   defaultPidStartedAt,
@@ -74,6 +75,8 @@ interface LaunchReservationDeps {
   pidStartedAt: (pid: number) => number | undefined;
   /** Platform for the legacy socket candidate set and its byte budget. */
   platform: string;
+  /** Whether any process is a member of the group (see `process-group`). */
+  processGroupAlive: (pgid: number) => boolean;
   /**
    * Injected so a test can count invocations and prove the resume path never
    * consults it. Post-launch paths must read the persisted manifest target, so
@@ -105,6 +108,7 @@ const defaultDeps = (): LaunchReservationDeps => ({
     process.stderr.write(`${line}\n`);
   },
   pidStartedAt: defaultPidStartedAt,
+  processGroupAlive,
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
@@ -339,7 +343,8 @@ const recordedProcessOwnership = (
         stored.manifestPath,
         manifest,
         reference,
-        (pid, at) => pidCanStillOwnRun(pid, at, deps)
+        (pid, at) => pidCanStillOwnRun(pid, at, deps),
+        (pgid, at) => groupCanStillOwnRun(pgid, at, deps)
       )
     : undefined;
 };
@@ -562,6 +567,7 @@ const releaseDeadTerminalRun = async (
     stored.manifestPath,
     manifest.runId,
     {
+      groupCanStillOwnRun: (pgid, at) => groupCanStillOwnRun(pgid, at, deps),
       now: deps.now,
       pidCanStillOwnRun: (pid, at) => pidCanStillOwnRun(pid, at, deps),
       runtimeAbsent: (path) => tmuxRuntimeAbsentForManifest(path, deps),

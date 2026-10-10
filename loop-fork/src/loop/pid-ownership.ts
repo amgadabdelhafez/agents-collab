@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { type GroupOwnershipProbe, processGroupAlive } from "./process-group";
 
 /** Process facts consulted before a recorded PID may lose ownership. */
 export interface PidOwnershipDeps {
@@ -33,9 +34,14 @@ export const defaultPidStartedAt = (pid: number): number | undefined => {
   return Number.isFinite(value) ? value : undefined;
 };
 
-export const defaultPidOwnershipDeps: PidOwnershipDeps = {
+/**
+ * The production probes. They also carry `processGroupAlive`, so the same
+ * object serves the group-evidence rule (`groupCanStillOwnRun`).
+ */
+export const defaultPidOwnershipDeps: PidOwnershipDeps & GroupOwnershipProbe = {
   isPidAlive: defaultPidLiveness,
   pidStartedAt: defaultPidStartedAt,
+  processGroupAlive,
 };
 
 /**

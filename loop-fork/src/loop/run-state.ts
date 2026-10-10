@@ -27,6 +27,8 @@ import {
   validateRunId,
 } from "./git";
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
+import { processGroupAlive } from "./process-group";
+import { PANE_PROCESS_KIND } from "./run-pane-processes";
 import { createManifestHandle, type ManifestHandle } from "./tmux-socket";
 import type {
   Agent,
@@ -942,6 +944,12 @@ export type StoppedRunReconcileResult =
   | { runId: string; status: "refused"; reason: string };
 
 export interface StoppedRunReconcileDeps {
+  /**
+   * Whether a recorded process GROUP (a utility worker's, an agent pane's)
+   * may still hold a run process: see `groupCanStillOwnRun`. Every production
+   * caller supplies it; without it the pid rule or any live member counts.
+   */
+  groupCanStillOwnRun?: (pgid: number, reference: string) => boolean;
   now: () => string;
   pidCanStillOwnRun: (pid: number, stoppedAt: string) => boolean;
   runtimeAbsent: (manifestPath: string) => Promise<boolean>;
@@ -976,6 +984,11 @@ export const latestInstant = (...values: readonly string[]): string => {
 
 /** A run-owned PID recorded outside the manifest's own pid fields. */
 export interface RecordedRunPid {
+  /**
+   * `pid` is a process GROUP id: the group may hold a run process while any
+   * member exists, after its leader is gone (see `groupCanStillOwnRun`).
+   */
+  readonly group?: true;
   readonly pid: number;
   /** A moment by which the recorded process had certainly started. */
   readonly reference: string;
@@ -989,11 +1002,15 @@ export type AuxiliaryRunPids =
 const isPositiveSafePid = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-/** `undefined` when the file is absent; throws on any other read failure. */
+/**
+ * `undefined` when the file is absent; throws on any other read failure. An
+ * agent pane record (`kind: "agent-pane"`) names the pane's process GROUP: its
+ * CLI's tool subprocesses run in that group and can outlive the pane process.
+ */
 const readRecordedPidFile = (
   path: string,
   reference: string
-): { pid: number | undefined; reference: string } | undefined => {
+): { group?: true; pid: number | undefined; reference: string } | undefined => {
   let raw: string;
   let mtime: Date;
   try {
@@ -1006,13 +1023,23 @@ const readRecordedPidFile = (
     throw error;
   }
   let pid: unknown;
+  let group = false;
   try {
-    pid = (JSON.parse(raw) as { pid?: unknown } | null)?.pid;
+    const record = JSON.parse(raw) as {
+      kind?: unknown;
+      pgid?: unknown;
+      pid?: unknown;
+    } | null;
+    group = record?.kind === PANE_PROCESS_KIND;
+    pid = group ? record?.pgid : record?.pid;
   } catch {
     pid = undefined;
   }
   return {
-    pid: isPositiveSafePid(pid) ? pid : undefined,
+    ...(group ? { group: true as const } : {}),
+    // A group id of 1 (or 0) is never a recordable group: it would address
+    // every process (or the reader's own group), so it is unreadable.
+    pid: isPositiveSafePid(pid) && !(group && pid <= 1) ? pid : undefined,
     // The file is written after its process exists, so its mtime is a moment
     // by which that process had started.
     reference: latestInstant(reference, mtime.toISOString()),
@@ -1076,7 +1103,12 @@ export const readAuxiliaryRunPids = (
     if (record.pid === undefined) {
       return { kind: "unreadable", reason: `${source} names no valid pid` };
     }
-    pids.push({ pid: record.pid, reference: record.reference, source });
+    pids.push({
+      ...(record.group ? { group: true as const } : {}),
+      pid: record.pid,
+      reference: record.reference,
+      source,
+    });
   }
   const workers = readUtilityWorkerPids(runDir, nowMs);
   if (workers.kind === "unreadable") {
@@ -1137,7 +1169,12 @@ const readUtilityWorkerPids = (
   for (const job of evidence.jobs) {
     for (const event of job.events) {
       if (event.claim) {
+        // The worker is spawned detached, so it leads its own process group
+        // (pgid = its pid; both the installed ea968d82 line and this one spawn
+        // it that way). Its bounded commands run in that group with their cwd
+        // in the workspace and can outlive it, so the GROUP is the evidence.
         pids.push({
+          group: true,
           pid: event.claim.workerPid,
           reference: latestInstant(event.at),
           source: `utility job ${job.jobId} worker`,
@@ -1157,19 +1194,39 @@ export const auxiliaryProcessOwnership = (
   manifestPath: string,
   manifest: RunManifest,
   reference: string,
-  pidCanStillOwnRun: (pid: number, reference: string) => boolean
+  pidCanStillOwnRun: (pid: number, reference: string) => boolean,
+  groupCanStillOwnRun: (
+    pgid: number,
+    reference: string
+  ) => boolean = conservativeGroupOwnership(pidCanStillOwnRun)
 ): string | undefined => {
   const auxiliary = readAuxiliaryRunPids(manifestPath, manifest, reference);
   if (auxiliary.kind === "unreadable") {
     return `recorded-process-evidence-unreadable: ${auxiliary.reason}`;
   }
   const live = auxiliary.pids.find((entry) =>
-    pidCanStillOwnRun(entry.pid, entry.reference)
+    entry.group
+      ? groupCanStillOwnRun(entry.pid, entry.reference)
+      : pidCanStillOwnRun(entry.pid, entry.reference)
   );
-  return live
-    ? `recorded-process-may-be-live: ${live.source} pid ${live.pid}`
-    : undefined;
+  if (!live) {
+    return undefined;
+  }
+  return live.group
+    ? `recorded-process-may-be-live: ${live.source} pid ${live.pid} (or a member of its process group)`
+    : `recorded-process-may-be-live: ${live.source} pid ${live.pid}`;
 };
+
+/**
+ * The group rule for a caller that supplied only a pid rule: the leader by
+ * that rule, or else any live member of the group. A leader the pid rule
+ * proves reused may still be counted live here if it leads a group of its
+ * own, which can only block a release, never grant one.
+ */
+const conservativeGroupOwnership =
+  (pidCanStillOwnRun: (pid: number, reference: string) => boolean) =>
+  (pgid: number, reference: string): boolean =>
+    pidCanStillOwnRun(pgid, reference) || processGroupAlive(pgid);
 
 const sameWorkspaceIdentity = (
   current: RunManifest,
@@ -1187,6 +1244,41 @@ const sameWorkspaceIdentity = (
   current.state === expected.state &&
   current.status === expected.status &&
   current.updatedAt === expected.updatedAt;
+
+/**
+ * Why a recorded process of the run (its pid, its launch attempt, or any
+ * auxiliary process or group) may still be live, or `undefined` when none is.
+ */
+const recordedProcessRefusal = (
+  manifestPath: string,
+  manifest: RunManifest,
+  evidence: RunOwnershipEvidence,
+  reference: string,
+  deps: StoppedRunReconcileDeps
+): string | undefined => {
+  if (
+    evidence.pid.kind !== "valid" ||
+    deps.pidCanStillOwnRun(evidence.pid.value, reference)
+  ) {
+    return "run-process-may-be-live";
+  }
+  const attempt = evidence.launchAttemptPid;
+  if (
+    attempt.kind === "invalid" ||
+    attempt.kind === "conflicting" ||
+    (attempt.kind === "valid" &&
+      deps.pidCanStillOwnRun(attempt.value, reference))
+  ) {
+    return "launch-process-may-be-live";
+  }
+  return auxiliaryProcessOwnership(
+    manifestPath,
+    manifest,
+    reference,
+    deps.pidCanStillOwnRun,
+    deps.groupCanStillOwnRun
+  );
+};
 
 /**
  * Adds release proof to one legacy stopped manifest only after every ownership
@@ -1237,67 +1329,67 @@ export const reconcileLegacyStoppedRun = async (
       status: "refused",
     };
   }
-  if (evidence.workspaceReleasedAt.kind === "valid") {
-    return {
-      runId: expectedRunId,
-      status: "already-released",
-      workspaceReleasedAt: evidence.workspaceReleasedAt.value,
-    };
-  }
-  if (evidence.workspaceReleasedAt.kind !== "absent") {
+  const marker = evidence.workspaceReleasedAt;
+  if (marker.kind !== "valid" && marker.kind !== "absent") {
     return {
       reason: "invalid-release-evidence",
       runId: expectedRunId,
       status: "refused",
     };
   }
+  // A marker this call did not write is re-verified on the same full evidence
+  // before it is reported as a release: it may have been written by startup
+  // GC or an older binary on less evidence, or a process of the run may have
+  // appeared since. Its PID-reuse reference is the later of the marker and the
+  // last update, as in the launch scan. A launch that never bound tmux (GC's
+  // `abandoned-never-bound` handback) has no runtime to probe.
+  const neverBound =
+    marker.kind === "valid" &&
+    manifest.workspaceReleaseKind === "abandoned-never-bound" &&
+    !manifest.tmuxSession;
+  const reference =
+    marker.kind === "valid"
+      ? latestInstant(marker.value, manifest.updatedAt)
+      : manifest.updatedAt;
   // A legacy manifest that recorded its session but no socket still has a
   // runtime identity: `runtimeAbsent` must then prove the session gone on
-  // every socket the launcher could have used. Only the session is required.
-  if (!(manifest.workspaceBinding && manifest.tmuxSession)) {
+  // every socket the launcher could have used. Only the session is required
+  // (and, to write a new handback, the workspace binding).
+  if (
+    !(
+      neverBound ||
+      (manifest.tmuxSession &&
+        (marker.kind === "valid" || manifest.workspaceBinding))
+    )
+  ) {
     return {
       reason: "missing-runtime-identity",
       runId: expectedRunId,
       status: "refused",
     };
   }
-  if (
-    evidence.pid.kind !== "valid" ||
-    deps.pidCanStillOwnRun(evidence.pid.value, manifest.updatedAt)
-  ) {
-    return {
-      reason: "run-process-may-be-live",
-      runId: expectedRunId,
-      status: "refused",
-    };
-  }
-  const attempt = evidence.launchAttemptPid;
-  if (
-    attempt.kind === "invalid" ||
-    attempt.kind === "conflicting" ||
-    (attempt.kind === "valid" &&
-      deps.pidCanStillOwnRun(attempt.value, manifest.updatedAt))
-  ) {
-    return {
-      reason: "launch-process-may-be-live",
-      runId: expectedRunId,
-      status: "refused",
-    };
-  }
-  const auxiliaryOwner = auxiliaryProcessOwnership(
+  const processOwner = recordedProcessRefusal(
     manifestPath,
     manifest,
-    manifest.updatedAt,
-    deps.pidCanStillOwnRun
+    evidence,
+    reference,
+    deps
   );
-  if (auxiliaryOwner) {
-    return { reason: auxiliaryOwner, runId: expectedRunId, status: "refused" };
+  if (processOwner) {
+    return { reason: processOwner, runId: expectedRunId, status: "refused" };
   }
-  if (!(await deps.runtimeAbsent(manifestPath))) {
+  if (!(neverBound || (await deps.runtimeAbsent(manifestPath)))) {
     return {
       reason: "tmux-runtime-not-absent",
       runId: expectedRunId,
       status: "refused",
+    };
+  }
+  if (marker.kind === "valid") {
+    return {
+      runId: expectedRunId,
+      status: "already-released",
+      workspaceReleasedAt: marker.value,
     };
   }
   const releasedAt = deps.now();

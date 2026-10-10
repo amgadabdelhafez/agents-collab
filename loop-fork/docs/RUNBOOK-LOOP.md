@@ -1640,3 +1640,68 @@ handoffs; about 140 s). Also run, unchanged and all passing:
 workflow-replay-corpus (7), orchestration-rollback-to-deployed (25),
 governess-beat-workflow (7), governess-temporal-journal (8),
 temporal-workflow-port (12), supervisor-message-v2-temporal-retention (14).
+
+## Dead-run workspace release
+
+A run hands its workspace back (`workspaceReleasedAt`) only when its tmux
+session is positively gone and no recorded process of the run can still be
+live. The same evidence is used by `loop reconcile stopped-run|failed-terminal
+<runId>`, the launch auto-release of a dead stopped or failed run, the clean
+teardown's own handback, and startup GC. Recorded processes are:
+
+- the run pid and launch-attempt pid (manifest), and the Codex app-server;
+- the bridge worker (`bridge-worker.json`) and each `run-processes/` entry
+  (bridge MCP processes);
+- each agent pane's process GROUP (`run-processes/pane-<pane>-<pid>.json`,
+  written at launch, on a resume that re-attaches, and by the teardown before
+  its session kill; never the governess pane);
+- each claimed utility job's worker process GROUP (`utility/jobs.jsonl`; a
+  worker is spawned detached, so its group id is its pid).
+
+A recorded group is live while any member exists, even after its leader is
+gone. A live process that provably started after the recorded instant and
+holds the group's id is not the group (a pid is never allocated while a group
+with that id exists).
+
+A teardown signals the utility workers' groups (identity: the worker command
+with this exact run directory, epoch and job id) before the session kill, and
+after the kill ends those groups and the agent pane groups that were verified
+in the run's own session: SIGTERM, a 3 s grace, SIGKILL, a 1 s wait. Stale
+recovery ends a timed-out or stale-epoch worker's group the same way. Startup
+GC writes a handback only on the full evidence above; a never-bound launch it
+cannot release yet stays active, so the next GC judges it again. `loop
+reconcile` re-verifies a recorded handback on the full evidence before it
+answers `already-released`.
+
+### Dead-run release: accepted residual risks (2026-10-10)
+
+The owner accepted these on 2026-10-10 when choosing to close the remaining
+review gap with the process-group repair and then install:
+
+- A socket-less legacy run is judged on every candidate socket plus all
+  recorded evidence being dead.
+- A torn last `utility/jobs.jsonl` line older than 60 s is ignored.
+- A malformed complete `utility/jobs.jsonl` line blocks release until it is
+  repaired.
+- A recycled pid (or process group id) can falsely block a release; it never
+  falsely grants one.
+- Utility workers started by the old binary (ea968d82) lack the claim-time
+  self-cancel on a terminal run.
+- A resume or re-stop between a release's read and its write is not modelled.
+- Startup GC pays for tmux probing of each candidate run.
+
+Further limits of the same repair, recorded for the owner (not part of the
+2026-10-10 acceptance):
+
+- Runs launched before pane records existed have none: until a resume
+  re-attaches (or, for a run that recorded its socket, a governess started
+  from this binary tears it down), they are judged as before, on session
+  absence plus the other evidence. A governess already running from the old
+  binary tears down with the old code.
+- A process that leaves its pane's or worker's process group (setsid or
+  setpgid, for example a CLI that starts each tool in its own group) is not
+  tracked.
+- A group whose leader is gone before the teardown cannot be identified, so it
+  is never signalled automatically; it blocks the release until it exits or
+  the operator ends it.
+- A pane that the manifest does not name (split in by hand) is not recorded.

@@ -118,6 +118,9 @@ const fakeDeps = (home: string, world: World) => ({
   pid: 4242,
   pidStartedAt: (pid: number) => world.startedAt.get(pid),
   platform: "darwin",
+  // No group outlives its leader here (dead-run-process-groups.test.ts
+  // covers groups); never the host's process table.
+  processGroupAlive: () => false,
   tmuxLiveness: (): "unknown" => "unknown",
   uid: 501,
 });
@@ -548,6 +551,7 @@ test("teardown confirmation waits for a utility worker that is still exiting", a
     const sleeps: number[] = [];
     const result = await confirmTeardownRelease(manifestPath, "81", {
       attempts: 3,
+      groupCanStillOwnRun: (pgid) => live.has(pgid),
       now: () => "2026-10-06T11:00:01.000Z",
       pidCanStillOwnRun: (pid) => live.has(pid),
       retryMs: 300,
@@ -650,6 +654,8 @@ test("teardown ends the run's live utility workers by process group, and only th
     const asked: number[] = [];
     const signals: string[] = [];
     runProcessCleanupInternals.deps.pidAlive = (pid) => pid !== 5104;
+    // 5104's group went with it.
+    runProcessCleanupInternals.deps.processGroupAlive = () => false;
     runProcessCleanupInternals.deps.commandForPid = (pid) => {
       asked.push(pid);
       return commands[pid];

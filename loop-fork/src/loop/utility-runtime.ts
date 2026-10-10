@@ -16,7 +16,7 @@ import type {
   AgentSessionEvent,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
 import { readBridgeEvents } from "./bridge-store";
 import {
@@ -40,6 +40,11 @@ import {
 } from "./pi-runtime";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
+  defaultTerminationDeps,
+  type TerminationTarget,
+  terminateTargets,
+} from "./process-group";
+import {
   createUtilityRouteRequest,
   routeUtilityRequest,
   type UtilityCheckResult,
@@ -56,7 +61,10 @@ import {
   type UtilityTierSelectionStrategy,
 } from "./task-router";
 import type { Agent, CavemanMode } from "./types";
-import { UTILITY_WORKER_SUBCOMMAND } from "./utility-constants";
+import {
+  isUtilityWorkerCommand,
+  UTILITY_WORKER_SUBCOMMAND,
+} from "./utility-constants";
 import {
   buildUtilityContextCapsule,
   persistUtilityContextCapsule,
@@ -242,7 +250,17 @@ export interface UtilityQueueDependencies {
     repoRoot: string;
     runDir: string;
   }) => boolean;
-  terminateWorker?: (pid: number) => boolean;
+  terminateWorker?: (
+    pid: number,
+    identity: UtilityWorkerIdentity
+  ) => boolean | Promise<boolean>;
+}
+
+/** The exact worker a claim names: its run directory, claim epoch and job. */
+export interface UtilityWorkerIdentity {
+  epoch: number;
+  jobId: string;
+  runDir: string;
 }
 
 const utilityWorkerIsAlive = (pid: number): boolean => {
@@ -254,13 +272,52 @@ const utilityWorkerIsAlive = (pid: number): boolean => {
   }
 };
 
-const terminateUtilityWorker = (pid: number): boolean => {
-  try {
-    process.kill(pid, "SIGKILL");
-    return true;
-  } catch {
+const utilityWorkerCommand = (pid: number): string | undefined => {
+  const result = spawnSync(["ps", "-ww", "-p", String(pid), "-o", "command="], {
+    stderr: "ignore",
+    stdout: "pipe",
+    timeout: 1000,
+  });
+  const command = new TextDecoder().decode(result.stdout).trim();
+  return result.exitCode === 0 && command ? command : undefined;
+};
+
+/**
+ * Process hooks of the stale-recovery termination; tests replace them.
+ */
+export const utilityWorkerTerminationInternals = {
+  commandForPid: utilityWorkerCommand,
+  terminationDeps: defaultTerminationDeps,
+};
+
+/**
+ * Ends a stale worker and every process of its group. The worker leads its
+ * own group (it is spawned detached), and the bounded commands it runs
+ * (verify, test, build) stay in that group with their cwd in the workspace;
+ * killing the worker pid alone left them running. The group is signalled only
+ * when the live worker's command is the worker subcommand with this exact run
+ * directory, claim epoch and job id; then SIGTERM, a bounded grace, and
+ * SIGKILL for anything still alive. A worker that leads no group is ended
+ * alone, the same way.
+ */
+const terminateUtilityWorker = async (
+  pid: number,
+  identity: UtilityWorkerIdentity
+): Promise<boolean> => {
+  const hooks = utilityWorkerTerminationInternals;
+  if (!isUtilityWorkerCommand(hooks.commandForPid(pid), identity)) {
     return false;
   }
+  const deps = hooks.terminationDeps();
+  const target: TerminationTarget = deps.processGroupAlive(pid)
+    ? { id: pid, kind: "group", source: `utility job ${identity.jobId} worker` }
+    : {
+        id: pid,
+        kind: "process",
+        source: `utility job ${identity.jobId} worker`,
+      };
+  const result = await terminateTargets([target], deps);
+  return result.survivors.length === 0 && result.failed.length === 0;
 };
 
 const positiveNumber = (
@@ -805,9 +862,14 @@ const recoverStaleUtilityJobs = async (
       if (
         (staleEpoch || runTimedOut) &&
         workerPid !== undefined &&
+        active.claim !== undefined &&
         isWorkerAlive(workerPid)
       ) {
-        terminateWorker(workerPid);
+        await terminateWorker(workerPid, {
+          epoch: active.claim.epoch,
+          jobId: active.jobId,
+          runDir: context.runDir,
+        });
       }
       await failUtilityJob(
         context,

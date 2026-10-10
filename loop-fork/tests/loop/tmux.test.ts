@@ -1073,6 +1073,7 @@ test.each([
 
 test("runInTmux preserves stable pane targets when reattaching a live paired session", async () => {
   const calls: string[][] = [];
+  const paneRecords: string[] = [];
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -1114,6 +1115,9 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
         manifest = update(manifest) ?? manifest;
         return manifest;
       },
+      recordPaneProcesses: (dir, session, paneIds) => {
+        paneRecords.push(`${dir}|${session}|${paneIds.join(",")}`);
+      },
     },
     { opts: makePairedOptions(), task: "Ship feature" }
   );
@@ -1126,6 +1130,9 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
     tmuxPaneRight: "%right",
     tmuxSession: "repo-loop-1",
   });
+  // The re-attach records the agent panes' processes (a run launched before
+  // pane records existed gets them now), never the governess pane.
+  expect(paneRecords).toEqual(["/repo/.loop/runs/1|repo-loop-1|%left,%right"]);
 });
 
 test("runInTmux transports a realistic charter through hash-bound pointer bootstraps", async () => {
@@ -1290,6 +1297,7 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
 test("runInTmux writes paired session refs before starting governess", async () => {
   const calls: string[][] = [];
   const events: string[] = [];
+  const paneRecords: string[] = [];
   const home = makeTempHome();
   let sessionStarted = false;
   let manifest = createRunManifest({
@@ -1446,11 +1454,21 @@ test("runInTmux writes paired session refs before starting governess", async () 
           );
           return manifest;
         },
+        recordPaneProcesses: (dir, session, paneIds) => {
+          paneRecords.push(`${dir}|${session}|${paneIds.join(",")}`);
+        },
       },
       { opts, task: "Ship feature" }
     );
 
     expect(delegated).toBe(true);
+    // Every persist of the pane targets records the agent panes' processes,
+    // and the governess pane (%43) is never among them.
+    expect(paneRecords.length).toBeGreaterThan(0);
+    expect(paneRecords.at(-1)).toBe(
+      `${runDir}|repo-loop-1|%40,%41,%42,%42,%44,%45`
+    );
+    expect(paneRecords.every((record) => !record.includes("%43"))).toBe(true);
     expect(events).toContain("start-codex:true:utility-first");
     expect(events).toContain("codex-hook-event:true");
     expect(events).toContain("codex-child-profile:false");

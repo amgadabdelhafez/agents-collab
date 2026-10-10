@@ -49,6 +49,7 @@ import {
   promoteMemoryCheckpoint,
 } from "./loop/memory-checkpoint";
 import { runOrchestrationCommand } from "./loop/orchestration-command";
+import { groupCanStillOwnRun } from "./loop/process-group";
 import {
   defaultPidOwnershipDeps,
   pidCanStillOwnRun,
@@ -387,6 +388,10 @@ const runStoppedRunReconcileCommand = async (
   const storage = resolveRunStorage(runId);
   const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
     terminalState: kind === "stopped-run" ? "stopped" : "failed",
+    // A utility worker's or agent pane's process group is live while any
+    // member exists, after its leader is gone.
+    groupCanStillOwnRun: (pgid, reference) =>
+      groupCanStillOwnRun(pgid, reference, defaultPidOwnershipDeps),
     now: () => new Date().toISOString(),
     pidCanStillOwnRun: (pid, stoppedAt) =>
       pidCanStillOwnRun(pid, stoppedAt, {
