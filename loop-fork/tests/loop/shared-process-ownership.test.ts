@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "bun";
 import {
+  confirmTeardownRelease,
   type GovernessConfig,
   type GovernessDeps,
   stopGovernessLoop,
@@ -47,6 +48,7 @@ import {
 import {
   cleanupRunOwnedProcesses,
   collectRunAgentGroups,
+  gcAbandonedRunProcesses,
   runProcessCleanupInternals,
 } from "../../src/loop/run-process-cleanup";
 import {
@@ -309,6 +311,86 @@ test("A tears down while B uses a shared app-server recorded in B's manifest: th
       expect(
         await reconcileA(a.manifestPath, recordedProcessClassifier(probes))
       ).toMatchObject({ status: "changed" });
+    }
+  );
+});
+
+test("the teardown's own handback applies the same rule and names the live record it did not count", async () => {
+  await withTwoRuns(
+    "working",
+    { codexAppServerPid: APP_SERVER },
+    async ({ a, b, storage }) => {
+      recordWalkedGroup(a.runDir, APP_SERVER);
+      const probes = fakeProbes(storage, [row(APP_SERVER, 1, APP_SERVER)], {
+        [APP_SERVER]: b.workspace,
+      });
+      const confirm = (classify: boolean) =>
+        confirmTeardownRelease(a.manifestPath, "1", {
+          attempts: 1,
+          ...(classify
+            ? { classifyRecordedProcess: recordedProcessClassifier(probes) }
+            : {}),
+          groupCanStillOwnRun: (pgid) => pgid === APP_SERVER,
+          now: () => SNAPSHOT_AT,
+          pidCanStillOwnRun: () => false,
+          retryMs: 0,
+          runtimeAbsent: () => Promise.resolve(true),
+          sleep: () => Promise.resolve(),
+        });
+      expect(await confirm(false)).toMatchObject({ released: false });
+      const released = await confirm(true);
+      expect(released.released).toBe(true);
+      expect(released.detail).toContain(
+        "not counted: run-processes/agent-group-7000.json pid 7000 (shared-process-skipped: recorded by run 2"
+      );
+    }
+  );
+});
+
+test("startup GC never signals A's app-server that live B records too, and hands A's workspace back", async () => {
+  await withTwoRuns(
+    "working",
+    { codexAppServerPid: APP_SERVER },
+    ({ a, b, storage }) => {
+      writeRunManifest(a.manifestPath, {
+        ...(readRunManifest(a.manifestPath) as RunManifest),
+        codexAppServerPid: APP_SERVER,
+        codexRemoteUrl: "ws://127.0.0.1:4500",
+      });
+      const signals: string[] = [];
+      const result = gcAbandonedRunProcesses({
+        deps: {
+          ...fakeProbes(storage, [row(APP_SERVER, 1, APP_SERVER)], {
+            [APP_SERVER]: b.workspace,
+          }),
+          commandForPid: () => "codex app-server --listen ws://127.0.0.1:4500",
+          listTmuxSessions: () => new Set(["repo-shared-loop-2"]),
+          listeningPids: () => [APP_SERVER],
+          pidAlive: (pid) => pid === APP_SERVER,
+          pidStartedAt: () => BEFORE,
+          processGroupAlive: (pgid) => pgid === APP_SERVER,
+          runtimeAbsent: () => true,
+          signal: (pid, signal) => {
+            signals.push(`${pid}:${signal}`);
+          },
+        },
+        log: () => undefined,
+        repoId: "repo-shared",
+        storageRoot: storage,
+      });
+      expect(signals).toEqual([]);
+      expect(result.skipped).toContainEqual(
+        expect.objectContaining({
+          otherRunId: "2",
+          pid: APP_SERVER,
+          reason: "shared-process-skipped",
+        })
+      );
+      expect(readRunManifest(a.manifestPath)).toMatchObject({
+        codexAppServerPid: APP_SERVER,
+        workspaceReleasedAt: expect.any(String),
+      });
+      expect(readRunManifest(b.manifestPath)?.state).toBe("working");
     }
   );
 });
