@@ -1836,7 +1836,11 @@ The rules (`src/loop/shared-process-ownership.ts`), first match wins:
      signalled, whether or not the other runs can be read; the cleanup logs
      it as `app-server-identity-mismatch` with `detail: identity not proven:
      <why>` and, when other runs were unreadable, `; other runs unreadable:
-     <reason>`;
+     <reason>`. A bound app-server gets one SIGTERM, to its whole process
+     group when the same snapshot shows it leading one that is not the
+     cleanup's own (so the children Codex starts in it end too), else to its
+     pid. One that is not running is skipped as `app-server-not-running`
+     before the other runs are read;
    - a pane group: the run's own recorded pane, proven at collection (a
      member started by the record's instant) and re-identified against the
      snapshot instant before every signal round;
@@ -1918,9 +1922,13 @@ Accepted and remaining risks of these rules (for the owner):
   Since terminal runs are no longer dead on their manifest alone, a
   malformed record in an OLD terminal run whose processes are gone also
   counts (it is not provably dead), so the exposure is wider than before.
-  The live storage root was not inspected for such directories (the repair
-  never reads live state); before relying on a release, the operator can
-  check with a scan, for example `bun -e 'import {
+  The repair itself never reads live state. The second install review
+  (2026-10-10, a read-only `readOtherRunIndex` call on the live root, by the
+  reviewer, not by the repair) found 344 manifests there: 211 stopped, 117
+  failed, 13 submitted, 3 input-required; 66 runs counted as live, about 50
+  of them terminal but not provably dead. Every process those 50 record
+  stays shared for every other run. Before relying on a release, the
+  operator can check with a scan, for example `bun -e 'import {
   readOtherRunIndex } from "./src/loop/shared-process-ownership"; const r =
   readOtherRunIndex("/nonexistent", [process.env.HOME + "/.loop/runs"]);
   console.log(r.kind, r.kind === "unknown" ? r.reason : r.runs.length)'`
@@ -1928,13 +1936,20 @@ Accepted and remaining risks of these rules (for the owner):
   asks each terminal run's recorded tmux socket (`has-session`) whether its
   session is gone, which for a socket-less legacy run includes the default
   tmux server.
-- Cost: every read of the other runs (each teardown signal round, each
-  release judgement that meets a shared or walked process) now also checks
-  every terminal run under the storage roots: its record files, and, for
-  each run whose recorded processes are all gone, one tmux probe (a `stat`
-  and a bounded `tmux -S <socket> has-session`; every candidate socket for a
-  legacy run). Not measured on the live storage root; with hundreds of
-  terminal runs this adds seconds to a teardown.
+- Cost: every read of the other runs now also checks every terminal run
+  under the storage roots: its record files, and, for each run whose
+  recorded processes are all gone, one tmux probe (a `stat` and a bounded
+  `tmux -S <socket> has-session`; every candidate socket for a legacy run).
+  Measured by the second install review on the live root (2026-10-10, the
+  344 manifests above): 3.4 to 4.7 s per read. A teardown reads it several
+  times: once for the agent-group collection, once for its own app-server
+  (only when that app-server is still running: a gone one is skipped before
+  the read), once per signal round (SIGTERM, then SIGKILL when something
+  survives), and in release judgements that meet a shared or walked
+  process. Startup GC reads it once per abandoned run whose app-server is
+  still running. On that root a teardown therefore spends tens of seconds,
+  not seconds, in these reads; the cost grows with the number of runs kept
+  under the root, and pruning old run directories is the operator's lever.
 - Command-line matching is textual. A tool of this run that merely names
   another live run (`tail -f <other runDir>/governess.jsonl`, `loop status
   --run-id 7`) is treated as shared, and so is every walked group below it
@@ -2000,6 +2015,29 @@ Accepted and remaining risks of these rules (for the owner):
   versions are not verified. In one of two smoke runs the cwd probe
   (`lsof`) answered unknown for the app-server; unknown counts as release
   evidence, so that fails closed.
+- The same smoke showed network activity on app-server start, with no
+  login: Codex syncs its plugins (`git fetch` of the openai/plugins
+  repository into `CODEX_HOME`), as children in the app-server's own process
+  group. Signalling the app-server's pid alone left them running,
+  re-parented to launchd, for about 20 s. Since the third repair the run's
+  own teardown and GC signal the bound app-server's whole group when the
+  snapshot shows it leading one (it is spawned detached, so it does), and
+  only its pid otherwise. The third repair's smoke (same Codex, scratch
+  `CODEX_HOME`, another run unreadable) found four plugin-sync processes
+  (`git`, `git remote-https`, `git-remote-https`, a shallow `git`) in the
+  bound app-server's group at its run's cleanup; all of them, the app-server
+  and its MCP server were gone within 5 s, before the smoke ended anything
+  itself. A child that leaves that group (setsid, as the MCP
+  servers do) is not reached; nor is the app-server's group held as release
+  evidence once its leader is gone (the app-server is recorded as a pid).
+- The identity binding needs the recorded pid to hold the listener itself.
+  The Homebrew `codex` (0.162.1) is a native arm64 binary that does. A
+  `codex` on PATH that is a wrapper or a node shim, which starts the real
+  server as a child, would leave the recorded pid (the wrapper) without the
+  listener: its app-server is then never ended by its run's teardown or by
+  GC (`app-server-identity-mismatch`, "does not hold the listener"), and it
+  counts as release evidence while the wrapper lives, so the run is not
+  released until it exits or the operator ends it.
 - cwd is read once per judgement; a process can `chdir` later. `lsof` is
   slow (tens of ms per pid): it runs only for shared or re-parented groups.
 - Other runs are read from the storage root under `HOME` and, for a run
@@ -2009,6 +2047,36 @@ Accepted and remaining risks of these rules (for the owner):
   launcher are not recorded by that run; they (and their descendants) are
   recognised as shared only by their command lines naming its run directory
   or socket.
+
+### Tests never reach live state (2026-10-10)
+
+The suite must not read the operator's storage root or reach a live tmux
+server. Before the third repair it did both: the default other-run index read
+`$HOME/.loop/runs` (with 344 runs there, `run-process-cleanup` failed 2 of 19
+and one index read took seconds), and a plain `tmux kill-session` /
+`has-session` from two tests went to the default server, because Bun fixes
+`os.homedir()` and the environment `Bun.spawn` passes to children at startup:
+a test's or preload's later edit of `process.env` (such as
+`TMUX_TMPDIR`) reaches neither. `test:file` and `test:ci` now run each file
+under `scripts/test-hermetic.sh`, which starts it with a fresh scratch `HOME`
+and `TMUX_TMPDIR` and with `TMUX`, `TMUX_PANE` and `LOOP_TMUX_SOCKET` unset,
+and `tests/setup.ts` refuses any other launch (`hermeticEnvGap`). Run tests
+only through those scripts; `LOOP_TEST_CERTIFICATION_MODE=single-file bun
+test <file>` alone is refused. Limits: a test may still name an absolute
+socket path of its own (they use scratch paths), and the legacy-socket
+candidates include `/tmp/tmux-<uid>/default` by design, so a test that
+judged a socket-less run on the default probes would ask the default server
+`has-session`. A tmux spy (a logging `tmux` first on PATH) over the whole
+suite at the third repair (2026-10-10, 140 files) saw 29 calls: none named a
+default socket, the four plain ones (no `-S`) went to the launcher's scratch
+`TMUX_TMPDIR`, and the rest named the tests' own scratch sockets. Before the
+launcher, the same four plain calls carried no `TMUX_TMPDIR` and so went to
+the default server.
+
+Flaky, not regressions: two `launch-reservation` tests ("exact Run 61
+releases on a live shared socket..." and "a present endpoint with unknown
+liveness blocks...") failed once at 607a3890 and passed on every rerun; the
+base ea968d82 passed them on three runs.
 
 ## Verifying a build (provenance, 2026-10-10)
 
