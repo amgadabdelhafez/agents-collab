@@ -1141,14 +1141,14 @@ What a host does with its keys:
   bind naming a graph derived under one is refused, 409
   `{"code": "result-graph-under-previous-key"}` (a2a-supervisor-assignment-http.ts:71-77),
   except an exact retry of the binding already recorded while it still holds
-  its graph task (supervisor-message-v2-delivery-ledger.ts:1334-1381).
+  its graph task (supervisor-message-v2-delivery-ledger.ts:1371-1418).
 - A binding derived under a previous key still publishes. A binding derived
   under a key the host does not hold is refused on publish with an error
   naming the key's fingerprint, and reported (`unknown-result-graph-key`).
 - Each binding records the fingerprint of its key
   (`rgk:` + 16 hex digits, not reversible) and the deployment (task queue)
   that recorded it, in the additive column `bound_by_deployment`
-  (supervisor-message-v2-delivery-ledger.ts:1145-1149).
+  (supervisor-message-v2-delivery-ledger.ts:1179-1183).
 - `loop orchestration result-graph-key-fingerprints <config-path>` prints
   `<ENV> <primary|previous> <fingerprint>` per configured key, never a key
   (loop-orchestration-server.ts:1650-1675). Use it to match a fingerprint in
@@ -1157,7 +1157,7 @@ What a host does with its keys:
 Whose bindings a host classifies (round-4 major 1). Keys belong to a
 deployment, so a host classifies, lists and reports only its own
 deployment's bindings, never those of another deployment sharing the ledger
-database (supervisor-message-v2-delivery-ledger.ts:626-659):
+database (supervisor-message-v2-delivery-ledger.ts:626-661):
 
 - a binding recorded by this build belongs to the deployment that recorded
   it;
@@ -1183,11 +1183,25 @@ once its result was published (its A2A task holds the message's
 result (failed, canceled or rejected), since publication is then refused
 forever. A missing task, or a task-store read that fails, counts as not
 settled, so nothing is hidden (supervisor-a2a-v2-service.ts:644-673;
-supervisor-message-v2-delivery-ledger.ts:661-686). Settled bindings are left
+supervisor-message-v2-delivery-ledger.ts:663-702). Settled bindings are left
 out of `underPreviousResultGraphKey`, and out of the `unknown-result-graph-key`
 start lines and listing once their key is removed. A settled binding stays
 recorded under its key; after that key is removed, re-publishing its
 already published result is refused with the unknown-key error.
+
+Settling is final, so a deployment checks a binding against its A2A task
+store until it settles and never again (claude/fix6-hygiene). Each settled
+binding is recorded per deployment in the additive table
+`loop_supervisor_message_v2_settled_result_binding` (workflow id, A2A task
+id, deployment), and the start report and the GET read only bindings not
+recorded there. Before, every start and every GET re-checked every binding
+under a non-primary key, and each rotation added more. A missing task, a
+task without its accepted-result artifact and a failing read are never
+recorded, so they are checked again each time. An older build never reads
+the table; deleting its rows only makes the host check those bindings again
+(supervisor-a2a-result-key-rotation, now 20 tests: "a settled binding is
+remembered durably: ..." and "a settled binding is remembered per
+deployment: ...").
 
 Authenticated `GET <routePath>/assignment` adds
 `"underPreviousResultGraphKey": [{"a2aTaskId", "graphTaskId", "graphWorkflowId", "keyFingerprint", "messageWorkflowId"}]`:
