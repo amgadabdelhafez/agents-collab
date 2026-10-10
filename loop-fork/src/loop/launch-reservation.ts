@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { platform as osPlatform } from "node:os";
-import { join } from "node:path";
-import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { dirname, join } from "node:path";
+import {
+  setTimeout as sleepFor,
+  setImmediate as yieldToEventLoop,
+} from "node:timers/promises";
 import lockfile from "proper-lockfile";
 import { resolveLaunchModel } from "./launch-defaults";
 import {
@@ -11,6 +14,10 @@ import {
   pidCanStillOwnRun,
 } from "./pid-ownership";
 import { groupCanStillOwnRun, processGroupAlive } from "./process-group";
+import {
+  cleanupRunOwnedProcesses,
+  type RunProcessCleanupResult,
+} from "./run-process-cleanup";
 import {
   auxiliaryProcessOwnership,
   createRunManifest,
@@ -70,6 +77,17 @@ interface LaunchReservationDeps {
    */
   endpointState: (target: TmuxTarget | undefined) => TmuxEndpointState;
   /**
+   * Ends a dead failed start's own processes (`failDeadStartupRun`): its
+   * Codex app-server, bridge worker, bridge MCP registrations and utility
+   * workers, each only on its positive identity binding and never one
+   * another live run records or names. Production is the teardown's own
+   * `cleanupRunOwnedProcesses`.
+   */
+  endRunOwnedProcesses: (
+    runDir: string,
+    manifest: RunManifest
+  ) => RunProcessCleanupResult;
+  /**
    * Environment consulted for socket resolution. Injected rather than read from
    * `process.env` at the call site so a test can drive resolution without
    * mutating the ambient environment of the whole suite.
@@ -96,6 +114,8 @@ interface LaunchReservationDeps {
     env: Readonly<Record<string, string | undefined>>,
     uid: number
   ) => string;
+  /** The bounded wait for ended processes to exit. */
+  sleep: (ms: number) => Promise<void>;
   tmuxLiveness: (
     target: TmuxTarget | undefined
   ) => Promise<TmuxLiveness> | TmuxLiveness;
@@ -111,6 +131,7 @@ export interface PairedLaunchClaim {
 
 const defaultDeps = (): LaunchReservationDeps => ({
   classifyRecordedProcess: recordedProcessClassifier(defaultOwnershipProbes),
+  endRunOwnedProcesses: cleanupRunOwnedProcesses,
   endpointState: readTmuxEndpointState,
   env: process.env,
   home: process.env.HOME ?? "",
@@ -125,6 +146,7 @@ const defaultDeps = (): LaunchReservationDeps => ({
   pid: process.pid,
   platform: osPlatform(),
   resolveSocket: (env, uid) => resolveTmuxSocket(env, { uid }).socket,
+  sleep: (ms) => sleepFor(ms),
   tmuxLiveness: tmuxTargetLivenessAsync,
   uid: process.getuid?.() ?? 0,
 });
@@ -491,7 +513,7 @@ const resolution = (manifest: RunManifest): string => {
     return `once nothing of run ${manifest.runId} is still running, run \`loop reconcile ${kind} ${manifest.runId}\``;
   }
   if (isActiveRunState(manifest.state)) {
-    return `resume it with \`loop --tmux --run-id ${manifest.runId}\`, or stop it before launching another`;
+    return `resume it with \`loop --tmux --run-id ${manifest.runId}\`, or stop it with \`loop stop ${manifest.runId}\` before launching another`;
   }
   return `stop whatever of run ${manifest.runId} is still running, then launch again`;
 };
@@ -602,6 +624,132 @@ const releaseDeadTerminalRun = async (
   return GRANTED;
 };
 
+const STARTUP_RUN_STATES = new Set<string>(["input-required", "submitted"]);
+const STARTUP_EXIT_WAIT_ATTEMPTS = 10;
+const STARTUP_EXIT_WAIT_MS = 300;
+
+/** Bounded wait for the processes a teardown signalled to exit. */
+const waitForExit = async (
+  pids: readonly number[],
+  deps: Pick<LaunchReservationDeps, "isPidAlive" | "sleep">
+): Promise<void> => {
+  for (
+    let attempt = 0;
+    attempt < STARTUP_EXIT_WAIT_ATTEMPTS &&
+    pids.some((pid) => deps.isPidAlive(pid));
+    attempt += 1
+  ) {
+    await deps.sleep(STARTUP_EXIT_WAIT_MS);
+  }
+};
+
+interface DeadStartupVerdict {
+  /** The run as failed here, when it was; the conflict then names it so. */
+  readonly failed?: RunManifest;
+  readonly verdict: ReleaseVerdict;
+}
+
+/**
+ * A paired start that failed with its session preserved for recovery stays
+ * `input-required` (or `submitted`, when it stopped earlier). That is right
+ * while its session or its launcher lives. Once the session is positively
+ * gone AND every launcher pid (run pid and launch-attempt pid) is positively
+ * dead, nothing can recover it, and left alone it locks the workspace forever
+ * while its detached app-server and bridge worker keep running (r7,
+ * 2026-10-11). Only then is it failed here: its own processes are ended on
+ * their positive identity binding (`endRunOwnedProcesses`, which never
+ * signals one another live run records or names), it is marked failed on the
+ * bytes it was judged on, and `releaseDeadTerminalRun` decides the handback on
+ * the existing full evidence. Any doubt leaves it untouched and conflicting.
+ */
+const failDeadStartupRun = async (
+  stored: StoredManifest,
+  manifest: RunManifest,
+  evidence: RunOwnershipEvidence,
+  deps: LaunchReservationDeps
+): Promise<DeadStartupVerdict> => {
+  const untouched = (reason: string): DeadStartupVerdict => ({
+    verdict: refused(reason),
+  });
+  if (
+    evidence.state.kind !== "valid" ||
+    !STARTUP_RUN_STATES.has(evidence.state.value)
+  ) {
+    return untouched("it is not a failed start");
+  }
+  // A start that never bound a session is startup GC's never-bound repair.
+  if (!manifest.tmuxSession) {
+    return untouched("it recorded no tmux session");
+  }
+  const reference = manifest.updatedAt;
+  if (
+    evidence.pid.kind !== "valid" ||
+    pidCanStillOwnRun(evidence.pid.value, reference, deps)
+  ) {
+    return untouched(`its launcher pid ${manifest.pid} may still be running`);
+  }
+  const attempt = evidence.launchAttemptPid;
+  if (attempt.kind === "invalid" || attempt.kind === "conflicting") {
+    return untouched("its launch-attempt pid is unreadable");
+  }
+  if (
+    attempt.kind === "valid" &&
+    pidCanStillOwnRun(attempt.value, reference, deps)
+  ) {
+    return untouched(
+      `its launch-attempt pid ${attempt.value} may still be running`
+    );
+  }
+  if (!(await tmuxRuntimeAbsentForManifest(stored.manifestPath, deps))) {
+    return untouched(
+      `its tmux session ${manifest.tmuxSession} is not positively gone`
+    );
+  }
+  const ended = deps.endRunOwnedProcesses(
+    dirname(stored.manifestPath),
+    manifest
+  );
+  await waitForExit(ended.killed, deps);
+  let failed: RunManifest | undefined;
+  updateRunManifest(stored.manifestPath, (current) => {
+    if (
+      !(
+        current &&
+        current.runId === manifest.runId &&
+        current.state === manifest.state &&
+        current.pid === manifest.pid &&
+        current.launchAttemptPid === manifest.launchAttemptPid &&
+        current.tmuxSession === manifest.tmuxSession &&
+        current.updatedAt === manifest.updatedAt
+      )
+    ) {
+      return undefined;
+    }
+    failed = setRunManifestState(current, "failed", deps.now());
+    return failed;
+  });
+  if (!failed) {
+    return untouched("its manifest changed while it was judged");
+  }
+  const left = ended.skipped.map((entry) => `${entry.pid} (${entry.reason})`);
+  deps.log(
+    `[loop] failed dead startup run ${manifest.runId} (${manifest.state}, ${manifest.tmuxSession}): its tmux session is gone and its launcher is dead; ended ${ended.killed.length} of its own process${ended.killed.length === 1 ? "" : "es"}${left.length > 0 ? `; left unsignalled: ${left.join(", ")}` : ""}`
+  );
+  const reread = readReservationManifest(stored.manifestPath);
+  if (reread?.kind !== "valid") {
+    return { failed, verdict: refused("its failed manifest is unreadable") };
+  }
+  return {
+    failed: reread.manifest,
+    verdict: await releaseDeadTerminalRun(
+      stored,
+      reread.manifest,
+      reread.evidence,
+      deps
+    ),
+  };
+};
+
 const assertNoConflict = async (
   manifests: StoredManifest[],
   binding: LaunchWorkspaceBinding,
@@ -637,28 +785,66 @@ const assertNoConflict = async (
     ) {
       continue;
     }
-    const released = await releaseDeadTerminalRun(
+    // Keep scanning: every dead run is released even when another run still
+    // blocks, so the operator is left with only the runs that need a decision.
+    // (Evaluated before the assignment: `??=` would skip it once one blocks.)
+    const blocking = await unreleasedConflict(
       stored,
       manifest,
       evidence,
+      verdict,
       deps
     );
-    if (released.granted) {
-      continue;
-    }
-    // Keep scanning: every dead run is released even when another run still
-    // blocks, so the operator is left with only the runs that need a decision.
-    conflict ??= conflictError(
-      manifest,
-      evidence.workspaceReleasedAt.kind === "absent" &&
-        reconcileKind(manifest.state)
-        ? released.reason
-        : verdict.reason
-    );
+    conflict ??= blocking;
   }
   if (conflict) {
     throw conflict;
   }
+};
+
+/**
+ * The conflict a run that owns this workspace still raises, or `undefined`
+ * once it is released here: a dead terminal run by `releaseDeadTerminalRun`,
+ * a dead failed start by `failDeadStartupRun`.
+ */
+const unreleasedConflict = async (
+  stored: StoredManifest,
+  manifest: RunManifest,
+  evidence: RunOwnershipEvidence,
+  verdict: Extract<ReleaseVerdict, { granted: false }>,
+  deps: LaunchReservationDeps
+): Promise<Error | undefined> => {
+  const released = await releaseDeadTerminalRun(
+    stored,
+    manifest,
+    evidence,
+    deps
+  );
+  if (released.granted) {
+    return undefined;
+  }
+  if (STARTUP_RUN_STATES.has(manifest.state)) {
+    const startup = await failDeadStartupRun(stored, manifest, evidence, deps);
+    if (startup.verdict.granted) {
+      return undefined;
+    }
+    return startup.failed
+      ? conflictError(
+          startup.failed,
+          `failed as a dead start, but ${startup.verdict.reason}`
+        )
+      : conflictError(
+          manifest,
+          `${verdict.reason}; not failed as a dead start: ${startup.verdict.reason}`
+        );
+  }
+  return conflictError(
+    manifest,
+    evidence.workspaceReleasedAt.kind === "absent" &&
+      reconcileKind(manifest.state)
+      ? released.reason
+      : verdict.reason
+  );
 };
 
 const resolveRequestedRun = (
