@@ -5506,6 +5506,16 @@ const closeBeatBeforeKill = async (
   }
 };
 
+const teardownsInProgress = new WeakSet<GovernessConfig>();
+
+/**
+ * Whether `stopGovernessLoop` has begun tearing this governess's run down.
+ * Once it has, the governess routes no helper request and grants no native
+ * fallback for the rest of its life.
+ */
+export const governessTeardownInProgress = (config: GovernessConfig): boolean =>
+  teardownsInProgress.has(config);
+
 /**
  * Tear the run down. Without a Temporal journal every step is synchronous and
  * the returned promise is already settled. With one, the beat workflow is
@@ -5561,6 +5571,10 @@ export const stopGovernessLoop = (
       now
     );
   }
+  // From here on this governess must start no helper: the cleanup below ends
+  // the run's utility workers, and one spawned after it would outlive the
+  // teardown in the workspace being handed back.
+  teardownsInProgress.add(config);
   deps.markRunStopped?.(config, reason);
   try {
     const cleanup = deps.cleanupRunProcesses?.(config);
@@ -5791,6 +5805,85 @@ export const confirmTeardownRelease = async (
     await deps.sleep(deps.retryMs);
   }
   return { detail, released: false };
+};
+
+/**
+ * One cycle's helper routing: pending utility routes (which may spawn a
+ * detached Direct, Nanny, or Au Pair worker in the workspace) and pending
+ * native-fallback requests. Once a teardown of this run has begun, nothing is
+ * routed or granted: the teardown's cleanup has already ended the run's
+ * workers, and a new one would outlive it in the workspace being handed back.
+ */
+export const routeHelperRequests = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  input: { epoch: number; holder: Agent | undefined; lifecycleAt: string }
+): Promise<void> => {
+  const { epoch, holder, lifecycleAt } = input;
+  if (governessTeardownInProgress(config)) {
+    deps.appendLog(config.logFile, {
+      at: lifecycleAt,
+      epoch,
+      event: "helper-routing-skipped",
+      reason: "teardown-in-progress",
+    });
+    return;
+  }
+  const utilityPeer = config.agents.find(
+    (info) => info.agent !== holder
+  )?.agent;
+  if (config.runDir && config.cwd && holder && utilityPeer) {
+    try {
+      const routed = await processPendingUtilityRoutes({
+        currentDriver: holder,
+        epoch,
+        peer: utilityPeer,
+        repoRoot: config.cwd,
+        runDir: config.runDir,
+      });
+      if (routed > 0) {
+        deps.appendLog(config.logFile, {
+          at: lifecycleAt,
+          epoch,
+          event: "utility-routes-processed",
+          routed,
+        });
+      }
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        at: lifecycleAt,
+        epoch,
+        error: error instanceof Error ? error.message : String(error),
+        event: "utility-routing-failed-closed",
+      });
+    }
+  }
+  if (config.runDir) {
+    try {
+      const processed = processPendingNativeFallbackRequests({
+        epoch,
+        mode:
+          config.nativeSubagentMode ??
+          resolveNativeSubagentMode(process.env.LOOP_NATIVE_SUBAGENT_MODE),
+        runDir: config.runDir,
+      });
+      if (processed > 0) {
+        deps.appendLog(config.logFile, {
+          at: lifecycleAt,
+          epoch,
+          event: "native-fallback-requests-processed",
+          processed,
+        });
+      }
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        at: lifecycleAt,
+        epoch,
+        error: error instanceof Error ? error.message : String(error),
+        event: "native-fallback-routing-failed-closed",
+      });
+    }
+  }
 };
 
 export const driveHandoverControl = async (
@@ -7868,6 +7961,8 @@ export const runGoverness = async (
         runState.roles.initialDriver ??
         config.initialDriver ??
         config.agents[0]?.agent;
+      // A teardown the operator requested through the interaction intake.
+      const intake: { teardown?: Promise<void> } = {};
       if (result.tmuxControlAvailable) {
         const hooksByAgent: Partial<Record<Agent, HookEvent[]>> = {};
         for (const info of config.agents) {
@@ -8019,8 +8114,10 @@ export const runGoverness = async (
               runId: config.runId,
               // The operator's teardown is executed by the run it names,
               // with the stop Governess already owns.
+              // The intake calls this synchronously under its lock, so the
+              // stop is not awaited here; the loop awaits it below.
               teardown: (reason) => {
-                stopGovernessLoop(config, deps, reason);
+                intake.teardown = stopGovernessLoop(config, deps, reason);
               },
             });
             if (processed > 0) {
@@ -8041,60 +8138,17 @@ export const runGoverness = async (
           }
         }
       }
-      const utilityPeer = config.agents.find(
-        (info) => info.agent !== holder
-      )?.agent;
-      if (config.runDir && config.cwd && holder && utilityPeer) {
-        try {
-          const routed = await processPendingUtilityRoutes({
-            currentDriver: holder,
-            epoch: acquiredEpoch,
-            peer: utilityPeer,
-            repoRoot: config.cwd,
-            runDir: config.runDir,
-          });
-          if (routed > 0) {
-            deps.appendLog(config.logFile, {
-              at: lifecycleAt,
-              epoch: acquiredEpoch,
-              event: "utility-routes-processed",
-              routed,
-            });
-          }
-        } catch (error) {
-          deps.appendLog(config.logFile, {
-            at: lifecycleAt,
-            epoch: acquiredEpoch,
-            error: error instanceof Error ? error.message : String(error),
-            event: "utility-routing-failed-closed",
-          });
-        }
-      }
-      if (config.runDir) {
-        try {
-          const processed = processPendingNativeFallbackRequests({
-            epoch: acquiredEpoch,
-            mode:
-              config.nativeSubagentMode ??
-              resolveNativeSubagentMode(process.env.LOOP_NATIVE_SUBAGENT_MODE),
-            runDir: config.runDir,
-          });
-          if (processed > 0) {
-            deps.appendLog(config.logFile, {
-              at: lifecycleAt,
-              epoch: acquiredEpoch,
-              event: "native-fallback-requests-processed",
-              processed,
-            });
-          }
-        } catch (error) {
-          deps.appendLog(config.logFile, {
-            at: lifecycleAt,
-            epoch: acquiredEpoch,
-            error: error instanceof Error ? error.message : String(error),
-            event: "native-fallback-routing-failed-closed",
-          });
-        }
+      await routeHelperRequests(config, deps, {
+        epoch: acquiredEpoch,
+        holder,
+        lifecycleAt,
+      });
+      if (intake.teardown) {
+        // The operator's teardown ran above without being awaited. Its
+        // release attempt finishes here, and this run's governess ends with
+        // it, as it does after a teardown chosen from the exit menu.
+        await intake.teardown;
+        return;
       }
       // updateBothIdle may have cleared the waiting read (agents went active).
       waitingConfirmed = runState.waitingConfirmed;

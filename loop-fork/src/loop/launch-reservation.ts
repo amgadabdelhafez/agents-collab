@@ -256,8 +256,9 @@ interface StoredRun {
 
 /**
  * Why a recorded process may still belong to the run, or `undefined` when
- * every one (run pid, launch-attempt pid, app-server, bridge worker, and each
- * `run-processes/` entry) is positively dead or provably a later process.
+ * every one (run pid, launch-attempt pid, app-server, bridge worker, each
+ * `run-processes/` entry, and each claimed utility job's worker) is positively
+ * dead or provably a later process.
  */
 const recordedProcessOwnership = (
   manifest: RunManifest,

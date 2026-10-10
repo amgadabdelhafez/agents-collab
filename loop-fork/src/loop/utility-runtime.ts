@@ -56,6 +56,7 @@ import {
   type UtilityTierSelectionStrategy,
 } from "./task-router";
 import type { Agent, CavemanMode } from "./types";
+import { UTILITY_WORKER_SUBCOMMAND } from "./utility-constants";
 import {
   buildUtilityContextCapsule,
   persistUtilityContextCapsule,
@@ -110,7 +111,6 @@ import {
   verifyAdoptedUtilityWorkspace,
 } from "./utility-workspace";
 
-export const UTILITY_WORKER_SUBCOMMAND = "__utility-worker";
 export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
 export const NANNY_PANE_SUBCOMMAND = "__nanny-pane";
 export const AU_PAIR_PANE_SUBCOMMAND = "__au-pair-pane";
@@ -1100,6 +1100,33 @@ const repoRootForRun = (runDir: string): string => {
     // The worker will fail closed to its launch cwd when legacy manifests lack cwd.
   }
   return process.cwd();
+};
+
+const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
+
+/**
+ * Why the worker's run can no longer use a helper, or `undefined` while it
+ * may: its manifest records a terminal state or a workspace handback. A
+ * manifest that cannot be read never stops a worker; the release that this
+ * guards against requires a readable terminal manifest anyway.
+ */
+const runNoLongerActive = (runDir: string): string | undefined => {
+  let manifest: { state?: unknown; workspaceReleasedAt?: unknown } | null;
+  try {
+    manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (
+    typeof manifest?.workspaceReleasedAt === "string" &&
+    manifest.workspaceReleasedAt
+  ) {
+    return "its workspace was handed back";
+  }
+  return typeof manifest?.state === "string" &&
+    TERMINAL_RUN_STATES.has(manifest.state)
+    ? `it is ${manifest.state}`
+    : undefined;
 };
 
 const artifactDirForJob = (
@@ -2536,6 +2563,18 @@ export const runUtilityWorker = async (
     workerPid: process.pid,
   });
   if (!claimed) {
+    return;
+  }
+  // Checked only AFTER the claim records this pid. A dead-run release reads
+  // the run's terminal state before it reads the claims, so either it sees
+  // this claim (and this live pid blocks it), or this check sees the state it
+  // read and the job ends here, before anything touches the workspace.
+  const inactive = runNoLongerActive(runDir);
+  if (inactive) {
+    transitionUtilityJob(runDir, jobId, "canceled", {
+      eventId: `canceled:${epoch}:${jobId}`,
+      reason: `run is no longer active: ${inactive}`,
+    });
     return;
   }
   const legacyCompatibilityJob =

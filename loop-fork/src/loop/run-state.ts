@@ -38,6 +38,7 @@ import type {
   RunLifecycleState,
   RunStatus,
 } from "./types";
+import { readUtilityJobs, type UtilityJobSnapshot } from "./utility-store";
 
 const RUNS_ROOT = join(".loop", "runs");
 const MANIFEST_FILE = "manifest.json";
@@ -984,7 +985,8 @@ const readRecordedPidFile = (
 
 /**
  * Every run-owned PID recorded beside the manifest: the Codex app-server, the
- * bridge worker (`bridge-worker.json`), and each `run-processes/` entry. A
+ * bridge worker (`bridge-worker.json`), each `run-processes/` entry, and the
+ * worker of every claimed utility job (`utility/jobs.jsonl`). A
  * record that exists but names no valid PID is unreadable evidence, never
  * absence: the run may own a process we can no longer identify.
  */
@@ -1038,6 +1040,48 @@ export const readAuxiliaryRunPids = (
       return { kind: "unreadable", reason: `${source} names no valid pid` };
     }
     pids.push({ pid: record.pid, reference: record.reference, source });
+  }
+  const workers = readUtilityWorkerPids(runDir, reference);
+  if (workers.kind === "unreadable") {
+    return workers;
+  }
+  pids.push(...workers.pids);
+  return { kind: "read", pids };
+};
+
+/**
+ * The worker pid of every utility job the run ever claimed. A worker is
+ * spawned detached with its cwd in the workspace and its pid is recorded
+ * nowhere else, so it is release evidence like any other run process. Jobs
+ * that already ended count too: a worker fenced or timed out may still be
+ * exiting, and a dead or provably reused pid costs nothing. The claim is
+ * written by the worker itself, so the claim time is a moment by which it
+ * had started. A journal that cannot be read is unreadable evidence.
+ */
+const readUtilityWorkerPids = (
+  runDir: string,
+  reference: string
+): AuxiliaryRunPids => {
+  let jobs: UtilityJobSnapshot[];
+  try {
+    jobs = readUtilityJobs(runDir);
+  } catch (error) {
+    return {
+      kind: "unreadable",
+      reason: `utility/jobs.jsonl is unreadable: ${(error as Error).message}`,
+    };
+  }
+  const pids: RecordedRunPid[] = [];
+  for (const job of jobs) {
+    for (const event of job.events) {
+      if (event.claim) {
+        pids.push({
+          pid: event.claim.workerPid,
+          reference: latestInstant(reference, event.at),
+          source: `utility job ${job.jobId} worker`,
+        });
+      }
+    }
   }
   return { kind: "read", pids };
 };

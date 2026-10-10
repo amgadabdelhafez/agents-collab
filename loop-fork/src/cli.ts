@@ -61,6 +61,7 @@ import {
 import { reconcileLegacyStoppedRun, resolveRunStorage } from "./loop/run-state";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
+import { UTILITY_WORKER_SUBCOMMAND } from "./loop/utility-constants";
 import {
   UTILITY_AU_PAIR_TIER,
   UTILITY_NANNY_TIER,
@@ -72,7 +73,6 @@ import {
   runUtilityPane,
   runUtilityWorker,
   UTILITY_PANE_SUBCOMMAND,
-  UTILITY_WORKER_SUBCOMMAND,
 } from "./loop/utility-runtime";
 import { runWorldCommand } from "./loop/world-model-cli";
 

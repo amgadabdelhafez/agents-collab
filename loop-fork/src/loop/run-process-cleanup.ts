@@ -22,6 +22,8 @@ import {
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
+import { UTILITY_WORKER_SUBCOMMAND } from "./utility-constants";
+import { readUtilityJobs, type UtilityJobSnapshot } from "./utility-store";
 
 const PROCESS_REGISTRY_DIR = "run-processes";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
@@ -300,13 +302,83 @@ const signalRunBridgeWorker = (
   );
 };
 
+/**
+ * Ends every live utility worker (Direct, Nanny, Au Pair) the run ever
+ * claimed a job with. Workers are spawned detached with their cwd in the
+ * workspace, so the session kill never reaches them and their pid is recorded
+ * only in the job claim. A worker is signalled only when its live command is
+ * the worker subcommand followed by exactly this run directory, claim epoch
+ * and job id at the end of its argv. Its process group goes with it (bounded commands it runs are
+ * in that group); a worker that leads no group is signalled alone. The claims
+ * are kept, since a dead pid is absence evidence for the release check.
+ */
+const signalRunUtilityWorkers = (
+  result: RunProcessCleanupResult,
+  runDir: string,
+  deps: RunProcessCleanupDeps
+): void => {
+  let jobs: UtilityJobSnapshot[];
+  try {
+    jobs = readUtilityJobs(runDir);
+  } catch (error) {
+    // Never kill authority. The release check reads the same journal as
+    // unreadable and keeps the workspace owned.
+    result.skipped.push({
+      pid: 0,
+      reason: `utility-jobs-unreadable: ${(error as Error).message}`,
+    });
+    return;
+  }
+  for (const job of jobs) {
+    const claim = job.claim;
+    if (!(claim && deps.pidAlive(claim.workerPid))) {
+      continue;
+    }
+    const pid = claim.workerPid;
+    const command = deps.commandForPid(pid);
+    // The worker is spawned as `<loop> __utility-worker <runDir> <epoch>
+    // <jobId>`, so only that exact argv tail proves ownership (r6's rule for
+    // detached workers: a spaced or prefixing run directory never matches).
+    const owned = Boolean(
+      command &&
+        commandEndsWithArgs(command, [
+          UTILITY_WORKER_SUBCOMMAND,
+          runDir,
+          String(claim.epoch),
+          job.jobId,
+        ])
+    );
+    if (!owned) {
+      result.skipped.push({
+        pid,
+        reason: command
+          ? "utility-worker-command-mismatch"
+          : "utility-worker-not-running",
+      });
+      continue;
+    }
+    try {
+      deps.signal(-pid, "SIGTERM");
+      result.killed.push(pid);
+      continue;
+    } catch {
+      // Not a process-group leader: signal the worker alone below.
+    }
+    signalOwnedProcess(result, pid, true, "", deps.signal);
+  }
+};
+
 const cleanupRunOwnedProcessesWithDeps = (
   runDir: string,
   manifest: RunManifest | undefined,
-  deps: RunProcessCleanupDeps
+  deps: RunProcessCleanupDeps,
+  scope: { detachedWorkers: boolean }
 ): RunProcessCleanupResult => {
   const result: RunProcessCleanupResult = { killed: [], skipped: [] };
-  signalRunBridgeWorker(result, runDir, deps);
+  if (scope.detachedWorkers) {
+    signalRunBridgeWorker(result, runDir, deps);
+    signalRunUtilityWorkers(result, runDir, deps);
+  }
   for (const { path, record } of readBridgeRegistrations(runDir)) {
     const command = deps.commandForPid(record.pid);
     const retainRegistration = signalOwnedProcess(
@@ -349,11 +421,18 @@ const cleanupRunOwnedProcessesWithDeps = (
   return result;
 };
 
+/**
+ * The teardown's cleanup: the run's own governess is ending it, so its
+ * detached bridge and utility workers are ended too (each under its identity
+ * check).
+ */
 export const cleanupRunOwnedProcesses = (
   runDir: string,
   manifest: RunManifest | undefined
 ): RunProcessCleanupResult =>
-  cleanupRunOwnedProcessesWithDeps(runDir, manifest, cleanupDeps);
+  cleanupRunOwnedProcessesWithDeps(runDir, manifest, cleanupDeps, {
+    detachedWorkers: true,
+  });
 
 const runIsProvablyAbandoned = (
   manifest: RunManifest,
@@ -412,8 +491,18 @@ const cleanupAbandonedRun = (input: {
       current ? setRunManifestState(current, "failed") : undefined
     );
   }
+  // GC judges abandonment from the CURRENT tmux server's session list alone,
+  // which says nothing about a run whose session lived on another socket. It
+  // therefore never signals the detached bridge or utility workers: those
+  // stay recorded processes that keep the workspace owned until they are
+  // gone, and only the run's own teardown ends them.
   const cleanup = hasProcessEvidence
-    ? cleanupRunOwnedProcessesWithDeps(input.runDir, input.manifest, input.deps)
+    ? cleanupRunOwnedProcessesWithDeps(
+        input.runDir,
+        input.manifest,
+        input.deps,
+        { detachedWorkers: false }
+      )
     : { killed: [], skipped: [] };
   const retainAppServerOwnership = cleanup.skipped.some(
     (entry) =>
