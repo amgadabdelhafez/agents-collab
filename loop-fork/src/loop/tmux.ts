@@ -98,12 +98,24 @@ import {
 import { preparePairedRun } from "./paired-options";
 import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
 import { DETACH_CHILD_PROCESS } from "./process";
+import {
+  processGroupAlive,
+  processGroupOf,
+  readProcessTable,
+} from "./process-group";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import {
   RECIPIENT_API_ENV_KEYS,
   recipientSeatEnvironment,
 } from "./recipient-seat-environment";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
+import {
+  agentPaneIdsOf,
+  PANE_LISTING_FORMAT,
+  parsePaneListing,
+  recordAgentDescendantGroups,
+  recordRunPaneProcesses,
+} from "./run-pane-processes";
 import {
   appendRunTranscriptEntry,
   clearRunManifestPaneTargets,
@@ -269,6 +281,18 @@ interface TmuxDeps {
   // which Codex, OSS, and bridge writes grow without Claude taking a turn.
   readClaudeTranscriptVersion: (runDir: string) => string;
   readTextFile: (path: string) => string | undefined;
+  /**
+   * Records the pid and process group of each listed agent pane of the
+   * session under the run's `run-processes/` (see `run-pane-processes`), so a
+   * release waits for the CLIs and their tool subprocesses. Best effort: a
+   * failure never fails the launch. Embedders that fake `spawn` without this
+   * get a no-op, so a fake never mixes with the real tmux server.
+   */
+  recordPaneProcesses?: (
+    runDir: string,
+    session: string,
+    agentPaneIds: readonly string[]
+  ) => void;
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
   resolveLaunchSocket: () => TmuxSocket;
   runGit: (cwd: string, args: string[]) => GitResult;
@@ -1525,6 +1549,43 @@ const updatePairedManifest = (
       new Date().toISOString()
     )
   );
+  recordPairedPaneProcesses(
+    deps,
+    storage.runDir,
+    session,
+    agentPaneIdsOf({
+      tmuxPaneAuPair: paneTargets.auPair,
+      tmuxPaneGoverness: paneTargets.governess,
+      tmuxPaneLeft: paneTargets.left,
+      tmuxPaneNanny: paneTargets.nanny,
+      tmuxPaneRecon: paneTargets.recon,
+      tmuxPaneRight: paneTargets.right,
+      tmuxPaneUtility: paneTargets.utility,
+    })
+  );
+};
+
+/**
+ * Records the agent panes' processes (never the governess's pane). Called
+ * whenever the launch persists pane targets and when a resume re-attaches to
+ * a live session; recording an already-recorded pane process is a no-op.
+ */
+const recordPairedPaneProcesses = (
+  deps: TmuxDeps,
+  runDir: string,
+  session: string,
+  agentPaneIds: readonly string[]
+): void => {
+  if (!(deps.recordPaneProcesses && agentPaneIds.length > 0)) {
+    return;
+  }
+  try {
+    deps.recordPaneProcesses(runDir, session, agentPaneIds);
+  } catch (error) {
+    deps.log(
+      `[loop] could not record the pane processes of ${session}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 };
 
 interface GovernessHookConfig {
@@ -3946,13 +4007,21 @@ const startPairedSession = async (
         terminalizeFailedStart: terminalizeRecoveredStart,
       };
     }
-    bindPairedSessionIdentity(
+    const reattached = bindPairedSessionIdentity(
       deps,
       storage,
       manifest,
       session,
       paneAgents,
       primaryAgent
+    );
+    // A resume that re-attaches to the live session records its pane
+    // processes too: a run launched before pane records existed gets them now.
+    recordPairedPaneProcesses(
+      deps,
+      storage.runDir,
+      session,
+      agentPaneIdsOf(reattached)
     );
     return {
       manifestPath: storage.manifestPath,
@@ -4619,6 +4688,43 @@ const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
         return undefined;
       }
     },
+    recordPaneProcesses: (runDir, session, agentPaneIds) => {
+      const listed = spawnLaunchCommand([
+        "tmux",
+        "list-panes",
+        "-s",
+        "-t",
+        `=${session}`,
+        "-F",
+        PANE_LISTING_FORMAT,
+      ]);
+      if (listed.exitCode !== 0) {
+        throw new Error(
+          `tmux list-panes failed: ${listed.stderr.trim() || `exit ${listed.exitCode}`}`
+        );
+      }
+      recordRunPaneProcesses({
+        agentPaneIds,
+        now: () => new Date().toISOString(),
+        panes: parsePaneListing(listed.stdout ?? ""),
+        runDir,
+        session,
+      });
+      // The CLIs' tool subprocesses run in groups of their own; record the
+      // groups of whatever descends from the panes already (MCP servers at
+      // launch, running tools on a re-attach). The governess keeps this up.
+      const table = readProcessTable();
+      if (table) {
+        const at = new Date().toISOString();
+        recordAgentDescendantGroups({
+          groupAlive: processGroupAlive,
+          now: () => at,
+          ownGroup: processGroupOf(process.pid),
+          runDir,
+          table,
+        });
+      }
+    },
     resolveLaunchSocket: () => launchSocket,
     runGit: (cwd: string, args: string[]) => runGit(cwd, args),
     sendKeys: (pane: string, keys: string[]) => {
@@ -4776,6 +4882,11 @@ export const runInTmux = async (
     overrides.cwd ?? process.cwd()
   );
   const deps = { ...defaultDeps(persistedSocket), ...overrides };
+  if (overrides.spawn && !("recordPaneProcesses" in overrides)) {
+    // A faked tmux never lists real panes, and the production recorder would
+    // ask the real server; an embedder that fakes `spawn` opts in explicitly.
+    deps.recordPaneProcesses = undefined;
+  }
   if (overrides.capturePane && !overrides.capturePaneSnapshot) {
     // Unit tests and embedders that provide a pane capture do not get to mix
     // that synthetic text with cursor data from the user's real tmux server.

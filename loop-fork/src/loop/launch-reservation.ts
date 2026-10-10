@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { platform as osPlatform } from "node:os";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
@@ -9,9 +10,13 @@ import {
   defaultPidStartedAt,
   pidCanStillOwnRun,
 } from "./pid-ownership";
+import { groupCanStillOwnRun, processGroupAlive } from "./process-group";
 import {
+  auxiliaryProcessOwnership,
   createRunManifest,
   isActiveRunState,
+  latestInstant,
+  type RecordedProcessClassifier,
   type ReservationManifestRead,
   type RunManifest,
   type RunOwnershipEvidence,
@@ -19,6 +24,7 @@ import {
   readReservationManifest,
   readRunManifest,
   readRunManifestHandle,
+  reconcileLegacyStoppedRun,
   reserveRunStorage,
   resolveExistingRunId,
   resolveRunStorage,
@@ -26,10 +32,21 @@ import {
   setRunManifestState,
   touchRunManifest,
   updateRunManifest,
+  withoutWorkspaceHandback,
   writeRunManifest,
 } from "./run-state";
-import { type TmuxLiveness, tmuxTargetLivenessAsync } from "./tmux-control";
 import {
+  defaultOwnershipProbes,
+  recordedProcessClassifier,
+} from "./shared-process-ownership";
+import {
+  type TmuxLiveness,
+  tmuxTargetLiveness,
+  tmuxTargetLivenessAsync,
+} from "./tmux-control";
+import {
+  legacyCandidateTargetsFromManifest,
+  type ManifestHandle,
   readTmuxEndpointState,
   resolveTmuxSocket,
   type TmuxEndpointState,
@@ -43,6 +60,16 @@ const LOCK_STALE_MS = 5000;
 
 interface LaunchReservationDeps {
   /**
+   * Judges each live recorded process another run may hold too (see
+   * `recordedProcessClassifier`). Absent, every live record counts.
+   */
+  classifyRecordedProcess?: RecordedProcessClassifier;
+  /**
+   * Classifies a target's socket endpoint. Injected so a test can fake the
+   * filesystem fact without depending on which sockets exist on the host.
+   */
+  endpointState: (target: TmuxTarget | undefined) => TmuxEndpointState;
+  /**
    * Environment consulted for socket resolution. Injected rather than read from
    * `process.env` at the call site so a test can drive resolution without
    * mutating the ambient environment of the whole suite.
@@ -50,10 +77,16 @@ interface LaunchReservationDeps {
   env: Readonly<Record<string, string | undefined>>;
   home: string;
   isPidAlive: (pid: number) => boolean;
+  /** One line per run the launch released on full evidence. */
+  log: (line: string) => void;
   makeClaimId: () => string;
   now: () => string;
   pid: number;
   pidStartedAt: (pid: number) => number | undefined;
+  /** Platform for the legacy socket candidate set and its byte budget. */
+  platform: string;
+  /** Whether any process is a member of the group (see `process-group`). */
+  processGroupAlive: (pgid: number) => boolean;
   /**
    * Injected so a test can count invocations and prove the resume path never
    * consults it. Post-launch paths must read the persisted manifest target, so
@@ -77,13 +110,20 @@ export interface PairedLaunchClaim {
 }
 
 const defaultDeps = (): LaunchReservationDeps => ({
+  classifyRecordedProcess: recordedProcessClassifier(defaultOwnershipProbes),
+  endpointState: readTmuxEndpointState,
   env: process.env,
   home: process.env.HOME ?? "",
   isPidAlive: defaultPidLiveness,
+  log: (line) => {
+    process.stderr.write(`${line}\n`);
+  },
   pidStartedAt: defaultPidStartedAt,
+  processGroupAlive,
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
+  platform: osPlatform(),
   resolveSocket: (env, uid) => resolveTmuxSocket(env, { uid }).socket,
   tmuxLiveness: tmuxTargetLivenessAsync,
   uid: process.getuid?.() ?? 0,
@@ -150,105 +190,324 @@ export const runtimeAbsent = (
   (endpoint === "absent" && tmux === "unknown") ||
   (endpoint === "present" && tmux === "dead");
 
+type ReleaseVerdict =
+  | { readonly granted: true }
+  | { readonly granted: false; readonly reason: string };
+
+const refused = (reason: string): ReleaseVerdict => ({
+  granted: false,
+  reason,
+});
+const GRANTED: ReleaseVerdict = { granted: true };
+
+type RuntimeProbeDeps = Pick<
+  LaunchReservationDeps,
+  "endpointState" | "env" | "platform" | "tmuxLiveness" | "uid"
+>;
+
+/**
+ * A manifest that recorded its tmux session but no socket at all. Its session
+ * was created on whichever server plain `tmux` discovered at the time, so it
+ * is gone only when it is positively gone from EVERY candidate server (see
+ * `legacyTmuxSocketCandidates`). Each candidate is judged by the same
+ * `runtimeAbsent` rule as a recorded socket; any `live` or `unknown` answer on
+ * any candidate keeps the run owning.
+ */
+const legacyRuntimeAbsent = async (
+  handle: ManifestHandle,
+  deps: RuntimeProbeDeps
+): Promise<boolean> => {
+  const targets = legacyCandidateTargetsFromManifest(handle, {
+    env: deps.env,
+    platform: deps.platform,
+    uid: deps.uid,
+  });
+  if (!targets?.length) {
+    return false;
+  }
+  for (const target of targets) {
+    const endpoint = deps.endpointState(target);
+    if (!runtimeAbsent(endpoint, await deps.tmuxLiveness(target))) {
+      return false;
+    }
+  }
+  return true;
+};
+
+/**
+ * Is this run's tmux runtime positively gone? One rule for both the launch
+ * scan and `loop reconcile`: the recorded socket when there is one, else every
+ * legacy candidate socket. An unreadable manifest, an invalid or conflicting
+ * socket, or no session at all is never absence.
+ */
+export const tmuxRuntimeAbsentForManifest = async (
+  manifestPath: string,
+  overrides: Partial<LaunchReservationDeps> = {}
+): Promise<boolean> => {
+  const deps = { ...defaultDeps(), ...overrides };
+  const handle = readRunManifestHandle(manifestPath);
+  if (!handle) {
+    return false;
+  }
+  const target = targetFromManifest(handle);
+  if (target) {
+    return runtimeAbsent(
+      deps.endpointState(target),
+      await deps.tmuxLiveness(target)
+    );
+  }
+  return await legacyRuntimeAbsent(handle, deps);
+};
+
+export interface SyncRuntimeProbeDeps {
+  endpointState: (target: TmuxTarget | undefined) => TmuxEndpointState;
+  env: Readonly<Record<string, string | undefined>>;
+  platform: string;
+  tmuxLiveness: (target: TmuxTarget | undefined) => TmuxLiveness;
+  uid: number;
+}
+
+/**
+ * The synchronous form of `tmuxRuntimeAbsentForManifest`, with the same rule:
+ * the recorded socket when there is one, else every legacy candidate socket,
+ * each judged by `runtimeAbsent`. For startup GC, which must not judge a run
+ * gone from the current tmux server's session list alone.
+ */
+export const tmuxRuntimeAbsentForManifestSync = (
+  manifestPath: string,
+  overrides: Partial<SyncRuntimeProbeDeps> = {}
+): boolean => {
+  const deps: SyncRuntimeProbeDeps = {
+    endpointState: readTmuxEndpointState,
+    env: process.env,
+    platform: osPlatform(),
+    tmuxLiveness: (target) => tmuxTargetLiveness(target),
+    uid: process.getuid?.() ?? 0,
+    ...overrides,
+  };
+  const handle = readRunManifestHandle(manifestPath);
+  if (!handle) {
+    return false;
+  }
+  const target = targetFromManifest(handle);
+  const targets = target
+    ? [target]
+    : legacyCandidateTargetsFromManifest(handle, {
+        env: deps.env,
+        platform: deps.platform,
+        uid: deps.uid,
+      });
+  if (!targets?.length) {
+    return false;
+  }
+  return targets.every((candidate) =>
+    runtimeAbsent(deps.endpointState(candidate), deps.tmuxLiveness(candidate))
+  );
+};
+
+const neverBoundShape = (manifest: RunManifest): boolean =>
+  manifest.workspaceReleaseKind === "abandoned-never-bound" &&
+  !manifest.tmuxSession &&
+  !manifest.tmuxPaneLeft &&
+  !manifest.tmuxPaneRight &&
+  !manifest.tmuxPaneGoverness &&
+  !manifest.tmuxPaneAuPair &&
+  !manifest.tmuxPaneNanny &&
+  !manifest.tmuxPaneRecon?.length;
+
+interface StoredRun {
+  handle: ManifestHandle | undefined;
+  manifestPath: string;
+}
+
+/**
+ * Why a recorded process may still belong to the run, or `undefined` when
+ * every one (run pid, launch-attempt pid, app-server, bridge worker, each
+ * `run-processes/` entry, and each claimed utility job's worker) is positively
+ * dead or provably a later process.
+ */
+const recordedProcessOwnership = (
+  manifest: RunManifest,
+  evidence: RunOwnershipEvidence,
+  reference: string,
+  deps: LaunchReservationDeps,
+  stored: StoredRun | undefined
+): string | undefined => {
+  if (
+    evidence.pid.kind !== "valid" ||
+    pidCanStillOwnRun(evidence.pid.value, reference, deps)
+  ) {
+    return `its pid ${manifest.pid} may still be running`;
+  }
+  const attempt = evidence.launchAttemptPid;
+  if (attempt.kind === "invalid" || attempt.kind === "conflicting") {
+    return "its launch-attempt pid is unreadable";
+  }
+  if (
+    attempt.kind === "valid" &&
+    pidCanStillOwnRun(attempt.value, reference, deps)
+  ) {
+    return `its launch-attempt pid ${attempt.value} may still be running`;
+  }
+  return stored
+    ? auxiliaryProcessOwnership(
+        stored.manifestPath,
+        manifest,
+        reference,
+        (pid, at) => pidCanStillOwnRun(pid, at, deps),
+        (pgid, at) => groupCanStillOwnRun(pgid, at, deps),
+        deps.classifyRecordedProcess
+      )
+    : undefined;
+};
+
 /**
  * The terminal-released conjunction. Every conjunct must hold positively;
  * anything else keeps the workspace owned. Run 42 sat here forever: its tmux
  * endpoint was gone, so liveness could only answer "unknown", and unknown was
  * read as ownership with no way to ever release. Release is granted only on
  * positive evidence that the endpoint is gone AND the run recorded an explicit
- * handback AND neither recorded PID can still identify the pre-handback
- * process. A live but positively post-release reused PID is not ownership.
+ * handback AND no recorded PID can still identify the pre-handback process. A
+ * live but positively post-release reused PID is not ownership.
+ *
+ * The PID-reuse reference is the later of the release marker and the last
+ * manifest update, so a hand-edited marker back-dated before the run's last
+ * recorded activity cannot make a live run process look unrelated.
  */
-const terminalReleaseGranted = (
+const terminalReleaseVerdict = async (
   manifest: RunManifest,
   evidence: RunOwnershipEvidence,
   target: TmuxTarget | undefined,
   tmux: TmuxLiveness,
-  deps: LaunchReservationDeps
-): boolean => {
+  deps: LaunchReservationDeps,
+  stored?: StoredRun
+): Promise<ReleaseVerdict> => {
   if (
     evidence.state.kind !== "valid" ||
     !TERMINAL_RUN_STATES.has(evidence.state.value)
   ) {
-    return false;
+    return refused(
+      `it is ${manifest.state}, not stopped, failed, or completed`
+    );
   }
   if (
     evidence.status.kind === "invalid" ||
     evidence.status.kind === "conflicting"
   ) {
-    return false;
+    return refused("its status is unreadable");
   }
   if (evidence.workspaceReleasedAt.kind !== "valid") {
-    return false;
+    return refused("it never recorded a workspace handback");
   }
-  if (
-    evidence.pid.kind !== "valid" ||
-    pidCanStillOwnRun(
-      evidence.pid.value,
-      evidence.workspaceReleasedAt.value,
-      deps
-    )
-  ) {
-    return false;
-  }
-  const attempt = evidence.launchAttemptPid;
-  if (attempt.kind === "invalid" || attempt.kind === "conflicting") {
-    return false;
-  }
-  if (
-    attempt.kind === "valid" &&
-    pidCanStillOwnRun(attempt.value, evidence.workspaceReleasedAt.value, deps)
-  ) {
-    return false;
-  }
-  if (!target) {
-    return (
-      manifest.workspaceReleaseKind === "abandoned-never-bound" &&
-      !manifest.tmuxSession &&
-      !manifest.tmuxPaneLeft &&
-      !manifest.tmuxPaneRight &&
-      !manifest.tmuxPaneGoverness &&
-      !manifest.tmuxPaneAuPair &&
-      !manifest.tmuxPaneNanny &&
-      !manifest.tmuxPaneRecon?.length
-    );
+  const processOwner = recordedProcessOwnership(
+    manifest,
+    evidence,
+    latestInstant(evidence.workspaceReleasedAt.value, manifest.updatedAt),
+    deps,
+    stored
+  );
+  if (processOwner) {
+    return refused(processOwner);
   }
   // Runtime absence is the last conjunct, evaluated only once every ownership
   // fact above has been established positively.
-  return runtimeAbsent(readTmuxEndpointState(target), tmux);
+  if (target) {
+    return runtimeAbsent(deps.endpointState(target), tmux)
+      ? GRANTED
+      : refused(`tmux session ${manifest.tmuxSession} is not positively gone`);
+  }
+  if (neverBoundShape(manifest)) {
+    return GRANTED;
+  }
+  if (manifest.tmuxSession && stored?.handle) {
+    return (await legacyRuntimeAbsent(stored.handle, deps))
+      ? GRANTED
+      : refused(
+          `tmux session ${manifest.tmuxSession} (no recorded socket) is not positively gone from every candidate socket`
+        );
+  }
+  return refused("its tmux runtime cannot be addressed");
+};
+
+const ownershipVerdict = async (
+  manifest: RunManifest,
+  target: TmuxTarget | undefined,
+  deps: LaunchReservationDeps,
+  evidence?: RunOwnershipEvidence,
+  stored?: StoredRun
+): Promise<ReleaseVerdict> => {
+  const tmux = manifest.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
+  if (evidence) {
+    // Evidence-backed scan. The conjunction is the ONLY route to release: a
+    // failed conjunct must not fall through to the older dead-tmux rule, which
+    // would release a terminal run that never recorded an explicit handback.
+    return await terminalReleaseVerdict(
+      manifest,
+      evidence,
+      target,
+      tmux,
+      deps,
+      stored
+    );
+  }
+  // Legacy callers that supply no ownership evidence keep the prior verdict.
+  if (tmux !== "dead") {
+    return refused("its tmux session is not dead");
+  }
+  return isActiveRunState(manifest.state)
+    ? refused(`it is ${manifest.state}`)
+    : GRANTED;
 };
 
 const manifestCanStillOwnWorkspace = async (
   manifest: RunManifest,
   target: TmuxTarget | undefined,
   deps: LaunchReservationDeps,
-  evidence?: RunOwnershipEvidence
-): Promise<boolean> => {
-  const tmux = manifest.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
-  if (evidence) {
-    // Evidence-backed scan. The conjunction is the ONLY route to release: a
-    // failed conjunct must not fall through to the older dead-tmux rule, which
-    // would release a terminal run that never recorded an explicit handback.
-    return !terminalReleaseGranted(manifest, evidence, target, tmux, deps);
+  evidence?: RunOwnershipEvidence,
+  stored?: StoredRun
+): Promise<boolean> =>
+  !(await ownershipVerdict(manifest, target, deps, evidence, stored)).granted;
+
+const reconcileKind = (state: string): string | undefined => {
+  if (state === "stopped") {
+    return "stopped-run";
   }
-  // Legacy callers that supply no ownership evidence keep the prior verdict.
-  if (tmux !== "dead") {
-    return true;
+  if (state === "failed") {
+    return "failed-terminal";
   }
-  return isActiveRunState(manifest.state);
+  return undefined;
 };
 
-const conflictError = (manifest: RunManifest): Error => {
+/** The exact command that resolves a conflict with this run, when one exists. */
+const resolution = (manifest: RunManifest): string => {
+  const kind = reconcileKind(manifest.state);
+  if (kind && !manifest.workspaceReleasedAt) {
+    // `loop reconcile` refuses a run with no recorded binding or session
+    // (missing-runtime-identity), so naming it would send the operator to a
+    // command that cannot succeed.
+    if (!(manifest.workspaceBinding && manifest.tmuxSession)) {
+      return `run ${manifest.runId} recorded no workspace binding or tmux session, so no \`loop reconcile\` command can prove it gone; it needs an owner decision`;
+    }
+    return `once nothing of run ${manifest.runId} is still running, run \`loop reconcile ${kind} ${manifest.runId}\``;
+  }
+  if (isActiveRunState(manifest.state)) {
+    return `resume it with \`loop --tmux --run-id ${manifest.runId}\`, or stop it before launching another`;
+  }
+  return `stop whatever of run ${manifest.runId} is still running, then launch again`;
+};
+
+const conflictError = (manifest: RunManifest, reason?: string): Error => {
   const binding = manifest.workspaceBinding;
   const session = manifest.tmuxSession ?? "not-yet-bound";
   const root = binding?.root ?? manifest.cwd;
   const branch = binding?.branchRef ?? "legacy-unknown";
+  const why = reason ? ` (${reason})` : "";
   return new Error(
-    `[loop] launch conflict: run ${manifest.runId} (${session}) still owns workspace ${root} on ${branch}; resume or stop that run before launching another`
+    `[loop] launch conflict: run ${manifest.runId} (${session}) still owns workspace ${root} on ${branch}${why}; ${resolution(manifest)}`
   );
 };
 
-interface StoredManifest {
+interface StoredManifest extends StoredRun {
   read: ReservationManifestRead;
   target: TmuxTarget | undefined;
 }
@@ -280,6 +539,8 @@ const storedManifests = async (repoDir: string): Promise<StoredManifest[]> => {
       const handle =
         read.kind === "valid" ? readRunManifestHandle(manifestPath) : undefined;
       manifests.push({
+        handle,
+        manifestPath,
         read,
         target: handle ? targetFromManifest(handle) : undefined,
       });
@@ -291,13 +552,65 @@ const storedManifests = async (repoDir: string): Promise<StoredManifest[]> => {
   return manifests;
 };
 
+/**
+ * A stopped or failed run that never recorded its workspace handback, and
+ * whose every recorded process and tmux session is positively gone, is
+ * released here by the exact handback `loop reconcile` writes, with the same
+ * evidence. Anything short of that is not released and still conflicts.
+ */
+const releaseDeadTerminalRun = async (
+  stored: StoredManifest,
+  manifest: RunManifest,
+  evidence: RunOwnershipEvidence,
+  deps: LaunchReservationDeps
+): Promise<ReleaseVerdict> => {
+  if (
+    evidence.workspaceReleasedAt.kind !== "absent" ||
+    evidence.state.kind !== "valid"
+  ) {
+    return refused("it is not an unreleased terminal run");
+  }
+  const terminalState = evidence.state.value;
+  const kind = reconcileKind(terminalState);
+  if (!(kind && (terminalState === "stopped" || terminalState === "failed"))) {
+    return refused(`it is ${terminalState}`);
+  }
+  const result = await reconcileLegacyStoppedRun(
+    stored.manifestPath,
+    manifest.runId,
+    {
+      ...(deps.classifyRecordedProcess
+        ? { classifyRecordedProcess: deps.classifyRecordedProcess }
+        : {}),
+      groupCanStillOwnRun: (pgid, at) => groupCanStillOwnRun(pgid, at, deps),
+      now: deps.now,
+      pidCanStillOwnRun: (pid, at) => pidCanStillOwnRun(pid, at, deps),
+      runtimeAbsent: (path) => tmuxRuntimeAbsentForManifest(path, deps),
+      terminalState,
+    }
+  );
+  if (result.status !== "changed") {
+    return refused(
+      result.status === "refused"
+        ? `release refused: ${result.reason}`
+        : "its release changed concurrently"
+    );
+  }
+  deps.log(
+    `[loop] released workspace of dead run ${manifest.runId} (${terminalState}, ${manifest.tmuxSession ?? "not-yet-bound"}): no recorded process is alive and its tmux session is gone; same handback as \`loop reconcile ${kind} ${manifest.runId}\``
+  );
+  return GRANTED;
+};
+
 const assertNoConflict = async (
   manifests: StoredManifest[],
   binding: LaunchWorkspaceBinding,
   excludedRunId: string | undefined,
   deps: LaunchReservationDeps
 ): Promise<void> => {
-  for (const { read, target } of manifests) {
+  let conflict: Error | undefined;
+  for (const stored of manifests) {
+    const { read, target } = stored;
     if (read.kind === "refuse") {
       if (read.runId !== undefined && read.runId === excludedRunId) {
         continue;
@@ -305,18 +618,46 @@ const assertNoConflict = async (
       throw refusalError(read);
     }
     const { evidence, manifest } = read;
+    if (manifest.runId === excludedRunId) {
+      continue;
+    }
+    const verdict = await ownershipVerdict(
+      manifest,
+      target,
+      deps,
+      evidence,
+      stored
+    );
+    if (verdict.granted) {
+      continue;
+    }
     if (
-      manifest.runId === excludedRunId ||
-      !(await manifestCanStillOwnWorkspace(manifest, target, deps, evidence))
+      manifest.workspaceBinding &&
+      !workspaceConflict(manifest.workspaceBinding, binding)
     ) {
       continue;
     }
-    if (!manifest.workspaceBinding) {
-      throw conflictError(manifest);
+    const released = await releaseDeadTerminalRun(
+      stored,
+      manifest,
+      evidence,
+      deps
+    );
+    if (released.granted) {
+      continue;
     }
-    if (workspaceConflict(manifest.workspaceBinding, binding)) {
-      throw conflictError(manifest);
-    }
+    // Keep scanning: every dead run is released even when another run still
+    // blocks, so the operator is left with only the runs that need a decision.
+    conflict ??= conflictError(
+      manifest,
+      evidence.workspaceReleasedAt.kind === "absent" &&
+        reconcileKind(manifest.state)
+        ? released.reason
+        : verdict.reason
+    );
+  }
+  if (conflict) {
+    throw conflict;
   }
 };
 
@@ -348,6 +689,20 @@ const validateExplicitWorkspaceResume = (
   return stored;
 };
 
+/**
+ * Drops a recorded handback from the manifest a resume re-attaches to. Only
+ * the marker changes; a manifest without one is not rewritten.
+ */
+const clearWorkspaceHandback = (manifestPath: string): void => {
+  updateRunManifest(manifestPath, (current) =>
+    current &&
+    (current.workspaceReleasedAt !== undefined ||
+      current.workspaceReleaseKind !== undefined)
+      ? withoutWorkspaceHandback(current)
+      : undefined
+  );
+};
+
 const reserveRequestedLaunch = async (
   opts: Options,
   requested: RunManifest,
@@ -367,6 +722,7 @@ const reserveRequestedLaunch = async (
     opts.launchClaimId = requested.launchClaimId;
   }
   if (tmux === "live") {
+    clearWorkspaceHandback(storage.manifestPath);
     return { reserved: false, storage, workspaceBinding: binding };
   }
   const liveAttemptPid = [
@@ -379,14 +735,18 @@ const reserveRequestedLaunch = async (
     );
   }
   const attemptId = deps.makeClaimId();
+  // Under the launch lock, after the conflict scan: the resumed run owns its
+  // workspace again, so an earlier handback must not survive into its new
+  // life (its helpers would be judged by it, and its next teardown would
+  // report it as its own release).
   writeRunManifest(
     storage.manifestPath,
     touchRunManifest(
-      {
+      withoutWorkspaceHandback({
         ...requested,
         launchAttemptId: attemptId,
         launchAttemptPid: deps.pid,
-      },
+      }),
       deps.now()
     )
   );

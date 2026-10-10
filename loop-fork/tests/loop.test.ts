@@ -1,11 +1,21 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { spawn } from "bun";
 import type { ImmediateInfoRequest } from "../src/loop/args";
+import { HELP, RECONCILE_USAGE } from "../src/loop/constants";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
+import { recordRunPaneProcesses } from "../src/loop/run-pane-processes";
 import {
   createRunManifest,
+  readRunManifest,
   resolveRunStorage,
   writeRunManifest,
 } from "../src/loop/run-state";
@@ -1065,7 +1075,11 @@ test("runCli rejects malformed stopped-run reconciliation before startup mainten
   } = await loadRunCli();
 
   await expect(runCli(["reconcile", "stopped-run", "../22"])).rejects.toThrow(
-    "Usage: loop reconcile stopped-run <run-id>"
+    "Usage: loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
+  );
+  // "failed" alone is not a kind: only the three named kinds are accepted.
+  await expect(runCli(["reconcile", "failed", "22"])).rejects.toThrow(
+    "Usage: loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
   );
 
   expect(parseArgsMock).not.toHaveBeenCalled();
@@ -1073,6 +1087,17 @@ test("runCli rejects malformed stopped-run reconciliation before startup mainten
   expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
   expect(applyStagedMock).not.toHaveBeenCalled();
+});
+
+test("--help lists the reconcile command with exactly the usage it enforces", async () => {
+  const { runCli } = await loadRunCli();
+  expect(RECONCILE_USAGE).toBe(
+    "loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
+  );
+  await expect(runCli(["reconcile", "bogus", "22"])).rejects.toThrow(
+    `Usage: ${RECONCILE_USAGE}`
+  );
+  expect(HELP).toContain(`\n  ${RECONCILE_USAGE}\n`);
 });
 
 test("runCli leaves the beat workflow alone when stopped-run reconciliation refuses", async () => {
@@ -1097,6 +1122,258 @@ test("runCli leaves the beat workflow alone when stopped-run reconciliation refu
     }
     rmSync(home, { force: true, recursive: true });
   }
+});
+
+const writeSyntheticTerminalRun = (
+  home: string,
+  runId: string,
+  state: "failed" | "stopped"
+) => {
+  const storage = resolveRunStorage(runId);
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      cwd: process.cwd(),
+      mode: "paired",
+      pid: 999_999,
+      repoId: storage.repoId,
+      runId,
+      state,
+      tmuxSession: `synthetic-loop-${runId}`,
+      tmuxSocket: join(home, "missing-tmux.sock"),
+      workspaceBinding: {
+        branchRef: "refs/heads/synthetic",
+        repoId: storage.repoId,
+        root: process.cwd(),
+      },
+    })
+  );
+  return storage;
+};
+
+const withSyntheticHome = async (
+  run: (home: string) => Promise<void>
+): Promise<void> => {
+  const priorHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "loop-reconcile-cli-"));
+  process.env.HOME = home;
+  try {
+    await run(home);
+  } finally {
+    if (priorHome === undefined) {
+      process.env.HOME = undefined;
+    } else {
+      process.env.HOME = priorHome;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+};
+
+for (const kind of ["failed-terminal", "failed-start"] as const) {
+  test(`runCli reconcile ${kind} releases a dead failed run and keeps it failed`, async () => {
+    await withSyntheticHome(async (home) => {
+      const storage = writeSyntheticTerminalRun(home, "31", "failed");
+      const write = spyOn(process.stdout, "write").mockImplementation(
+        () => true
+      );
+      try {
+        const { closeGovernessBeatForTerminalRunMock, runCli } =
+          await loadRunCli({
+            closeGovernessBeatForTerminalRun: () => Promise.resolve(undefined),
+          });
+
+        await runCli(["reconcile", kind, "31"]);
+
+        expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toMatchObject({
+          runId: "31",
+          status: "changed",
+        });
+        const after = readRunManifest(storage.manifestPath);
+        expect(after?.state).toBe("failed");
+        expect(after?.status).toBe("failed");
+        expect(after?.workspaceReleasedAt).toBeString();
+        expect(
+          closeGovernessBeatForTerminalRunMock.mock.calls[0]?.[0]
+        ).toMatchObject({ reason: `reconcile ${kind}`, runId: "31" });
+      } finally {
+        write.mockRestore();
+      }
+    });
+  });
+}
+
+test("runCli reconcile stopped-run does not wait on a live process another live run records, when it works outside the workspace", async () => {
+  await withSyntheticHome(async (home) => {
+    const storage = writeSyntheticTerminalRun(home, "32", "stopped");
+    const elsewhere = mkdtempSync(join(tmpdir(), "loop-reconcile-other-ws-"));
+    // Another run's app-server: its own group, working in that run's
+    // workspace, recorded by this run's ppid walk.
+    const stub = spawn(["/bin/sleep", "30"], {
+      cwd: elsewhere,
+      detached: true,
+      stderr: "ignore",
+      stdin: "ignore",
+      stdout: "ignore",
+    });
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const later = new Date(Date.now() + 2000).toISOString();
+      mkdirSync(join(storage.runDir, "run-processes"), { recursive: true });
+      writeFileSync(
+        join(storage.runDir, "run-processes", `agent-group-${stub.pid}.json`),
+        `${JSON.stringify({
+          kind: "agent-descendant-group",
+          paneId: "%1",
+          pgid: stub.pid,
+          recordedAt: later,
+          runDir: storage.runDir,
+        })}\n`
+      );
+      const other = join(storage.storageRoot, "repo-other", "5");
+      writeRunManifest(join(other, "manifest.json"), {
+        ...createRunManifest({
+          codexAppServerPid: stub.pid,
+          cwd: elsewhere,
+          mode: "paired",
+          pid: 999_998,
+          repoId: "repo-other",
+          runId: "5",
+          state: "working",
+        }),
+        updatedAt: later,
+      });
+      const { runCli } = await loadRunCli({
+        closeGovernessBeatForTerminalRun: () => Promise.resolve(undefined),
+      });
+      await runCli(["reconcile", "stopped-run", "32"]);
+      expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toMatchObject({
+        runId: "32",
+        status: "changed",
+      });
+      expect(stub.killed).toBe(false);
+      expect(stub.exitCode).toBeNull();
+    } finally {
+      write.mockRestore();
+      stub.kill("SIGKILL");
+      rmSync(elsewhere, { force: true, recursive: true });
+    }
+  });
+});
+
+test("runCli reconcile stopped-run waits while a member of a recorded agent pane group lives after its leader is gone", async () => {
+  await withSyntheticHome(async (home) => {
+    const storage = writeSyntheticTerminalRun(home, "34", "stopped");
+    // A pane process group whose leader exited and left a tool running in it.
+    const leader = spawn(
+      [
+        "/usr/bin/perl",
+        "-e",
+        "setpgrp(0,0); if (fork() == 0) { sleep 30; exit 0 } exit 0",
+      ],
+      { detached: true, stderr: "ignore", stdin: "ignore", stdout: "ignore" }
+    );
+    const pgid = leader.pid;
+    await leader.exited;
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      recordRunPaneProcesses({
+        agentPaneIds: ["%1"],
+        now: () => new Date(Date.now() + 2000).toISOString(),
+        panes: [{ paneId: "%1", pid: pgid }],
+        pgidOf: () => pgid,
+        runDir: storage.runDir,
+        session: "synthetic-loop-34",
+      });
+      const { runCli } = await loadRunCli({
+        closeGovernessBeatForTerminalRun: () => Promise.resolve(undefined),
+      });
+      await expect(runCli(["reconcile", "stopped-run", "34"])).rejects.toThrow(
+        "stopped-run reconciliation refused: recorded-process-may-be-live"
+      );
+      expect(
+        readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+      ).toBeUndefined();
+      // Once the group's last member is gone the same command releases.
+      process.kill(-pgid, "SIGKILL");
+      for (let waited = 0; waited < 50; waited += 1) {
+        try {
+          process.kill(-pgid, 0);
+        } catch {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await runCli(["reconcile", "stopped-run", "34"]);
+      expect(
+        readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+      ).toBeString();
+    } finally {
+      write.mockRestore();
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+  });
+});
+
+test("runCli reconcile kinds refuse a run in the other terminal state without writing", async () => {
+  const cases = [
+    { kind: "stopped-run", reason: "run-is-not-stopped", state: "failed" },
+    { kind: "failed-terminal", reason: "run-is-not-failed", state: "stopped" },
+    { kind: "failed-start", reason: "run-is-not-failed", state: "stopped" },
+  ] as const;
+  for (const { kind, reason, state } of cases) {
+    await withSyntheticHome(async (home) => {
+      const storage = writeSyntheticTerminalRun(home, "32", state);
+      const write = spyOn(process.stdout, "write").mockImplementation(
+        () => true
+      );
+      try {
+        const { closeGovernessBeatForTerminalRunMock, runCli } =
+          await loadRunCli();
+
+        await expect(runCli(["reconcile", kind, "32"])).rejects.toThrow(
+          `${kind} reconciliation refused: ${reason}`
+        );
+
+        const after = readRunManifest(storage.manifestPath);
+        expect(after?.state, kind).toBe(state);
+        expect(after?.workspaceReleasedAt, kind).toBeUndefined();
+        expect(closeGovernessBeatForTerminalRunMock).not.toHaveBeenCalled();
+      } finally {
+        write.mockRestore();
+      }
+    });
+  }
+});
+
+test("runCli reconcile probes the run's own tmux runtime and refuses when it is not provably gone", async () => {
+  await withSyntheticHome(async (home) => {
+    const storage = writeSyntheticTerminalRun(home, "33", "stopped");
+    const manifest = JSON.parse(readFileSync(storage.manifestPath, "utf8"));
+    // An unusable recorded socket is unknown targeting: it can neither be
+    // probed nor fall back to the legacy candidates, so it is never absence.
+    manifest.tmuxSocket = "relative/unusable.sock";
+    writeFileSync(storage.manifestPath, JSON.stringify(manifest, null, 2));
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const { closeGovernessBeatForTerminalRunMock, runCli } =
+        await loadRunCli();
+
+      await expect(runCli(["reconcile", "stopped-run", "33"])).rejects.toThrow(
+        "stopped-run reconciliation refused: tmux-runtime-not-absent"
+      );
+
+      expect(
+        readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+      ).toBeUndefined();
+      expect(closeGovernessBeatForTerminalRunMock).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+  });
 });
 
 test("runCli reconciles one synthetic stopped run before startup maintenance", async () => {

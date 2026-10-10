@@ -1640,3 +1640,545 @@ handoffs; about 140 s). Also run, unchanged and all passing:
 workflow-replay-corpus (7), orchestration-rollback-to-deployed (25),
 governess-beat-workflow (7), governess-temporal-journal (8),
 temporal-workflow-port (12), supervisor-message-v2-temporal-retention (14).
+
+## Dead-run workspace release
+
+A run hands its workspace back (`workspaceReleasedAt`) only when its tmux
+session is positively gone and no recorded process of the run can still be
+live. The same evidence is used by `loop reconcile stopped-run|failed-terminal
+<runId>`, the launch auto-release of a dead stopped or failed run, the clean
+teardown's own handback, and startup GC. Recorded processes are:
+
+- the run pid and launch-attempt pid (manifest), and the Codex app-server;
+- the bridge worker (`bridge-worker.json`) and each `run-processes/` entry
+  (bridge MCP processes);
+- each agent pane's process GROUP (`run-processes/pane-<pane>-<pid>.json`,
+  written at launch, on a resume that re-attaches, and by the teardown before
+  its session kill; never the governess pane);
+- the process GROUP of every descendant of an agent pane process that is not
+  in the pane's group (`run-processes/agent-group-<pgid>.json`). The real
+  CLIs start their tool subprocesses outside the pane group: Claude Code runs
+  each Bash tool shell as a session leader, and Codex runs each exec command
+  and MCP server in a group of its own. These groups are found by a ppid walk
+  over one `ps -axo pid,ppid,pgid,lstart` snapshot while the CLI is still the
+  parent: at launch, on a re-attach, on every governess cycle (at most every
+  5 s), and by the teardown right before its session kill. A pane process is
+  walked only while it is provably the recorded one (same group, started by
+  the record). A group is provably the recorded one while some member started
+  by the record's instant lives; each snapshot moves the instant of every such
+  record (pane or descendant) up to itself, carrying identity forward after
+  the original members exit. Records of groups that are gone are pruned by
+  later snapshots;
+- each claimed utility job's worker process GROUP (`utility/jobs.jsonl`; a
+  worker is spawned detached, so its group id is its pid).
+
+A recorded group is live while any member exists, even after its leader is
+gone. A live process that provably started after the recorded instant and
+holds the group's id is not the group (a pid is never allocated while a group
+with that id exists).
+
+A teardown signals the utility workers' groups (identity: the worker command
+with this exact run directory, epoch and job id) before the session kill.
+Right before the kill (after the beat close, when Temporal is on) it records
+the agent panes and their descendants' groups. After the kill it ends the
+worker groups and every recorded agent group that is provably the recorded
+one in that snapshot (one that is not is logged `agent-group-unverified`,
+never signalled, and still blocks the release while it lives): SIGTERM, a 3 s
+grace, SIGKILL, a 1 s wait. Right before each signal
+round every agent group is re-identified on a fresh process table: it is still
+the recorded group only while some member started by the snapshot instant
+lives (a reused group id has only later members), and a target that no longer
+is is reported `unverified` and never signalled. The handback then re-reads
+every record. Stale recovery ends a timed-out or stale-epoch worker's group
+the same way (re-identified before its SIGKILL). Startup GC writes a handback
+only on the full evidence above; a never-bound launch it cannot release yet
+stays active, so the next GC judges it again. `loop reconcile` re-verifies a
+recorded handback on the full evidence before it answers `already-released`.
+
+`bridge-worker.json` never stops naming a live process while a worker may be
+starting: before the spawn it names the spawner (`"pending": true`), right
+after it the new worker, and a worker that finds a record naming no live
+process records itself.
+
+### Dead-run release: accepted residual risks (2026-10-10)
+
+The owner accepted these on 2026-10-10 when choosing to close the remaining
+review gap with the process-group repair and then install:
+
+- A socket-less legacy run is judged on every candidate socket plus all
+  recorded evidence being dead.
+- A torn last `utility/jobs.jsonl` line older than 60 s is ignored.
+- A malformed complete `utility/jobs.jsonl` line blocks release until it is
+  repaired.
+- A recycled pid (or process group id) can falsely block a release; it never
+  falsely grants one.
+- Utility workers started by the old binary (ea968d82) lack the claim-time
+  self-cancel on a terminal run.
+- A resume or re-stop between a release's read and its write is not modelled.
+- Startup GC pays for tmux probing of each candidate run.
+
+Further limits of the same repair, recorded for the owner (not part of the
+2026-10-10 acceptance; they need the owner's decision):
+
+- Runs launched before pane records existed have none: until a resume
+  re-attaches (or, for a run that recorded its socket, a governess started
+  from this binary tears it down), they are judged as before, on session
+  absence plus the other evidence. A governess already running from the old
+  binary tears down with the old code and takes no descendant snapshots.
+- A tool subprocess is tracked through its parent chain to the CLI. One that
+  both leaves every recorded group (setsid) and loses that chain (its parent
+  exits, as in a double fork) between two snapshots, at most about 5 s apart
+  while the governess runs, is not seen. So is one started in the
+  milliseconds between the teardown's last snapshot and the CLI's death on
+  the hangup. If the governess is gone (crashed), no periodic snapshots are
+  taken.
+- Group identity before a signal is judged at `ps`'s one-second start-time
+  resolution: a group id that is freed and reused within the same wall-clock
+  second as the snapshot could be taken for the recorded group. A process
+  older than the snapshot that voluntarily joins a newer group of its own
+  session (setpgid) would make that group look recorded too.
+- A worker group whose leader is gone before the teardown cannot be
+  identified by its command, so it is never signalled automatically; it blocks
+  the release until it exits or the operator ends it.
+- Pane records are never removed: `run-processes/` gains one file per pane
+  process (a respawn adds one). A malformed pane or descendant group record,
+  or one naming a group id of 1 or less, is unreadable evidence: it blocks
+  the release until the operator repairs or removes it.
+- A pane that the manifest does not name (split in by hand) is not recorded.
+- The other side of tracking descendants: a long-lived daemon a tool started
+  from inside the run (a `gpg-agent` while it still descends from the CLI, a
+  dev server) is run-owned once a snapshot saw it, unless one of the
+  shared-process rules below applies. Its life blocks the release, and the
+  teardown ends it.
+- Not verified: whether the Claude or Codex CLI itself ends its detached tool
+  children on a hangup. The repair does not rely on it.
+
+### Shared processes: whose is it (2026-10-10)
+
+How a Codex seat gets its app-server (from the code, `tmux.ts`
+`preparePersistentTmuxLaunch` and `codex-app-server.ts`): each paired launch
+or resume that includes Codex has its launcher process (the `loop` command)
+spawn one `codex app-server --listen ws://127.0.0.1:<port>` detached (its own
+session and group) and orphaned when the launcher exits. Its pid and URL are
+recorded as the run's `codexAppServerPid` / `codexRemoteUrl`, and the
+launcher also spawns a detached `loop __codex-tmux-proxy <runDir> ...` that
+the Codex pane connects through. Nothing in the code shares one app-server
+between runs or seats on purpose: the app-server object is a singleton per
+launcher process, and each run has its own launcher. Sharing comes from the
+process tree: a `loop` launch or resume of run B run from an agent's tool
+shell in run A starts B's app-server, B's proxy and, for a private socket,
+possibly B's tmux server as descendants of A's agent CLI, so A's ppid walk
+recorded them as A's `agent-group-<pgid>.json`. Other long-lived processes
+that can appear in an agent pane's tree: the agent CLIs' MCP servers
+(`loop __bridge-mcp <runDir>` and configured ones, children of that CLI), the
+bridge worker and utility workers (spawned detached from inside the tree,
+their command line names their run directory), and whatever a tool starts
+(dev servers, Temporal dev servers, build daemons such as Gradle, watchman,
+`lms server start`, `docker` clients). The governess pane, which runs the
+governess helpers, is never walked.
+
+Another run is provably dead (and then ignored) only on the release's own
+evidence, never on its manifest alone: its manifest is readable and terminal
+(stopped, failed, completed), AND its pid, launch attempt and every process
+and group it records (`codexAppServerPid`, `bridge-worker.json`,
+`run-processes/` records, utility worker claims) are gone from one process
+table snapshot or are provably later processes (started after the later of
+its handback and its last update, or after the record's own instant; a group
+with its leader gone is live while any member lives), AND its tmux runtime is
+positively gone by the release rule (`tmuxRuntimeAbsentForManifestSync`; a
+never-bound launch has none). A terminal run that fails any of these, or
+whose records cannot be read, is live for these rules: what it records is
+never ended by another run's teardown. Since 2026-10-10 (after 688da14f);
+before that a terminal manifest alone made a run dead.
+
+The rules (`src/loop/shared-process-ownership.ts`), first match wins:
+
+0. The A2A V2 orchestration host (r6 line, added when the dead-run hotfix was
+   ported onto claude/fix-integration-r6-2026-10-09): `shared-process-skipped`
+   with `otherRunId` `orchestration-host` when a member, or any process up a
+   member's whole parent chain (not stopped at the pane processes), runs
+   `loop orchestration serve <config>` (the compiled binary under any name
+   starting with `loop`, or `src/cli.ts`) or `src/orchestration-cli.ts`. The
+   host is normally the launchd agent `com.harness.loop-orchestration` and is
+   then never in a run's tree at all; the rule covers a host started from an
+   agent's tool shell, one running in a pane's group, its headless wake
+   sessions, and a run a wake launched (its app-server while the launcher
+   still runs). It applies to every record kind (walked groups, pane groups,
+   the manifest app-server, worker targets) at collection, at every signal
+   round and in the release evidence: never signalled; release evidence only
+   while a member's cwd is inside this run's workspace or cannot be read. It
+   needs no other run, so it holds while other runs are unreadable. Limits: it
+   is judged on the check's command lines (`ps -axww -o pid=,command=`);
+   without them rules 1 to 4 decide alone, and a host renamed so that neither
+   form matches is judged like any other process. The host's Codex delivery
+   reaches each run's app-server over its recorded `codexRemoteUrl` and starts
+   no app-server of its own, so a run's bound app-server stays that run's.
+1. `shared-process-skipped`: another run that is not provably dead records
+   the process or its group (manifest pid, launch attempt, `codexAppServerPid`,
+   `bridge-worker.json`, `run-processes/` records, utility worker claims), or
+   a member's command line names that run's directory, tmux socket, tmux
+   session or `--run-id`. For a walked group (`agent-group-*`) the same test
+   is applied to every ancestor of a member, up to launchd or to this run's
+   own recorded pane processes (never above them, into the tmux server): a
+   child that B's app-server or B's tmux proxy started in a group of its own
+   is B's too, even though no run records the child. A record whose id is
+   held only by processes started after it names a later process and does
+   not apply. This run's own tmux session, socket and run id never count as
+   naming another run (runs on one tmux server share its socket). For the
+   run's own explicit records (its pane groups, its manifest
+   `codexAppServerPid`, its bridge and utility worker targets) another run's
+   ppid-walk records (`agent-group-*`) do not count: that run only saw the
+   process descend from its panes because this run was launched from one of
+   them, and this run's teardown must still end its own app-server. The
+   teardown never signals a shared process: not at the pre-kill collection,
+   not the run's own `codexAppServerPid` cleanup, and not in any signal
+   round (each round re-reads the other runs and the process table). The
+   governess logs one `shared-process-skipped` line per skip with
+   `otherRunId` and the `phase` (`cleanup`, `collect`, `terminate`). It is
+   release evidence only while a member's cwd (`lsof -a -p <pid> -d cwd`) is
+   inside this run's workspace root (binding root, else cwd) or cannot be
+   read.
+2. `ownership-unknown`: the other runs cannot all be read (a run directory,
+   a manifest or a run's records unreadable, in a run that is not provably
+   dead), or the walked group is not in the process table. A walked group is
+   then never signalled and stays release evidence. The run's own explicit
+   records are judged by rule 1 on the runs that CAN be read (a readable
+   live run that records or names one still makes it shared), and are
+   signalled only when a positive identity binds them to this run, never
+   because the other runs say nothing:
+   - the manifest app-server (`codexAppServerPid`): the manifest records its
+     exact listen URL (`codexRemoteUrl`); the live command line is
+     `app-server --listen <that URL>` (whole arguments, or `--listen=<URL>`);
+     the process holds that port's listener (`lsof -iTCP:<port>
+     -sTCP:LISTEN`); and it started no later than the manifest's last update,
+     on one process table snapshot. A manifest without `codexRemoteUrl`
+     (runs recorded before it) is unproven. An unbound app-server is never
+     signalled, whether or not the other runs can be read; the cleanup logs
+     it as `app-server-identity-mismatch` with `detail: identity not proven:
+     <why>` and, when other runs were unreadable, `; other runs unreadable:
+     <reason>`. A bound app-server gets one SIGTERM, to its whole process
+     group when the same snapshot shows it leading one that is not the
+     cleanup's own (so the children Codex starts in it end too), else to its
+     pid. One that is not running is skipped as `app-server-not-running`
+     before the other runs are read;
+   - a pane group: the run's own recorded pane, proven at collection (a
+     member started by the record's instant) and re-identified against the
+     snapshot instant before every signal round;
+   - a utility worker target: its instant and its exact run directory,
+     epoch and job command, re-checked before every signal round;
+   - the bridge worker and bridge MCP processes: their command names this
+     run's exact directory (checked right before their one SIGTERM).
+   In the pre-signal check, an explicit target that carries no identity (no
+   reference instant, no worker identity) is skipped as `ownership-unknown`
+   while the other runs cannot be read.
+3. `run-owned`: a pane group, the run's own manifest app-server (bound as
+   above), or a walked group with a member still descending from one of the
+   run's live, proven pane processes. As before: signalled after the kill,
+   release evidence.
+4. A walked group none of whose members descends from the run's panes is
+   re-parented away only when every member's parent chain ends at launchd
+   (pid 1), passing only through the group itself and the run's other walked
+   groups. Any other parent (a process no run records) makes it
+   `ownership-unknown`: never signalled, release evidence. A re-parented
+   group is `reparented-in-workspace` (a member's cwd inside the workspace;
+   signalled and counted as before), `ownership-unknown` (an unreadable cwd,
+   or more than 32 members), or, with every member's cwd read and outside
+   the workspace, `reparented-outside-workspace` (neither signalled nor
+   counted) only if it was seen re-parented while its own pane's agent
+   process lived: now, or by an earlier snapshot. Every walk snapshot (launch,
+   re-attach, each governess cycle, the teardown's pre-kill collection)
+   stamps `reparentedAt` on a walked record whose group it sees that way.
+   A group first seen re-parented after its pane ended may be a tool orphaned
+   by that end, or a group the teardown targeted and could not end (EPERM, a
+   SIGKILL survivor): it is `ownership-unknown`, so it keeps blocking the
+   release while it lives, as before this rule existed.
+
+The release evidence applies rules 1, 2 and 4 only to the run's
+`codexAppServerPid` and its `agent-group-*` records, in every release path
+(`loop reconcile`, the launch auto-release, the teardown's own handback and
+startup GC). The teardown's `workspace-released` detail lists each live
+record it did not count and the rule.
+
+Utility worker targets are re-verified right before every signal round, in
+the teardown and in stale-worker recovery (`terminateUtilityWorker`) alike:
+each carries the instant it was identified at (its group is still the
+worker's only while a member started by then lives) and its identity (while
+the leader lives, its command must still be the worker command of exactly
+that run directory, epoch and job). One that fails is reported `unverified`
+and never signalled; that includes the SIGKILL escalation after the grace.
+
+Each signal round (`terminateTargets`) reads ONE process snapshot: one
+`ps -axo pid,ppid,pgid,lstart` table and the command lines of that moment
+(`ps -axww -o pid,command`, read only if a check needs them). The identity
+re-check and the shared-process check of the round both judge that snapshot;
+the SIGKILL round after the grace takes a new one.
+
+Accepted and remaining risks of these rules (for the owner):
+
+- A stale active manifest (a run that died without reconcile) keeps
+  everything it records or names "shared" for every other run: never ended
+  by them, and counted by them only while it works in their workspace. Its
+  own reconcile ends this.
+- The same now holds for a terminal run that is not provably dead (since
+  2026-10-10): one whose teardown could not end a recorded process (EPERM,
+  a SIGKILL survivor, an `unverified` or `agent-group-unverified` group), a
+  run whose recorded pid or group id was reused by a process that started
+  before its last update, or one whose tmux runtime cannot be proven gone
+  (a reachable socket that does not answer about the session; a legacy
+  socket-less run on any candidate server). Everything it records or names
+  stays "shared" for every other run: never ended by them. It costs no
+  release of its own (its release evidence is unchanged), but another run's
+  walked group that it also records is left running until it is provably
+  dead or the operator ends that process.
+- One unreadable state anywhere under the storage root, in a run that is
+  not provably dead (a torn `utility/jobs.jsonl` tail under 60 s old, a
+  malformed `run-processes/` record, which is never pruned, a malformed
+  manifest), makes every walked group of every tearing-down run
+  `ownership-unknown`: never signalled, and blocking that run's release
+  while it lives. The teardown runs once, and neither GC nor `loop
+  reconcile` ever signals a walked group, so a moment of unreadability at
+  the teardown leaves those tool processes running and the workspace held
+  until they exit or the operator ends them. This fails closed by design.
+  Since terminal runs are no longer dead on their manifest alone, a
+  malformed record in an OLD terminal run whose processes are gone also
+  counts (it is not provably dead), so the exposure is wider than before.
+  The repair itself never reads live state. The second install review
+  (2026-10-10, a read-only `readOtherRunIndex` call on the live root, by the
+  reviewer, not by the repair) found 344 manifests there: 211 stopped, 117
+  failed, 13 submitted, 3 input-required; 66 runs counted as live, about 50
+  of them terminal but not provably dead. Every process those 50 record
+  stays shared for every other run. Before relying on a release, the
+  operator can check with a scan, for example `bun -e 'import {
+  readOtherRunIndex } from "./src/loop/shared-process-ownership"; const r =
+  readOtherRunIndex("/nonexistent", [process.env.HOME + "/.loop/runs"]);
+  console.log(r.kind, r.kind === "unknown" ? r.reason : r.runs.length)'`
+  from `loop-fork/`. It writes nothing, but it reads the process table and
+  asks each terminal run's recorded tmux socket (`has-session`) whether its
+  session is gone, which for a socket-less legacy run includes the default
+  tmux server.
+- Cost: every read of the other runs now also checks every terminal run
+  under the storage roots: its record files, and, for each run whose
+  recorded processes are all gone, one tmux probe (a `stat` and a bounded
+  `tmux -S <socket> has-session`; every candidate socket for a legacy run).
+  Measured by the second install review on the live root (2026-10-10, the
+  344 manifests above): 3.4 to 4.7 s per read. A teardown reads it several
+  times: once for the agent-group collection, once for its own app-server
+  (only when that app-server is still running: a gone one is skipped before
+  the read), once per signal round (SIGTERM, then SIGKILL when something
+  survives), and in release judgements that meet a shared or walked
+  process. Startup GC reads it once per abandoned run whose app-server is
+  still running. On that root a teardown therefore spends tens of seconds,
+  not seconds, in these reads; the cost grows with the number of runs kept
+  under the root, and pruning old run directories is the operator's lever.
+- Command-line matching is textual. A tool of this run that merely names
+  another live run (`tail -f <other runDir>/governess.jsonl`, `loop status
+  --run-id 7`) is treated as shared, and so is every walked group below it
+  while that tool's shell is its ancestor: this run's teardown leaves them
+  running, and they block this run's release while their cwd is in this
+  workspace. The operator ends them. A `--run-id` value equal to this run's
+  own id never matches (ids repeat across repositories); one equal to
+  another live run's id in any repository does.
+- The motivating case releases only when the shared process works outside
+  this run's workspace. A `loop` launch of run B from a tool shell in run A
+  starts B's app-server with no explicit cwd (`codex-app-server.ts`), so it
+  inherits the launcher's cwd: usually A's workspace, or B's worktree under
+  A's root (`.worktrees/`, `.claude/worktrees/`). Its cwd is then inside A's
+  workspace root, so A's teardown leaves it running but A does not release
+  until B ends (or until it exits). The smoke and the release tests use a
+  cwd outside A's workspace; the held case is pinned by the test "a shared
+  daemon whose cwd is inside A's workspace blocks A's release".
+- A daemon working outside the workspace (cwd elsewhere) that still writes
+  into it by absolute path is not counted once it was seen re-parented while
+  its pane lived, and is not ended.
+- A daemon that re-parented away after the last walk snapshot that saw its
+  pane alive (at most about 5 s before the teardown's own collection, which
+  takes one more) cannot be told from a tool orphaned by its pane's end: it
+  blocks the release while it lives, whatever its cwd, until the operator
+  ends it. With the governess gone (crashed), no periodic snapshots stamp
+  `reparentedAt`, so every daemon first seen re-parented by GC or the launch
+  auto-release blocks the same way (the pre-repair behaviour).
+- A walked group whose parent is any process other than launchd, this
+  run's pane tree or the run's own walked groups (an unrecorded process of
+  another run, a stranger) is never signalled and blocks the release while
+  it lives.
+- An explicit record of the run's own (pane group, manifest app-server,
+  worker target) is still signalled while some other runs cannot be read,
+  but only when a positive identity binds it to this run (rule 2) and no
+  readable live run records or names it; another run's walk record of it
+  never stops that. An unreadable run could still hold a non-walk record
+  of it (it would have to record this run's exact app-server pid, or pane
+  group id, in its own manifest or records); nothing in the code writes
+  one, and a recycled id is rejected by the start-time binding.
+- An app-server recorded without `codexRemoteUrl` (runs from before the
+  URL was recorded) is never ended by its run's teardown or by GC: its
+  identity cannot be proven. It counts as release evidence while it lives,
+  so the run is not released until it exits or the operator ends it. (The
+  code before this repair required the URL's port too, so such an
+  app-server was not ended before either.)
+- The app-server's start-time binding compares against the manifest's LAST
+  update, not the moment the pid was recorded, at `ps`'s one-second
+  resolution. A different process would have to hold the same pid, run
+  `app-server --listen` on the same recorded URL and hold that port's
+  listener, and have started before the manifest's last update, to pass.
+- The bridge worker and bridge MCP processes are signalled on their exact
+  run-directory command line alone; the other runs are not consulted for
+  them (a command naming this run's directory is this run's by rule 1).
+- Walk records go both ways: while A (whose walk recorded B's app-server)
+  is live, a walked group of B that A's walk recorded too is shared for B as
+  well, so neither teardown ends it until the other run is provably dead.
+  B's own app-server is not affected (explicit record).
+- The real-Codex smoke (2026-10-10, codex-cli 0.162.1, scratch
+  `CODEX_HOME`, no login) showed the app-server starting a configured MCP
+  server in a group of its own, and ending it by itself when the app-server
+  got its run's SIGTERM. The teardown relies on that for MCP servers the
+  app-server starts (they are not recorded by any run); other Codex
+  versions are not verified. In one of two smoke runs the cwd probe
+  (`lsof`) answered unknown for the app-server; unknown counts as release
+  evidence, so that fails closed.
+- The same smoke showed network activity on app-server start, with no
+  login: Codex syncs its plugins (`git fetch` of the openai/plugins
+  repository into `CODEX_HOME`), as children in the app-server's own process
+  group. Signalling the app-server's pid alone left them running,
+  re-parented to launchd, for about 20 s. Since the third repair the run's
+  own teardown and GC signal the bound app-server's whole group when the
+  snapshot shows it leading one (it is spawned detached, so it does), and
+  only its pid otherwise. The third repair's smoke (same Codex, scratch
+  `CODEX_HOME`, another run unreadable) found four plugin-sync processes
+  (`git`, `git remote-https`, `git-remote-https`, a shallow `git`) in the
+  bound app-server's group at its run's cleanup; all of them, the app-server
+  and its MCP server were gone within 5 s, before the smoke ended anything
+  itself. A child that leaves that group (setsid, as the MCP
+  servers do) is not reached; nor is the app-server's group held as release
+  evidence once its leader is gone (the app-server is recorded as a pid).
+- The identity binding needs the recorded pid to hold the listener itself.
+  The Homebrew `codex` (0.162.1) is a native arm64 binary that does. A
+  `codex` on PATH that is a wrapper or a node shim, which starts the real
+  server as a child, would leave the recorded pid (the wrapper) without the
+  listener: its app-server is then never ended by its run's teardown or by
+  GC (`app-server-identity-mismatch`, "does not hold the listener"), and it
+  counts as release evidence while the wrapper lives, so the run is not
+  released until it exits or the operator ends it.
+- cwd is read once per judgement; a process can `chdir` later. `lsof` is
+  slow (tens of ms per pid): it runs only for shared or re-parented groups.
+- Other runs are read from the storage root under `HOME` and, for a run
+  directory in the storage layout, from its own root. Runs kept under another
+  `HOME` are not seen.
+- The Codex tmux proxy and a private tmux server started by another run's
+  launcher are not recorded by that run; they (and their descendants) are
+  recognised as shared only by their command lines naming its run directory
+  or socket.
+
+### Tests never reach live state (2026-10-10)
+
+The suite must not read the operator's storage root or reach a live tmux
+server. Before the third repair it did both: the default other-run index read
+`$HOME/.loop/runs` (with 344 runs there, `run-process-cleanup` failed 2 of 19
+and one index read took seconds), and a plain `tmux kill-session` /
+`has-session` from two tests went to the default server, because Bun fixes
+`os.homedir()` and the environment `Bun.spawn` passes to children at startup:
+a test's or preload's later edit of `process.env` (such as
+`TMUX_TMPDIR`) reaches neither. `test:file` and `test:ci` now run each file
+under `scripts/test-hermetic.sh`, which starts it with a fresh scratch `HOME`
+and `TMUX_TMPDIR` and with `TMUX`, `TMUX_PANE` and `LOOP_TMUX_SOCKET` unset,
+and `tests/setup.ts` refuses any other launch (`hermeticEnvGap`). Run tests
+only through those scripts; `LOOP_TEST_CERTIFICATION_MODE=single-file bun
+test <file>` alone is refused. Limits: a test may still name an absolute
+socket path of its own (they use scratch paths), and the legacy-socket
+candidates include `/tmp/tmux-<uid>/default` by design, so a test that
+judged a socket-less run on the default probes would ask the default server
+`has-session`. A tmux spy (a logging `tmux` first on PATH) over the whole
+suite at the third repair (2026-10-10, 140 files) saw 29 calls: none named a
+default socket, the four plain ones (no `-S`) went to the launcher's scratch
+`TMUX_TMPDIR`, and the rest named the tests' own scratch sockets. Before the
+launcher, the same four plain calls carried no `TMUX_TMPDIR` and so went to
+the default server.
+
+Flaky, not regressions: two `launch-reservation` tests ("exact Run 61
+releases on a live shared socket..." and "a present endpoint with unknown
+liveness blocks...") failed once at 607a3890 and passed on every rerun; the
+base ea968d82 passed them on three runs.
+
+### Port onto the r6 control-plane line (claude/fix7-dead-run-release, 2026-10-10)
+
+The installed hotfix (claude/hotfix-dead-run-release, ea968d82..93c00070,
+20 commits) was cherry-picked commit by commit onto
+claude/fix-integration-r6-2026-10-09 (c16636fc), which descends from
+ea968d82. What the port changed beyond conflict resolution:
+
+- `pidCanStillOwnRun` and `defaultPidOwnershipDeps` stay in r6's
+  `pid-ownership.ts`; the defaults also carry `processGroupAlive`.
+- Detached-worker identity uses r6's exact argv-tail rule
+  (`commandEndsWithArgs`, now in `utility-constants.ts`) instead of the
+  hotfix's `commandHasExactArg`: the bridge worker must end with
+  `__bridge-worker <runDir>`, a utility worker with `__utility-worker
+  <runDir> <epoch> <jobId>`. r6's startup GC no longer ends the bridge
+  worker (the hotfix's teardown-only scope).
+- The orchestration host rule (rule 0 above).
+- `scripts/test-hermetic.sh` passes the docker endpoint on as
+  `DOCKER_HOST` (its context lives under the swapped `HOME`); without it
+  every Docker-backed Postgres file failed under the launcher.
+- teardown-helper-gate's intake test no longer races a 50 ms key timer
+  against r6's heavier first tick (failed 12 of 20 runs).
+- The Temporal-journal teardown order is pinned on a real local Temporal
+  test server (`governess-beat-close.test.ts`): beat close, then pre-kill
+  collection, kill, group end, handback.
+
+No Temporal-workflow-reachable source changed: a rebuilt bundle differs
+from the committed one only in source-map paths (as a rebuild of r6 itself
+does), so the generated bundle is unchanged.
+
+Evidence (2026-10-10, bun 1.4.2, macOS arm64, every file under the hermetic
+launcher, Docker/colima Postgres and `TestWorkflowEnvironment.createLocal`):
+r6 157 files, 2655 pass, 17 fail; the port 168 files, 2798 pass, 16 fail.
+The 16 failing tests are the same names on both (loop.test.ts runCli x6,
+governed-supervisor-message x2, native-subagent x1, seat-pane-identity x1,
+tmux.test.ts x5, utility-composed-release x1); r6's 17th ("rejects malformed
+stopped-run reconciliation") passes with the ported usage text. A real tmux
+smoke (private socket in a scratch `TMUX_TMPDIR`) and a real Codex
+app-server smoke (codex-cli 0.162.1, scratch `CODEX_HOME`) passed on the
+port's sources; the host-rule and teardown-wiring mutants fail the tmux
+smoke. 25 core-guard mutants were killed by the suite.
+
+## Verifying a build (provenance, 2026-10-10)
+
+The compiled `loop` binary is not byte-reproducible, so its sha256 names one
+build, not a commit. Measured on 1fee206e (bun 1.4.2, macOS arm64): two
+builds from the same checkout had different sha256 (d1c4380c..., 6b77492a...),
+and a build from a `git archive` copy of the same commit at another path
+(own `bun install --frozen-lockfile`) had a third (457edf4c...). The build
+embeds the checkout's absolute paths, and bun's bundler sometimes inlines
+`__require.resolve("watchpack")` as the resolved
+`<checkout>/node_modules/watchpack/lib/index.js` and sometimes not. The
+build itself is unchanged; provenance is checked by comparing path-normalised
+strings instead:
+
+1. Check out the claimed commit cleanly (`git worktree add --detach <dir>
+   <sha>`, or `git archive <sha> loop-fork | tar -x -C <dir>`), run
+   `bun install --frozen-lockfile` in `<dir>/loop-fork`, and build with
+   `LOOP_BUILD_OUTFILE=<scratch>/loop bun run build` (no install).
+2. For each binary `BIN`, with `ROOT` the absolute `loop-fork` path it was
+   built from (for an installed binary, the build record's checkout path):
+
+   ```sh
+   strings -a -n 8 "$BIN" | LC_ALL=C sed \
+     -e "s#$ROOT#<root>#g" -e "s#$(dirname "$BIN")#<outdir>#g" \
+     -e 's#__require.resolve("<root>/node_modules/watchpack/lib/index.js")#__require.resolve("watchpack")#g' \
+     | shasum -a 256
+   ```
+
+   (the first expression replaces the checkout path with the token
+   `<root>`, the second the output directory, and the third undoes the
+   watchpack variance).
+3. The binary is the claimed commit's build when the two normalised digests
+   are equal. Any other difference is real: list it with `diff` of the two
+   normalised outputs before accepting anything.
+
+Evidence for the method: the three 1fee206e builds above normalise to the
+same digest (prefix a6039da1e21c6653), and a control build of 688da14f
+from a clean copy differs from them in 204 normalised lines (the source
+change). Limits: the comparison sees printable runs of 8 or more bytes, not
+code bytes or Mach-O metadata; it does not prove the same bun version or
+dependency tree (both shape the strings, so a different one usually shows
+as a difference, but not always); the build record must name the checkout
+path. Comparing against the installed binary reads `~/.local/bin/loop`,
+which this repair never did.

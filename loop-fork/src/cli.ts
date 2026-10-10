@@ -16,6 +16,7 @@ import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
+import { RECONCILE_USAGE } from "./loop/constants";
 import { cliDeps } from "./loop/deps";
 import {
   GOVERNESS_SUBCOMMAND,
@@ -36,7 +37,7 @@ import {
 } from "./loop/governess-secure-env";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { PairedLaunchClaim } from "./loop/launch-reservation";
-import { runtimeAbsent } from "./loop/launch-reservation";
+import { tmuxRuntimeAbsentForManifest } from "./loop/launch-reservation";
 import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
@@ -52,20 +53,20 @@ import {
   defaultPidOwnershipDeps,
   pidCanStillOwnRun,
 } from "./loop/pid-ownership";
+import { groupCanStillOwnRun } from "./loop/process-group";
 import {
   RECON_PANE_SUBCOMMAND,
   type ReconPaneIndex,
   runReconPane,
 } from "./loop/recon-pane";
+import { reconcileLegacyStoppedRun, resolveRunStorage } from "./loop/run-state";
 import {
-  readRunManifestHandle,
-  reconcileLegacyStoppedRun,
-  resolveRunStorage,
-} from "./loop/run-state";
-import { tmuxTargetLiveness } from "./loop/tmux-control";
-import { readTmuxEndpointState, targetFromManifest } from "./loop/tmux-socket";
+  defaultOwnershipProbes,
+  recordedProcessClassifier,
+} from "./loop/shared-process-ownership";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
+import { UTILITY_WORKER_SUBCOMMAND } from "./loop/utility-constants";
 import {
   UTILITY_AU_PAIR_TIER,
   UTILITY_NANNY_TIER,
@@ -77,7 +78,6 @@ import {
   runUtilityPane,
   runUtilityWorker,
   UTILITY_PANE_SUBCOMMAND,
-  UTILITY_WORKER_SUBCOMMAND,
 } from "./loop/utility-runtime";
 import { runWorldCommand } from "./loop/world-model-cli";
 
@@ -387,25 +387,27 @@ const runStoppedRunReconcileCommand = async (
     extra.length > 0 ||
     !CANONICAL_POSITIVE_RUN_ID_RE.test(runId)
   ) {
-    throw new Error(
-      "Usage: loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
-    );
+    throw new Error(`Usage: ${RECONCILE_USAGE}`);
   }
   const storage = resolveRunStorage(runId);
   const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
     terminalState: kind === "stopped-run" ? "stopped" : "failed",
+    // A live process another live run holds too (or a daemon that re-parented
+    // away outside the workspace) keeps the workspace only while it works in
+    // it (see `shared-process-ownership`).
+    classifyRecordedProcess: recordedProcessClassifier(defaultOwnershipProbes),
+    // A utility worker's or agent pane's process group is live while any
+    // member exists, after its leader is gone.
+    groupCanStillOwnRun: (pgid, reference) =>
+      groupCanStillOwnRun(pgid, reference, defaultPidOwnershipDeps),
     now: () => new Date().toISOString(),
     pidCanStillOwnRun: (pid, stoppedAt) =>
       pidCanStillOwnRun(pid, stoppedAt, {
         ...defaultPidOwnershipDeps,
       }),
-    runtimeAbsent: async (manifestPath) => {
-      const handle = readRunManifestHandle(manifestPath);
-      const target = handle ? targetFromManifest(handle) : undefined;
-      const endpoint = readTmuxEndpointState(target);
-      const tmux = await Promise.resolve(tmuxTargetLiveness(target));
-      return runtimeAbsent(endpoint, tmux);
-    },
+    // The same rule as the launch scan: the recorded socket, or for a legacy
+    // manifest with no socket, every socket the launcher could have used.
+    runtimeAbsent: (manifestPath) => tmuxRuntimeAbsentForManifest(manifestPath),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (result.status === "refused") {

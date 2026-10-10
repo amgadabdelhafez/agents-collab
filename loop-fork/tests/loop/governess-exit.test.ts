@@ -798,6 +798,8 @@ test("headless handover skips the missing pane and reaches owned teardown after 
     "cleanup",
     "log:run-process-cleanup",
     "kill",
+    // No run manifest in this config, so there is no handback to confirm.
+    "log:workspace-release-deferred",
   ]);
 });
 
@@ -917,7 +919,13 @@ test("handover persists launch success before marking and killing the old loop",
   order.length = 0;
   expect(await driveHandoverControl(config, deps, state, {})).toBe(true);
   expect(launches).toBe(1);
-  expect(order).toEqual(["save:launched", "log:exit", "mark", "kill"]);
+  expect(order).toEqual([
+    "save:launched",
+    "log:exit",
+    "mark",
+    "kill",
+    "log:workspace-release-deferred",
+  ]);
 });
 
 test("handover launch failure never marks or kills the old loop", async () => {

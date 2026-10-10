@@ -288,20 +288,57 @@ const readBridgeWorkerPid = (runDir: string): number | undefined => {
   return undefined;
 };
 
-const writeBridgeWorkerPid = (runDir: string, pid: number): void => {
-  writeFileSync(
-    bridgeWorkerPath(runDir),
-    `${JSON.stringify({ pid })}\n`,
-    "utf8"
-  );
+/**
+ * Replaces the record in one rename, so a reader (the release evidence) sees
+ * either the previous worker's pid or the new one, never a missing or partial
+ * record.
+ */
+const writeBridgeWorkerRecordText = (runDir: string, text: string): void => {
+  const path = bridgeWorkerPath(runDir);
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, text, "utf8");
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 };
 
-const clearBridgeWorkerPid = (runDir: string, pid?: number): void => {
-  const current = readBridgeWorkerPid(runDir);
-  if (pid !== undefined && current !== pid) {
-    return;
+const writeBridgeWorkerRecord = (
+  runDir: string,
+  record: { pending?: true; pid: number }
+): void => {
+  writeBridgeWorkerRecordText(runDir, `${JSON.stringify(record)}\n`);
+};
+
+const writeBridgeWorkerPid = (runDir: string, pid: number): void => {
+  writeBridgeWorkerRecord(runDir, { pid });
+};
+
+/** The record's raw text, or `undefined` when there is none. */
+const readBridgeWorkerRecordText = (runDir: string): string | undefined => {
+  try {
+    return readFileSync(bridgeWorkerPath(runDir), "utf8");
+  } catch {
+    return undefined;
   }
-  rmSync(bridgeWorkerPath(runDir), { force: true });
+};
+
+/** Puts back the record a failed spawn replaced (or removes the pending one). */
+const restoreBridgeWorkerRecord = (
+  runDir: string,
+  previous: string | undefined
+): void => {
+  try {
+    if (previous === undefined) {
+      rmSync(bridgeWorkerPath(runDir), { force: true });
+    } else {
+      writeBridgeWorkerRecordText(runDir, previous);
+    }
+  } catch {
+    // The pending record names this process, which is about to move on: a
+    // dead or provably later pid is absence evidence.
+  }
 };
 
 const isProcessAlive = (pid: number): boolean => {
@@ -1504,9 +1541,16 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
   if (currentPid && isBridgeWorkerProcess(currentPid, runDir)) {
     return true;
   }
-  clearBridgeWorkerPid(runDir);
+  // Before the spawn, the record names this (live) spawner as pending, so at
+  // no instant does a live worker go unrecorded: until the new worker's pid
+  // replaces it right after the spawn, the release evidence sees a live run
+  // process (this one) and waits. The record is never cleared first. If no
+  // worker started, the previous record is put back.
+  const previous = readBridgeWorkerRecordText(runDir);
+  let child: ReturnType<typeof bridgeRuntimeCommandDeps.spawn> | undefined;
   try {
-    const child = bridgeRuntimeCommandDeps.spawn(
+    writeBridgeWorkerRecord(runDir, { pending: true, pid: process.pid });
+    child = bridgeRuntimeCommandDeps.spawn(
       [...buildLaunchArgv(), BRIDGE_WORKER_SUBCOMMAND, runDir],
       {
         detached: DETACH_CHILD_PROCESS,
@@ -1516,15 +1560,21 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
         stdout: "ignore",
       }
     );
-    if (!(typeof child.pid === "number" && child.pid > 0)) {
-      return false;
-    }
-    writeBridgeWorkerPid(runDir, child.pid);
-    child.unref?.();
-    return true;
   } catch {
+    child = undefined;
+  }
+  if (!(child && typeof child.pid === "number" && child.pid > 0)) {
+    restoreBridgeWorkerRecord(runDir, previous);
     return false;
   }
+  try {
+    writeBridgeWorkerPid(runDir, child.pid);
+  } catch {
+    // The pending record (this live process) stays; the worker claims the
+    // record itself once it runs (see `runBridgeWorker`).
+  }
+  child.unref?.();
+  return true;
 };
 
 export const hasLiveCodexTmuxSession = (runDir: string): boolean => {
@@ -2028,14 +2078,40 @@ const bridgeWorkerWaitPolicy = (
   };
 };
 
+/**
+ * Whether another live worker of this run owns `bridge-worker.json`, so this
+ * one must leave. A record that still names a previous, gone worker is not
+ * ownership: the spawner replaces it with this pid right after the spawn,
+ * without clearing it first, so this worker may read it before that write. A
+ * record naming no live process (a spawner that died before writing this pid,
+ * or a gone predecessor) is claimed by this worker, so a live worker is never
+ * left unrecorded; a live pending spawner writes this pid itself.
+ */
+const anotherBridgeWorkerOwnsRecord = (runDir: string): boolean => {
+  const claimedPid = readBridgeWorkerPid(runDir);
+  if (claimedPid === process.pid) {
+    return false;
+  }
+  if (claimedPid && isBridgeWorkerProcess(claimedPid, runDir)) {
+    return true;
+  }
+  if (!(claimedPid && isProcessAlive(claimedPid))) {
+    try {
+      writeBridgeWorkerPid(runDir, process.pid);
+    } catch {
+      // Best effort: the next cycle tries again.
+    }
+  }
+  return false;
+};
+
 export const runBridgeWorker = async (runDir: string): Promise<void> => {
   let reconciliationReason: BridgeReconciliationState["lastReason"] = "startup";
   const wakeSession = bridgeRuntimeCommandDeps.createWorkerWakeSession(runDir);
   const fairnessBackoff: BridgeFairnessBackoff = new Map();
   try {
     while (true) {
-      const claimedPid = readBridgeWorkerPid(runDir);
-      if (claimedPid && claimedPid !== process.pid) {
+      if (anotherBridgeWorkerOwnsRecord(runDir)) {
         return;
       }
       const status = readBridgeStatus(runDir);
@@ -2072,7 +2148,9 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       reconciliationReason = wake.reason;
     }
   } finally {
+    // The record is left in place: this process is still alive until it
+    // exits, and it exits exactly when its run turns terminal, which is when
+    // a release reads the record. A dead pid is absence evidence.
     wakeSession.close();
-    clearBridgeWorkerPid(runDir, process.pid);
   }
 };

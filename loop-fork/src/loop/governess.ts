@@ -138,6 +138,7 @@ import {
 import { openPublicAskSequences } from "./human-interaction-ask";
 import { helperModelLabel, judgeEndpointHost } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
+import { tmuxRuntimeAbsentForManifest } from "./launch-reservation";
 import {
   migrateLegacyGovernessState,
   withLegacyGovernessEnv,
@@ -155,15 +156,27 @@ import {
   openRouterAgentLimit,
   readOpenRouterCredit,
 } from "./openrouter-usage";
+import { defaultPidOwnershipDeps, pidCanStillOwnRun } from "./pid-ownership";
+import {
+  defaultTerminationDeps,
+  groupCanStillOwnRun,
+  type TerminationResult,
+  type TerminationTarget,
+  terminateTargets,
+} from "./process-group";
 import {
   cleanupRunOwnedProcesses,
+  collectRunAgentGroups,
   type RunProcessCleanupResult,
+  recordRunAgentDescendantsThrottled,
 } from "./run-process-cleanup";
 import {
   loadRunState,
   type RunManifest,
   readRunManifest,
   readRunManifestHandle,
+  reconcileLegacyStoppedRun,
+  type StoppedRunReconcileDeps,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
@@ -173,6 +186,11 @@ import {
   type SeatSignals,
   seatSignalsParity,
 } from "./seat-signals";
+import {
+  defaultOwnershipProbes,
+  recordedProcessClassifier,
+  sharedTargetCheck,
+} from "./shared-process-ownership";
 import {
   boundedTmuxOptions,
   isTmuxControlUnavailableError,
@@ -400,6 +418,15 @@ export interface GovernessDeps {
     config: GovernessConfig,
     reason: string
   ) => Promise<GovernessBeatCloseResult | undefined>;
+  /**
+   * Right before the teardown's session kill: records the run's agent pane
+   * processes and the groups of their descendants, and returns every live
+   * recorded agent group as a termination target (see
+   * `collectRunAgentGroups`).
+   */
+  collectAgentGroups?: (
+    config: GovernessConfig
+  ) => RunProcessCleanupResult | undefined;
   connectTemporalJournal?: (
     config: GovernessTemporalConfig,
     ownerRepoId?: string
@@ -455,6 +482,18 @@ export interface GovernessDeps {
   readUsageLimits: (
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  /**
+   * Each cycle: records the process groups of the agent CLIs' descendants
+   * (rate-limited by the default), so a tool subprocess that later loses its
+   * parent chain to the CLI is still release evidence.
+   */
+  recordAgentDescendants?: (config: GovernessConfig) => void;
+  // After a teardown's session kill, hand the workspace back once the run's
+  // tmux session and every recorded process are positively gone; otherwise
+  // leave it unreleased for the next launch to judge.
+  releaseWorkspaceAfterTeardown?: (
+    config: GovernessConfig
+  ) => Promise<TeardownReleaseResult>;
   render: (text: string) => void;
   replacementSessionAlive?: (
     session: string,
@@ -479,6 +518,15 @@ export interface GovernessDeps {
   setPaneLabel: (pane: string, label: string) => void;
   sleep: (ms: number) => Promise<void>;
   summarize: (req: SummaryRequest) => Promise<SummaryResult>;
+  /**
+   * Ends the process groups the cleanup verified (utility workers' groups and
+   * agent pane groups) once the session is killed: SIGTERM, a bounded grace,
+   * then SIGKILL, and reports what is still alive.
+   */
+  terminateRunProcessGroups?: (
+    config: GovernessConfig,
+    targets: readonly TerminationTarget[]
+  ) => Promise<TerminationResult>;
 }
 
 // Cumulative, observed-since-start time budget per agent + both-idle time.
@@ -5496,6 +5544,16 @@ const closeBeatBeforeKill = async (
   }
 };
 
+const teardownsInProgress = new WeakSet<GovernessConfig>();
+
+/**
+ * Whether `stopGovernessLoop` has begun tearing this governess's run down.
+ * Once it has, the governess routes no helper request and grants no native
+ * fallback for the rest of its life.
+ */
+export const governessTeardownInProgress = (config: GovernessConfig): boolean =>
+  teardownsInProgress.has(config);
+
 /**
  * Tear the run down. Without a Temporal journal every step is synchronous and
  * the returned promise is already settled. With one, the beat workflow is
@@ -5551,15 +5609,27 @@ export const stopGovernessLoop = (
       now
     );
   }
+  // From here on this governess must start no helper: the cleanup below ends
+  // the run's utility workers, and one spawned after it would outlive the
+  // teardown in the workspace being handed back.
+  teardownsInProgress.add(config);
   deps.markRunStopped?.(config, reason);
+  let groups: readonly TerminationTarget[] = [];
   try {
     const cleanup = deps.cleanupRunProcesses?.(config);
-    if (cleanup && (cleanup.killed.length > 0 || cleanup.skipped.length > 0)) {
+    groups = cleanup?.groups ?? [];
+    if (
+      cleanup &&
+      (cleanup.killed.length > 0 ||
+        cleanup.skipped.length > 0 ||
+        groups.length > 0)
+    ) {
       deps.appendLog(config.logFile, {
         at: new Date(deps.now()).toISOString(),
         event: "run-process-cleanup",
         ...cleanup,
       });
+      logSharedProcessSkips(config, deps, "cleanup", cleanup.skipped);
     }
   } catch (error) {
     deps.appendLog(config.logFile, {
@@ -5568,23 +5638,178 @@ export const stopGovernessLoop = (
       event: "run-process-cleanup-failed",
     });
   }
+  // Right before the kill, while the agent CLIs are still the parents of
+  // their tool subprocesses (which run in groups of their own), record and
+  // collect the run's agent process groups. As late as possible: a tool
+  // started during a slow beat close is seen too.
+  const collectThenKill = (): boolean => {
+    groups = [...groups, ...collectAgentGroupsBeforeKill(config, deps)];
+    return killTeardownSession(config, deps, record);
+  };
+  const afterKill = (): boolean =>
+    Boolean(
+      deps.releaseWorkspaceAfterTeardown ||
+        (groups.length > 0 && deps.terminateRunProcessGroups)
+    );
   const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
   if (!close) {
-    killTeardownSession(config, deps, record);
-    return Promise.resolve();
+    const killed = collectThenKill();
+    if (!(killed && afterKill())) {
+      settleTeardownHangupGrace();
+      return Promise.resolve();
+    }
+    return endGroupsThenRelease(config, deps, groups).finally(
+      settleTeardownHangupGrace
+    );
   }
   const closeThenKill = async (): Promise<void> => {
     await closeBeatBeforeKill(config, deps, reason, close);
-    killTeardownSession(config, deps, record);
+    try {
+      if (collectThenKill()) {
+        await endGroupsThenRelease(config, deps, groups);
+      }
+    } finally {
+      settleTeardownHangupGrace();
+    }
   };
   return closeThenKill();
 };
 
+/**
+ * One `shared-process-skipped` log line per process the teardown left alone
+ * because another live run records or names it, with that run's id.
+ */
+const logSharedProcessSkips = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  phase: string,
+  entries: ReadonlyArray<{
+    detail?: string;
+    otherRunId?: string;
+    pid?: number;
+    reason: string;
+    target?: string;
+  }>
+): void => {
+  for (const entry of entries) {
+    if (entry.reason !== "shared-process-skipped") {
+      continue;
+    }
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      ...(entry.detail ? { detail: entry.detail } : {}),
+      event: "shared-process-skipped",
+      otherRunId: entry.otherRunId,
+      phase,
+      ...(entry.pid === undefined ? {} : { pid: entry.pid }),
+      ...(entry.target ? { target: entry.target } : {}),
+    });
+  }
+};
+
+/** The agent groups to end after the kill; a failure is logged, never fatal. */
+const collectAgentGroupsBeforeKill = (
+  config: GovernessConfig,
+  deps: GovernessDeps
+): readonly TerminationTarget[] => {
+  try {
+    const collected = deps.collectAgentGroups?.(config);
+    if (!collected) {
+      return [];
+    }
+    const groups = collected.groups ?? [];
+    if (groups.length > 0 || collected.skipped.length > 0) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "agent-groups-collected",
+        groups,
+        skipped: collected.skipped,
+      });
+      logSharedProcessSkips(config, deps, "collect", collected.skipped);
+    }
+    return groups;
+  } catch (error) {
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      event: "agent-groups-collect-failed",
+    });
+    return [];
+  }
+};
+
+/**
+ * After the session kill: end the verified process groups (SIGTERM, grace,
+ * SIGKILL), then attempt the handback. The kill hangs up the agent CLIs, not
+ * a tool subprocess or a utility worker's bounded command that ignores the
+ * hangup, and those must be gone before the workspace is handed back. The
+ * handback itself re-reads every recorded group as evidence, so a survivor
+ * (or a group that could not be identified) leaves the run unreleased.
+ */
+const endGroupsThenRelease = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  groups: readonly TerminationTarget[]
+): Promise<void> => {
+  if (groups.length > 0 && deps.terminateRunProcessGroups) {
+    try {
+      const ended = await deps.terminateRunProcessGroups(config, groups);
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "run-process-groups-ended",
+        ...ended,
+      });
+      logSharedProcessSkips(config, deps, "terminate", ended.shared ?? []);
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+        event: "run-process-groups-end-failed",
+      });
+    }
+  }
+  await releaseAfterTeardown(config, deps);
+};
+
+/**
+ * Hands the workspace back after a teardown whose session kill was issued.
+ * The release itself is `loop reconcile stopped-run`'s handback under its full
+ * evidence, so it happens only once the run's tmux session and every recorded
+ * process are positively gone. Anything less leaves the run unreleased for the
+ * next launch's auto-release, and says so in the log.
+ */
+const releaseAfterTeardown = async (
+  config: GovernessConfig,
+  deps: GovernessDeps
+): Promise<void> => {
+  const release = deps.releaseWorkspaceAfterTeardown;
+  if (!release) {
+    return;
+  }
+  let result: TeardownReleaseResult;
+  try {
+    result = await release(config);
+  } catch (error) {
+    result = {
+      detail: error instanceof Error ? error.message : String(error),
+      released: false,
+    };
+  }
+  deps.appendLog(config.logFile, {
+    at: new Date(deps.now()).toISOString(),
+    detail: result.detail,
+    event: result.released
+      ? "workspace-released"
+      : "workspace-release-deferred",
+  });
+};
+
+/** Whether the kill was issued without error. Never confirms absence. */
 const killTeardownSession = (
   config: GovernessConfig,
   deps: GovernessDeps,
   record: GovernessControlRecord | undefined
-): void => {
+): boolean => {
   try {
     deps.killSession?.(config.session);
     if (record && config.journalFile) {
@@ -5595,6 +5820,7 @@ const killTeardownSession = (
         new Date(deps.now()).toISOString()
       );
     }
+    return true;
   } catch (error) {
     if (record && config.journalFile) {
       transitionGovernessControl(
@@ -5611,6 +5837,251 @@ const killTeardownSession = (
       event: "tmux-session-kill-unconfirmed",
       session: config.session,
     });
+    return false;
+  }
+};
+
+export interface TeardownReleaseResult {
+  readonly detail: string;
+  readonly released: boolean;
+}
+
+const TEARDOWN_RELEASE_ATTEMPTS = 10;
+const TEARDOWN_RELEASE_RETRY_MS = 300;
+const TEARDOWN_HANGUP_GRACE_MS = 10_000;
+
+/**
+ * Process hooks and state of the teardown hangup grace. Production uses the
+ * real process; tests replace the hooks and reset the state.
+ */
+export const teardownHangupInternals = {
+  exit: (code: number): void => {
+    process.exit(code);
+  },
+  graceMs: TEARDOWN_HANGUP_GRACE_MS,
+  onHangup: (handler: () => void): void => {
+    process.on("SIGHUP", handler);
+  },
+  schedule: (callback: () => void, ms: number): void => {
+    setTimeout(callback, ms);
+  },
+  state: { armed: false, hungUp: false, settled: false },
+};
+
+/**
+ * Killing the session also hangs up this process, which runs in one of its
+ * panes. Without this the governess dies before it can observe that the
+ * session and the run's processes are gone, so a clean teardown could never
+ * hand back its workspace. Armed just before the kill, a hangup no longer ends
+ * the process at once: it exits as soon as the teardown settles (its release
+ * attempt done or skipped) or when the bounded grace runs out, whichever comes
+ * first. A hangup after the teardown settled exits at once, as before arming.
+ */
+export const armTeardownHangupGrace = (): void => {
+  const hooks = teardownHangupInternals;
+  if (hooks.state.armed) {
+    return;
+  }
+  hooks.state.armed = true;
+  hooks.onHangup(() => {
+    if (hooks.state.hungUp) {
+      return;
+    }
+    hooks.state.hungUp = true;
+    if (hooks.state.settled) {
+      hooks.exit(0);
+      return;
+    }
+    hooks.schedule(() => hooks.exit(0), hooks.graceMs);
+  });
+};
+
+/**
+ * The teardown is done with this process. If the session kill already hung
+ * it up, exit now; a later hangup exits at once. No effect unless the grace
+ * was armed, which only the default `killSession` does.
+ */
+export const settleTeardownHangupGrace = (): void => {
+  const hooks = teardownHangupInternals;
+  if (!hooks.state.armed || hooks.state.settled) {
+    return;
+  }
+  hooks.state.settled = true;
+  if (hooks.state.hungUp) {
+    hooks.exit(0);
+  }
+};
+
+// Refusals that can clear on their own within moments of a session kill: the
+// signaled processes and the session are still exiting.
+const TRANSIENT_RELEASE_REFUSALS = [
+  "launch-process-may-be-live",
+  "recorded-process-may-be-live",
+  "run-process-may-be-live",
+  "tmux-runtime-not-absent",
+];
+
+/**
+ * Bounded wait for the teardown's own effects to be observable, then the
+ * reconcile handback. Each attempt is the full `reconcileLegacyStoppedRun`
+ * conjunction; an attempt that still sees a live or unknown process or
+ * session is retried, and the last refusal is returned unreleased.
+ */
+export const confirmTeardownRelease = async (
+  manifestPath: string,
+  runId: string,
+  deps: Omit<StoppedRunReconcileDeps, "terminalState"> & {
+    attempts: number;
+    sleep: (ms: number) => Promise<void>;
+    retryMs: number;
+  }
+): Promise<TeardownReleaseResult> => {
+  let detail = "no release attempt was made";
+  for (let attempt = 1; attempt <= deps.attempts; attempt += 1) {
+    // Live recorded processes this attempt did not count, and the rule.
+    const excluded: string[] = [];
+    const classify = deps.classifyRecordedProcess;
+    const result = await reconcileLegacyStoppedRun(manifestPath, runId, {
+      ...(classify
+        ? {
+            classifyRecordedProcess: (path, manifest) => {
+              const judge = classify(path, manifest);
+              return (entry) => {
+                const verdict = judge(entry);
+                if (!verdict.count) {
+                  excluded.push(
+                    `${entry.source} pid ${entry.pid} (${verdict.rule}${verdict.detail ? `: ${verdict.detail}` : ""})`
+                  );
+                }
+                return verdict;
+              };
+            },
+          }
+        : {}),
+      groupCanStillOwnRun: deps.groupCanStillOwnRun,
+      now: deps.now,
+      pidCanStillOwnRun: deps.pidCanStillOwnRun,
+      runtimeAbsent: deps.runtimeAbsent,
+      terminalState: "stopped",
+    });
+    if (result.status !== "refused") {
+      return {
+        detail: `${result.status} at ${result.workspaceReleasedAt}${excluded.length > 0 ? `; not counted: ${excluded.join("; ")}` : ""}`,
+        released: true,
+      };
+    }
+    detail = result.reason;
+    const transient = TRANSIENT_RELEASE_REFUSALS.some((prefix) =>
+      result.reason.startsWith(prefix)
+    );
+    if (!transient || attempt === deps.attempts) {
+      break;
+    }
+    await deps.sleep(deps.retryMs);
+  }
+  return { detail, released: false };
+};
+
+/**
+ * One cycle's record of the agent CLIs' descendant groups. Skipped once the
+ * teardown began (it takes its own snapshot right before the kill). A failure
+ * is logged and never stops the cycle.
+ */
+export const recordAgentDescendantGroupsOnCycle = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  at: string
+): void => {
+  if (!deps.recordAgentDescendants || governessTeardownInProgress(config)) {
+    return;
+  }
+  try {
+    deps.recordAgentDescendants(config);
+  } catch (error) {
+    deps.appendLog(config.logFile, {
+      at,
+      error: error instanceof Error ? error.message : String(error),
+      event: "agent-descendants-record-failed",
+    });
+  }
+};
+
+/**
+ * One cycle's helper routing: pending utility routes (which may spawn a
+ * detached Direct, Nanny, or Au Pair worker in the workspace) and pending
+ * native-fallback requests. Once a teardown of this run has begun, nothing is
+ * routed or granted: the teardown's cleanup has already ended the run's
+ * workers, and a new one would outlive it in the workspace being handed back.
+ */
+export const routeHelperRequests = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  input: { epoch: number; holder: Agent | undefined; lifecycleAt: string }
+): Promise<void> => {
+  const { epoch, holder, lifecycleAt } = input;
+  if (governessTeardownInProgress(config)) {
+    deps.appendLog(config.logFile, {
+      at: lifecycleAt,
+      epoch,
+      event: "helper-routing-skipped",
+      reason: "teardown-in-progress",
+    });
+    return;
+  }
+  const utilityPeer = config.agents.find(
+    (info) => info.agent !== holder
+  )?.agent;
+  if (config.runDir && config.cwd && holder && utilityPeer) {
+    try {
+      const routed = await processPendingUtilityRoutes({
+        currentDriver: holder,
+        epoch,
+        peer: utilityPeer,
+        repoRoot: config.cwd,
+        runDir: config.runDir,
+      });
+      if (routed > 0) {
+        deps.appendLog(config.logFile, {
+          at: lifecycleAt,
+          epoch,
+          event: "utility-routes-processed",
+          routed,
+        });
+      }
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        at: lifecycleAt,
+        epoch,
+        error: error instanceof Error ? error.message : String(error),
+        event: "utility-routing-failed-closed",
+      });
+    }
+  }
+  if (config.runDir) {
+    try {
+      const processed = processPendingNativeFallbackRequests({
+        epoch,
+        mode:
+          config.nativeSubagentMode ??
+          resolveNativeSubagentMode(process.env.LOOP_NATIVE_SUBAGENT_MODE),
+        runDir: config.runDir,
+      });
+      if (processed > 0) {
+        deps.appendLog(config.logFile, {
+          at: lifecycleAt,
+          epoch,
+          event: "native-fallback-requests-processed",
+          processed,
+        });
+      }
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        at: lifecycleAt,
+        epoch,
+        error: error instanceof Error ? error.message : String(error),
+        event: "native-fallback-routing-failed-closed",
+      });
+    }
   }
 };
 
@@ -6776,6 +7247,35 @@ export const defaultGovernessDeps = (
       : undefined;
     return cleanupRunOwnedProcesses(config.runDir, manifest);
   },
+  collectAgentGroups: (config) => {
+    if (!config.runDir) {
+      return undefined;
+    }
+    const manifest = config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+    return collectRunAgentGroups(config.runDir, manifest);
+  },
+  recordAgentDescendants: (config) => {
+    if (config.runDir) {
+      recordRunAgentDescendantsThrottled(config.runDir);
+    }
+  },
+  terminateRunProcessGroups: (config, targets) =>
+    terminateTargets(targets, {
+      ...defaultTerminationDeps(),
+      // Right before every signal round, a target another live run now
+      // records or names is skipped (`shared-process-skipped`).
+      ...(config.runDir
+        ? {
+            sharedSkips: sharedTargetCheck(config.runDir, () =>
+              config.manifestPath
+                ? readRunManifest(config.manifestPath)
+                : undefined
+            ),
+          }
+        : {}),
+    }),
   closeBeatWorkflow: async (config, reason) => {
     if (!(config.journalTemporal && config.manifestPath && config.repoId)) {
       return undefined;
@@ -6969,8 +7469,29 @@ export const defaultGovernessDeps = (
       );
   },
   killSession: (session) => {
+    armTeardownHangupGrace();
     runBoundedTmux(["kill-session", "-t", session]);
   },
+  releaseWorkspaceAfterTeardown: (config) =>
+    config.manifestPath
+      ? confirmTeardownRelease(config.manifestPath, config.runId, {
+          attempts: TEARDOWN_RELEASE_ATTEMPTS,
+          classifyRecordedProcess: recordedProcessClassifier(
+            defaultOwnershipProbes
+          ),
+          groupCanStillOwnRun: (pgid, at) =>
+            groupCanStillOwnRun(pgid, at, defaultPidOwnershipDeps),
+          now: () => new Date().toISOString(),
+          pidCanStillOwnRun: (pid, at) =>
+            pidCanStillOwnRun(pid, at, defaultPidOwnershipDeps),
+          retryMs: TEARDOWN_RELEASE_RETRY_MS,
+          runtimeAbsent: (path) => tmuxRuntimeAbsentForManifest(path),
+          sleep: (ms) =>
+            new Promise((resolve) => {
+              setTimeout(resolve, ms);
+            }),
+        })
+      : Promise.resolve({ detail: "no run manifest", released: false }),
   notify: (ntfyUrl, event, escalationFile, nowIso) => {
     appendEscalation(escalationFile, event, nowIso ?? new Date().toISOString());
     sendNtfy(ntfyUrl, event);
@@ -7673,6 +8194,11 @@ export const runGoverness = async (
         runState.roles.initialDriver ??
         config.initialDriver ??
         config.agents[0]?.agent;
+      // Every cycle, before the intake (which may begin a teardown): the
+      // groups of the agent CLIs' descendants as of now.
+      recordAgentDescendantGroupsOnCycle(config, deps, lifecycleAt);
+      // A teardown the operator requested through the interaction intake.
+      const intake: { teardown?: Promise<void> } = {};
       if (result.tmuxControlAvailable) {
         const hooksByAgent: Partial<Record<Agent, HookEvent[]>> = {};
         for (const info of config.agents) {
@@ -7824,8 +8350,10 @@ export const runGoverness = async (
               runId: config.runId,
               // The operator's teardown is executed by the run it names,
               // with the stop Governess already owns.
+              // The intake calls this synchronously under its lock, so the
+              // stop is not awaited here; the loop awaits it below.
               teardown: (reason) => {
-                stopGovernessLoop(config, deps, reason);
+                intake.teardown = stopGovernessLoop(config, deps, reason);
               },
             });
             if (processed > 0) {
@@ -7846,60 +8374,17 @@ export const runGoverness = async (
           }
         }
       }
-      const utilityPeer = config.agents.find(
-        (info) => info.agent !== holder
-      )?.agent;
-      if (config.runDir && config.cwd && holder && utilityPeer) {
-        try {
-          const routed = await processPendingUtilityRoutes({
-            currentDriver: holder,
-            epoch: acquiredEpoch,
-            peer: utilityPeer,
-            repoRoot: config.cwd,
-            runDir: config.runDir,
-          });
-          if (routed > 0) {
-            deps.appendLog(config.logFile, {
-              at: lifecycleAt,
-              epoch: acquiredEpoch,
-              event: "utility-routes-processed",
-              routed,
-            });
-          }
-        } catch (error) {
-          deps.appendLog(config.logFile, {
-            at: lifecycleAt,
-            epoch: acquiredEpoch,
-            error: error instanceof Error ? error.message : String(error),
-            event: "utility-routing-failed-closed",
-          });
-        }
-      }
-      if (config.runDir) {
-        try {
-          const processed = processPendingNativeFallbackRequests({
-            epoch: acquiredEpoch,
-            mode:
-              config.nativeSubagentMode ??
-              resolveNativeSubagentMode(process.env.LOOP_NATIVE_SUBAGENT_MODE),
-            runDir: config.runDir,
-          });
-          if (processed > 0) {
-            deps.appendLog(config.logFile, {
-              at: lifecycleAt,
-              epoch: acquiredEpoch,
-              event: "native-fallback-requests-processed",
-              processed,
-            });
-          }
-        } catch (error) {
-          deps.appendLog(config.logFile, {
-            at: lifecycleAt,
-            epoch: acquiredEpoch,
-            error: error instanceof Error ? error.message : String(error),
-            event: "native-fallback-routing-failed-closed",
-          });
-        }
+      await routeHelperRequests(config, deps, {
+        epoch: acquiredEpoch,
+        holder,
+        lifecycleAt,
+      });
+      if (intake.teardown) {
+        // The operator's teardown ran above without being awaited. Its
+        // release attempt finishes here, and this run's governess ends with
+        // it, as it does after a teardown chosen from the exit menu.
+        await intake.teardown;
+        return;
       }
       // updateBothIdle may have cleared the waiting read (agents went active).
       waitingConfirmed = runState.waitingConfirmed;

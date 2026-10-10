@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ProcessRow } from "../../src/loop/process-group";
 import {
   cleanupRunOwnedProcesses,
   gcAbandonedRunProcesses,
@@ -26,6 +27,16 @@ import { gcStaleBridgeProcesses } from "../../src/loop/stale-bridge-cleanup";
 
 const makeRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-process-cleanup-"));
+
+/**
+ * A process table in which each pid leads its own group and started long
+ * before any manifest a test writes: the start-time half of the app-server's
+ * identity binding holds for them.
+ */
+const startedLongAgo =
+  (...pids: number[]) =>
+  (): ProcessRow[] =>
+    pids.map((pid) => ({ pgid: pid, pid, ppid: 1, startedAtMs: 0 }));
 
 test("teardown owns a recorded bridge worker only with exact live argv", () => {
   const runDir = makeRunDir();
@@ -139,7 +150,7 @@ test("teardown signals only bridge processes registered to the exact run", () =>
   }
 });
 
-test("teardown requires both app-server command and owned listener port", () => {
+test("teardown requires the app-server command on the recorded listen URL and the owned listener port", () => {
   const runDir = makeRunDir();
   const signals: number[] = [];
   const original = { ...runProcessCleanupInternals.deps };
@@ -153,6 +164,7 @@ test("teardown requires both app-server command and owned listener port", () => 
     runId: "1",
   });
   try {
+    runProcessCleanupInternals.deps.processTable = startedLongAgo(4501);
     runProcessCleanupInternals.deps.commandForPid = () =>
       "/Applications/ChatGPT.app/Contents/Resources/codex app-server --listen stdio://";
     runProcessCleanupInternals.deps.listeningPids = () => [44_149];
@@ -163,16 +175,249 @@ test("teardown requires both app-server command and owned listener port", () => 
     const protectedResult = cleanupRunOwnedProcesses(runDir, manifest);
     expect(protectedResult.killed).toEqual([]);
     expect(protectedResult.skipped).toEqual([
-      { pid: 4501, reason: "app-server-identity-mismatch" },
+      {
+        detail:
+          "identity not proven: its command does not listen on ws://127.0.0.1:4500",
+        pid: 4501,
+        reason: "app-server-identity-mismatch",
+      },
+    ]);
+
+    // The listener alone is not the binding: an app-server on another URL
+    // that holds the port's listener is still not signalled.
+    runProcessCleanupInternals.deps.listeningPids = () => [4501];
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([]);
+
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "/Applications/ChatGPT.app/Contents/Resources/codex app-server --listen ws://127.0.0.1:4500";
+    runProcessCleanupInternals.deps.listeningPids = () => [44_149];
+    expect(cleanupRunOwnedProcesses(runDir, manifest).skipped).toEqual([
+      {
+        detail:
+          "identity not proven: it does not hold the listener of ws://127.0.0.1:4500",
+        pid: 4501,
+        reason: "app-server-identity-mismatch",
+      },
     ]);
 
     runProcessCleanupInternals.deps.listeningPids = () => [4501];
     const ownedResult = cleanupRunOwnedProcesses(runDir, manifest);
     expect(ownedResult.killed).toEqual([4501]);
-    expect(signals).toEqual([4501]);
+    // It leads its own group in this table: the group is signalled.
+    expect(signals).toEqual([-4501]);
   } finally {
     Object.assign(runProcessCleanupInternals.deps, original);
     rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+// Codex starts children of its own in the app-server's process group (the
+// plugin `git fetch` on start, for one). Signalling the leader alone left them
+// running, re-parented to launchd, after the run had ended its app-server.
+test("teardown ends the bound app-server's whole process group when it leads one, never a group it does not lead or this process's own", () => {
+  const runDir = makeRunDir();
+  const signals: string[] = [];
+  const original = { ...runProcessCleanupInternals.deps };
+  const manifest = createRunManifest({
+    codexAppServerPid: 4501,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 100,
+    repoId: "repo-1",
+    runId: "1",
+  });
+  const rows = (appServerGroup: number): ProcessRow[] => [
+    { pgid: appServerGroup, pid: 4501, ppid: 1, startedAtMs: 0 },
+    // The plugin sync, in the app-server's group when it leads one.
+    { pgid: appServerGroup, pid: 4510, ppid: 4501, startedAtMs: 0 },
+    // An MCP server Codex started in a group of its own.
+    { pgid: 4520, pid: 4520, ppid: 4501, startedAtMs: 0 },
+  ];
+  try {
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "codex app-server --listen ws://127.0.0.1:4500";
+    runProcessCleanupInternals.deps.listeningPids = () => [4501];
+    runProcessCleanupInternals.deps.ownProcessGroup = () => 999;
+    runProcessCleanupInternals.deps.otherRunIndex = () => ({
+      kind: "read",
+      references: [],
+      runs: [],
+    });
+    runProcessCleanupInternals.deps.signal = (pid, signal) => {
+      signals.push(`${pid}:${signal}`);
+    };
+
+    runProcessCleanupInternals.deps.processTable = () => rows(4501);
+    const leader = cleanupRunOwnedProcesses(runDir, manifest);
+    expect(leader.killed).toEqual([4501]);
+    expect(signals).toEqual(["-4501:SIGTERM"]);
+
+    // Not its group's leader: the group is someone else's, only the pid.
+    signals.length = 0;
+    runProcessCleanupInternals.deps.processTable = () => rows(4400);
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(signals).toEqual(["4501:SIGTERM"]);
+
+    // Its group is this process's own: never signalled as a group.
+    signals.length = 0;
+    runProcessCleanupInternals.deps.processTable = () => rows(4501);
+    runProcessCleanupInternals.deps.ownProcessGroup = () => 4501;
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(signals).toEqual(["4501:SIGTERM"]);
+
+    // This process's own group unknown: the pid only, as before.
+    signals.length = 0;
+    runProcessCleanupInternals.deps.ownProcessGroup = () => undefined;
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(signals).toEqual(["4501:SIGTERM"]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+// The other-run index reads every run under the storage root (seconds on a
+// root of hundreds of runs). An app-server already gone skips the signal
+// whatever the index says, so it must not pay for one.
+test("an app-server that is no longer running is skipped without reading the other runs", () => {
+  const runDir = makeRunDir();
+  const original = { ...runProcessCleanupInternals.deps };
+  const manifest = createRunManifest({
+    codexAppServerPid: 4501,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 100,
+    repoId: "repo-1",
+    runId: "1",
+  });
+  let indexReads = 0;
+  const signals: number[] = [];
+  try {
+    runProcessCleanupInternals.deps.processTable = startedLongAgo(4501);
+    runProcessCleanupInternals.deps.commandForPid = () => undefined;
+    runProcessCleanupInternals.deps.otherRunIndex = () => {
+      indexReads += 1;
+      return { kind: "read", references: [], runs: [] };
+    };
+    runProcessCleanupInternals.deps.signal = (pid) => {
+      signals.push(pid);
+    };
+    expect(cleanupRunOwnedProcesses(runDir, manifest).skipped).toEqual([
+      { pid: 4501, reason: "app-server-not-running" },
+    ]);
+    expect(indexReads).toBe(0);
+    expect(signals).toEqual([]);
+
+    // Running and bound: the index is read (the shared check still holds).
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "codex app-server --listen ws://127.0.0.1:4500";
+    runProcessCleanupInternals.deps.listeningPids = () => [4501];
+    runProcessCleanupInternals.deps.ownProcessGroup = () => 999;
+    expect(cleanupRunOwnedProcesses(runDir, manifest).killed).toEqual([4501]);
+    expect(indexReads).toBe(1);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+// The bridge worker is spawned detached, so a session kill never reaches it,
+// and it sleeps up to BRIDGE_RECONCILIATION_INTERVAL_MS between wakes. Unless
+// teardown ends it, the run keeps a live recorded process and the teardown's
+// workspace release is deferred.
+test("teardown ends the run's own bridge worker and nothing else bridge-worker.json names", () => {
+  const cases: [
+    string,
+    string | undefined,
+    number[],
+    { pid: number; reason: string }[],
+  ][] = [
+    ["the run's own worker", "WORKER", [4601], []],
+    [
+      "another run's worker",
+      "OTHER",
+      [],
+      [{ pid: 4601, reason: "bridge-worker-command-mismatch" }],
+    ],
+    [
+      "a bridge MCP server, not a worker",
+      "MCP",
+      [],
+      [{ pid: 4601, reason: "bridge-worker-command-mismatch" }],
+    ],
+    [
+      "an exited worker",
+      undefined,
+      [],
+      [{ pid: 4601, reason: "bridge-worker-not-running" }],
+    ],
+  ];
+  for (const [name, shape, killed, skipped] of cases) {
+    const runDir = makeRunDir();
+    const signals: number[] = [];
+    const original = { ...runProcessCleanupInternals.deps };
+    writeFileSync(
+      join(runDir, "bridge-worker.json"),
+      `${JSON.stringify({ pid: 4601 })}\n`
+    );
+    const commands: Record<string, string> = {
+      MCP: `loop __bridge-mcp ${runDir} claude`,
+      OTHER: `loop __bridge-worker ${runDir}-other`,
+      WORKER: `/Users/me/.local/bin/loop __bridge-worker ${runDir}`,
+    };
+    try {
+      runProcessCleanupInternals.deps.commandForPid = (pid) =>
+        pid === 4601 && shape ? commands[shape] : undefined;
+      runProcessCleanupInternals.deps.listeningPids = () => [];
+      runProcessCleanupInternals.deps.signal = (pid) => {
+        signals.push(pid);
+      };
+
+      const result = cleanupRunOwnedProcesses(runDir, undefined);
+
+      expect(result.killed, name).toEqual(killed);
+      expect(result.skipped, name).toEqual(skipped);
+      expect(signals, name).toEqual(killed);
+      // The record stays: a dead pid is absence evidence, a missing file is not
+      // something the release check may assume.
+      expect(existsSync(join(runDir, "bridge-worker.json")), name).toBe(true);
+    } finally {
+      Object.assign(runProcessCleanupInternals.deps, original);
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  }
+});
+
+test("teardown signals no bridge worker when bridge-worker.json is absent or names no pid", () => {
+  for (const contents of [undefined, "{}\n", "not json\n", '{"pid":-4}\n']) {
+    const runDir = makeRunDir();
+    const asked: number[] = [];
+    const signals: number[] = [];
+    const original = { ...runProcessCleanupInternals.deps };
+    if (contents !== undefined) {
+      writeFileSync(join(runDir, "bridge-worker.json"), contents);
+    }
+    try {
+      runProcessCleanupInternals.deps.commandForPid = (pid) => {
+        asked.push(pid);
+        return `loop __bridge-worker ${runDir}`;
+      };
+      runProcessCleanupInternals.deps.listeningPids = () => [];
+      runProcessCleanupInternals.deps.signal = (pid) => {
+        signals.push(pid);
+      };
+
+      const result = cleanupRunOwnedProcesses(runDir, undefined);
+
+      expect(result, String(contents)).toEqual({ killed: [], skipped: [] });
+      expect(asked, String(contents)).toEqual([]);
+      expect(signals, String(contents)).toEqual([]);
+    } finally {
+      Object.assign(runProcessCleanupInternals.deps, original);
+      rmSync(runDir, { force: true, recursive: true });
+    }
   }
 });
 
@@ -287,6 +532,9 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) => {
           if (pid === 8801) {
             return "codex app-server --listen ws://127.0.0.1:4500";
@@ -301,6 +549,7 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
           return new Set(["unknown-loop", "harvto-loop-98"]);
         },
         listeningPids: (port) => (port === 4500 ? [8801] : []),
+        processTable: startedLongAgo(8801),
         pidAlive: (pid) => {
           if (pid === 8700) {
             throw new Error(
@@ -326,7 +575,8 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
       skipped: [],
     });
     expect(tmuxListCalls).toBe(1);
-    expect(signals).toEqual([8802, 8801]);
+    // The app-server leads its own group in this table: its group.
+    expect(signals).toEqual([8802, -8801]);
     expect(logs).toEqual([
       '[loop] cleaned 1 abandoned run for "repo-current" (2 processes signaled)',
     ]);
@@ -379,6 +629,9 @@ test("startup GC preserves an active detached run with missing tmux ownership", 
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) => {
           throw new Error(`active run process ${pid} must not be inspected`);
         },
@@ -440,6 +693,9 @@ test("startup GC explicitly releases a dead launch that never bound tmux panes",
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         listTmuxSessions: () => new Set(),
         now: () => "2026-08-30T08:32:08.484Z",
         pidAlive: () => false,
@@ -485,6 +741,9 @@ test("startup GC never signals stale-run processes that fail ownership proof", (
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) =>
           pid === 9202
             ? "loop __bridge-mcp /another/run claude"
@@ -501,7 +760,12 @@ test("startup GC never signals stale-run processes that fail ownership proof", (
     expect(result).toMatchObject({ cleaned: 1, killed: [] });
     expect(result.skipped).toEqual([
       { pid: 9202, reason: "bridge-command-mismatch" },
-      { pid: 9201, reason: "app-server-identity-mismatch" },
+      {
+        detail:
+          "identity not proven: it does not hold the listener of ws://127.0.0.1:4520",
+        pid: 9201,
+        reason: "app-server-identity-mismatch",
+      },
     ]);
     expect(signals).toEqual([]);
     expect(readRunManifest(join(runDir, "manifest.json"))).toMatchObject({
@@ -536,6 +800,9 @@ test("startup GC preserves a run present in the bounded tmux snapshot", () => {
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: (pid) => {
           throw new Error(`live run process ${pid} must not be inspected`);
         },
@@ -592,9 +859,11 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
   );
   const commonDeps = {
     commandForPid: () => "codex app-server --listen ws://127.0.0.1:4530",
+    runtimeAbsent: () => true,
     listTmuxSessions: () => new Set<string>(),
     listeningPids: () => [9301],
     pidAlive: () => false,
+    processTable: startedLongAgo(9301),
   };
   try {
     const failed = gcAbandonedRunProcesses({
@@ -634,7 +903,7 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
       storageRoot,
     });
     expect(retried).toMatchObject({ cleaned: 1, killed: [9301], skipped: [] });
-    expect(retriedSignals).toEqual([9301]);
+    expect(retriedSignals).toEqual([-9301]);
     expect(readRunManifest(manifestPath)?.codexAppServerPid).toBeUndefined();
     expect(readRunManifest(manifestPath)?.codexRemoteUrl).toBeUndefined();
   } finally {
@@ -663,6 +932,9 @@ test("startup GC contains tmux snapshot failures and preserves tmux-owned runs",
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         listTmuxSessions: () => {
           throw new Error("tmux unavailable");
         },
@@ -727,6 +999,9 @@ test("startup GC contains manifest repair failures before signaling and continue
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: () => "codex app-server --listen ws://127.0.0.1:4530",
         listTmuxSessions: () => new Set(),
         listeningPids: () => [9301],
@@ -784,6 +1059,9 @@ test("startup GC retains bridge registration after a signal failure", () => {
   try {
     const result = gcAbandonedRunProcesses({
       deps: {
+        // The run's own tmux server is faked as positively lacking the
+        // session; no host tmux server is contacted.
+        runtimeAbsent: () => true,
         commandForPid: () => `loop __bridge-mcp ${runDir} claude`,
         listTmuxSessions: () => new Set(),
         pidAlive: () => false,

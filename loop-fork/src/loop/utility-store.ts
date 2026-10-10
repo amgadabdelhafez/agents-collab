@@ -245,7 +245,10 @@ const readEvents = (eventsFile: string): UtilityJobEvent[] => {
   if (!existsSync(eventsFile)) {
     return [];
   }
-  const text = readFileSync(eventsFile, "utf8");
+  return parseEventLines(readFileSync(eventsFile, "utf8"));
+};
+
+const parseEventLines = (text: string): UtilityJobEvent[] => {
   if (!text.trim()) {
     return [];
   }
@@ -582,6 +585,50 @@ export const recordPendingUtilityRouteDecision = (
       type: "route-decided",
     });
   });
+};
+
+/**
+ * The journal as process-ownership evidence. Every complete line must parse,
+ * exactly as for the authoritative reader. The one difference is a torn
+ * FINAL append: a last line that is not newline-terminated and does not
+ * parse. That line is dropped and reported with the journal's mtime, so the
+ * caller can decide whether the append may still be in flight. Once a journal
+ * is torn every store operation fails closed on it, so no event (in
+ * particular no claim) can be appended after the tear; the writer of a torn
+ * claim throws at its next store call, before it starts any work.
+ */
+export interface UtilityJobsEvidence {
+  readonly jobs: UtilityJobSnapshot[];
+  /** The journal's mtime when its final append was torn and dropped. */
+  readonly tornTailModifiedAt?: Date;
+}
+
+export const readUtilityJobsAsEvidence = (
+  runDir: string
+): UtilityJobsEvidence => {
+  const { eventsFile } = utilityRunPaths(runDir);
+  if (!existsSync(eventsFile)) {
+    return { jobs: [] };
+  }
+  const text = readFileSync(eventsFile, "utf8");
+  const mtime = statSync(eventsFile).mtime;
+  const lastBreak = text.lastIndexOf("\n");
+  const tail = text.slice(lastBreak + 1);
+  if (tail.trim()) {
+    let tailParses = true;
+    try {
+      assertEventShape(JSON.parse(tail) as UtilityJobEvent);
+    } catch {
+      tailParses = false;
+    }
+    if (!tailParses) {
+      return {
+        jobs: allSnapshots(parseEventLines(text.slice(0, lastBreak + 1))),
+        tornTailModifiedAt: mtime,
+      };
+    }
+  }
+  return { jobs: allSnapshots(parseEventLines(text)) };
 };
 
 // The authoritative store reader above intentionally fails closed on any

@@ -434,6 +434,115 @@ export const targetFromManifest = (
   return target;
 };
 
+// --- Legacy socket candidates ----------------------------------------------
+//
+// A manifest written before socket normalization (2026-08-08, 9c626c40), or by
+// a bootstrap path that never recorded the launch socket, carries a session
+// name but no socket. Such a run was started on whatever server plain `tmux`
+// discovered at that moment: the `$TMUX` server when launched from inside
+// tmux, else `${TMUX_TMPDIR:-/tmp}/tmux-<uid>/default`. Operators set a
+// per-repo `TMUX_TMPDIR` of the form `/private/tmp/<repo>-tmux` (Run 42's
+// recorded `/private/tmp/harness-d001-tmux/tmux-501/default` is one).
+//
+// The candidates below are ABSENCE evidence only, never a target to act on.
+// Every candidate is a conjunct: a run is treated as gone only when the
+// session is positively absent or dead on every one of them, so adding a
+// candidate can only ever make release harder. That is also why ambient
+// environment is safe to consult here when it is unsafe everywhere else
+// post-launch: it can add blocking evidence but cannot redirect an effect.
+
+export interface LegacySocketContext {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly platform?: string;
+  readonly uid: number;
+}
+
+/**
+ * The exact candidate set for a legacy session, deduplicated, in probe order:
+ *   1. `/tmp/tmux-<uid>/default`, tmux's own default with no `TMUX_TMPDIR`;
+ *   2. on darwin, `/private/tmp/tmux-<uid>/default`, the realpath tmux
+ *      itself reports for (1);
+ *   3. `/tmp/<repo>-tmux/tmux-<uid>/default` and, on darwin, the
+ *      `/private/tmp/...` form, where `<repo>` is the session name with its
+ *      `-loop-<runId>` suffix removed (the per-repo `TMUX_TMPDIR` pattern);
+ *   4. whatever the current environment would select: `LOOP_TMUX_SOCKET`,
+ *      the parsed `$TMUX` socket, and `${TMUX_TMPDIR}/tmux-<uid>/default`.
+ * A candidate that fails validation (relative, too long) is dropped, since
+ * tmux could not have created a server there either.
+ */
+export const legacyTmuxSocketCandidates = (
+  session: string,
+  runId: string,
+  context: LegacySocketContext
+): TmuxSocket[] => {
+  const plat = context.platform ?? osPlatform();
+  const roots = plat === "darwin" ? ["/tmp", "/private/tmp"] : ["/tmp"];
+  const raw: string[] = roots.map((root) => `${root}/tmux-${context.uid}`);
+  const suffix = `-loop-${runId}`;
+  const repo = session.endsWith(suffix)
+    ? session.slice(0, -suffix.length)
+    : undefined;
+  if (repo && !repo.includes("/")) {
+    raw.push(
+      ...roots.map((root) => `${root}/${repo}-tmux/tmux-${context.uid}`)
+    );
+  }
+  const candidates = raw.map((dir) => `${dir}/default`);
+  const { env } = context;
+  if (env.LOOP_TMUX_SOCKET) {
+    candidates.push(env.LOOP_TMUX_SOCKET);
+  }
+  const ambient = env.TMUX ? parseTmuxEnvSocket(env.TMUX) : undefined;
+  if (ambient) {
+    candidates.push(ambient);
+  }
+  if (env.TMUX_TMPDIR) {
+    candidates.push(`${env.TMUX_TMPDIR}/tmux-${context.uid}/default`);
+  }
+  const seen = new Set<string>();
+  const sockets: TmuxSocket[] = [];
+  for (const candidate of candidates) {
+    const validated = validateTmuxSocket(candidate, plat);
+    if (validated.ok && validated.socket && !seen.has(validated.socket)) {
+      seen.add(validated.socket);
+      sockets.push(validated.socket);
+    }
+  }
+  return sockets;
+};
+
+/**
+ * Targets for every legacy socket candidate of a manifest that recorded a
+ * session but NO socket at all. Returns `undefined` for every other shape: a
+ * recorded socket (use `targetFromManifest`), an invalid or conflicting socket
+ * (that is unknown targeting and must stay blocked), or no session.
+ *
+ * The session comes from the same handle as always, so provenance holds; the
+ * targets exist only so a caller can establish that the session is gone from
+ * every server it could have been created on.
+ */
+export const legacyCandidateTargetsFromManifest = (
+  handle: ManifestHandle,
+  context: LegacySocketContext
+): TmuxTarget[] | undefined => {
+  const contents = contentsOf(handle);
+  if (
+    contents.socketState !== "missing" ||
+    contents.socket !== undefined ||
+    contents.session === undefined
+  ) {
+    return undefined;
+  }
+  const session = contents.session;
+  return legacyTmuxSocketCandidates(session, handle.runId, context).map(
+    (socket) => {
+      const target = Object.freeze({}) as unknown as TmuxTarget;
+      targetContents.set(target, { socket, session });
+      return target;
+    }
+  );
+};
+
 const targetOf = (target: TmuxTarget) => {
   const contents = targetContents.get(target as object);
   if (!contents) {

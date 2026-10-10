@@ -16,7 +16,7 @@ import type {
   AgentSessionEvent,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
 import { readBridgeEvents } from "./bridge-store";
 import {
@@ -40,6 +40,11 @@ import {
 } from "./pi-runtime";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
+  defaultTerminationDeps,
+  type TerminationTarget,
+  terminateTargets,
+} from "./process-group";
+import {
   createUtilityRouteRequest,
   routeUtilityRequest,
   type UtilityCheckResult,
@@ -56,6 +61,10 @@ import {
   type UtilityTierSelectionStrategy,
 } from "./task-router";
 import type { Agent, CavemanMode } from "./types";
+import {
+  isUtilityWorkerCommand,
+  UTILITY_WORKER_SUBCOMMAND,
+} from "./utility-constants";
 import {
   buildUtilityContextCapsule,
   persistUtilityContextCapsule,
@@ -110,7 +119,6 @@ import {
   verifyAdoptedUtilityWorkspace,
 } from "./utility-workspace";
 
-export const UTILITY_WORKER_SUBCOMMAND = "__utility-worker";
 export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
 export const NANNY_PANE_SUBCOMMAND = "__nanny-pane";
 export const AU_PAIR_PANE_SUBCOMMAND = "__au-pair-pane";
@@ -242,7 +250,17 @@ export interface UtilityQueueDependencies {
     repoRoot: string;
     runDir: string;
   }) => boolean;
-  terminateWorker?: (pid: number) => boolean;
+  terminateWorker?: (
+    pid: number,
+    identity: UtilityWorkerIdentity
+  ) => boolean | Promise<boolean>;
+}
+
+/** The exact worker a claim names: its run directory, claim epoch and job. */
+export interface UtilityWorkerIdentity {
+  epoch: number;
+  jobId: string;
+  runDir: string;
 }
 
 const utilityWorkerIsAlive = (pid: number): boolean => {
@@ -254,13 +272,57 @@ const utilityWorkerIsAlive = (pid: number): boolean => {
   }
 };
 
-const terminateUtilityWorker = (pid: number): boolean => {
-  try {
-    process.kill(pid, "SIGKILL");
-    return true;
-  } catch {
+const utilityWorkerCommand = (pid: number): string | undefined => {
+  const result = spawnSync(["ps", "-ww", "-p", String(pid), "-o", "command="], {
+    stderr: "ignore",
+    stdout: "pipe",
+    timeout: 1000,
+  });
+  const command = new TextDecoder().decode(result.stdout).trim();
+  return result.exitCode === 0 && command ? command : undefined;
+};
+
+/**
+ * Process hooks of the stale-recovery termination; tests replace them.
+ */
+export const utilityWorkerTerminationInternals = {
+  commandForPid: utilityWorkerCommand,
+  terminationDeps: defaultTerminationDeps,
+};
+
+/**
+ * Ends a stale worker and every process of its group. The worker leads its
+ * own group (it is spawned detached), and the bounded commands it runs
+ * (verify, test, build) stay in that group with their cwd in the workspace;
+ * killing the worker pid alone left them running. The group is signalled only
+ * when the live worker's command is the worker subcommand with this exact run
+ * directory, claim epoch and job id; then SIGTERM, a bounded grace, and
+ * SIGKILL for anything still alive. A worker that leads no group is ended
+ * alone, the same way.
+ */
+const terminateUtilityWorker = async (
+  pid: number,
+  identity: UtilityWorkerIdentity
+): Promise<boolean> => {
+  const hooks = utilityWorkerTerminationInternals;
+  if (!isUtilityWorkerCommand(hooks.commandForPid(pid), identity)) {
     return false;
   }
+  const deps = hooks.terminationDeps();
+  // Identified just now. Right before every signal round (the SIGTERM, and
+  // the SIGKILL after the grace) the target is re-identified on that round's
+  // process snapshot: against this instant, so an id reused since is not
+  // signalled, and, while the leader lives, against the worker command of
+  // exactly this run directory, epoch and job, so a leader that no longer
+  // runs it is not signalled either.
+  const reference = new Date(deps.nowMs()).toISOString();
+  const source = `utility job ${identity.jobId} worker`;
+  const identified = { id: pid, identity, reference, source };
+  const target: TerminationTarget = deps.processGroupAlive(pid)
+    ? { ...identified, kind: "group" }
+    : { ...identified, kind: "process" };
+  const result = await terminateTargets([target], deps);
+  return result.survivors.length === 0 && result.failed.length === 0;
 };
 
 const positiveNumber = (
@@ -805,9 +867,14 @@ const recoverStaleUtilityJobs = async (
       if (
         (staleEpoch || runTimedOut) &&
         workerPid !== undefined &&
+        active.claim !== undefined &&
         isWorkerAlive(workerPid)
       ) {
-        terminateWorker(workerPid);
+        await terminateWorker(workerPid, {
+          epoch: active.claim.epoch,
+          jobId: active.jobId,
+          runDir: context.runDir,
+        });
       }
       await failUtilityJob(
         context,
@@ -1100,6 +1167,38 @@ const repoRootForRun = (runDir: string): string => {
     // The worker will fail closed to its launch cwd when legacy manifests lack cwd.
   }
   return process.cwd();
+};
+
+const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
+
+/**
+ * Why the worker's run can no longer use a helper, or `undefined` while it
+ * may: its manifest records a terminal state. Only the state decides. A
+ * workspace handback marker alone never stops a worker: a resumed run is
+ * active again (the resume clears the marker, and a release always requires a
+ * terminal state anyway), and its helpers must start. A manifest that cannot
+ * be read never stops a worker; the release that this guards against requires
+ * a readable terminal manifest anyway.
+ */
+const runNoLongerActive = (runDir: string): string | undefined => {
+  let manifest: { state?: unknown; workspaceReleasedAt?: unknown } | null;
+  try {
+    manifest = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (
+    !(
+      typeof manifest?.state === "string" &&
+      TERMINAL_RUN_STATES.has(manifest.state)
+    )
+  ) {
+    return undefined;
+  }
+  return typeof manifest.workspaceReleasedAt === "string" &&
+    manifest.workspaceReleasedAt
+    ? `it is ${manifest.state} and its workspace was handed back`
+    : `it is ${manifest.state}`;
 };
 
 const artifactDirForJob = (
@@ -2536,6 +2635,18 @@ export const runUtilityWorker = async (
     workerPid: process.pid,
   });
   if (!claimed) {
+    return;
+  }
+  // Checked only AFTER the claim records this pid. A dead-run release reads
+  // the run's terminal state before it reads the claims, so either it sees
+  // this claim (and this live pid blocks it), or this check sees the state it
+  // read and the job ends here, before anything touches the workspace.
+  const inactive = runNoLongerActive(runDir);
+  if (inactive) {
+    transitionUtilityJob(runDir, jobId, "canceled", {
+      eventId: `canceled:${epoch}:${jobId}`,
+      reason: `run is no longer active: ${inactive}`,
+    });
     return;
   }
   const legacyCompatibilityJob =

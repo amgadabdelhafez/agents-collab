@@ -7,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -26,6 +27,8 @@ import {
   validateRunId,
 } from "./git";
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
+import { processGroupAlive } from "./process-group";
+import { AGENT_GROUP_KIND, PANE_PROCESS_KIND } from "./run-pane-processes";
 import { createManifestHandle, type ManifestHandle } from "./tmux-socket";
 import type {
   Agent,
@@ -37,6 +40,10 @@ import type {
   RunLifecycleState,
   RunStatus,
 } from "./types";
+import {
+  readUtilityJobsAsEvidence,
+  type UtilityJobsEvidence,
+} from "./utility-store";
 
 const RUNS_ROOT = join(".loop", "runs");
 const MANIFEST_FILE = "manifest.json";
@@ -143,6 +150,8 @@ export interface RunManifest {
    * date such as `2026-02-30T18:30:00Z` is not a release.
    */
   workspaceReleasedAt?: string;
+  /** Set by startup GC for a launch that never bound a tmux session. */
+  workspaceReleaseKind?: "abandoned-never-bound";
   worldModel?: RunWorldModelBinding;
 }
 
@@ -647,16 +656,47 @@ export const runStatusFromState = (state: RunLifecycleState): RunStatus => {
 export const isActiveRunState = (state: RunLifecycleState): boolean =>
   ACTIVE_RUN_STATES.has(state);
 
+/**
+ * The manifest without its workspace handback. A handback belongs to a run
+ * that ended; a run that is reserved or resumed again owns its workspace
+ * again, so the marker (and its kind) must not survive into that life. Left
+ * in place, it would make the teardown of the resumed run report an earlier
+ * release as its own, and it is no longer true of the run.
+ */
+export const withoutWorkspaceHandback = (
+  manifest: RunManifest
+): RunManifest => {
+  if (
+    manifest.workspaceReleasedAt === undefined &&
+    manifest.workspaceReleaseKind === undefined
+  ) {
+    return manifest;
+  }
+  const {
+    workspaceReleasedAt: _releasedAt,
+    workspaceReleaseKind: _releaseKind,
+    ...rest
+  } = manifest;
+  return rest;
+};
+
+/** An active run never carries a handback (see `withoutWorkspaceHandback`). */
+const handbackForState = (manifest: RunManifest): RunManifest =>
+  isActiveRunState(manifest.state)
+    ? withoutWorkspaceHandback(manifest)
+    : manifest;
+
 export const setRunManifestState = (
   manifest: RunManifest,
   state: RunLifecycleState,
   now = new Date().toISOString()
-): RunManifest => ({
-  ...manifest,
-  state,
-  status: runStatusFromState(state),
-  updatedAt: now,
-});
+): RunManifest =>
+  handbackForState({
+    ...manifest,
+    state,
+    status: runStatusFromState(state),
+    updatedAt: now,
+  });
 
 const gitText = (
   cwd: string,
@@ -903,12 +943,322 @@ export type StoppedRunReconcileResult =
   | { runId: string; status: "already-released"; workspaceReleasedAt: string }
   | { runId: string; status: "refused"; reason: string };
 
-interface StoppedRunReconcileDeps {
+export interface StoppedRunReconcileDeps {
+  /**
+   * Judges each live recorded process another run may hold too (see
+   * `RecordedProcessClassifier`). Absent, every live record counts.
+   */
+  classifyRecordedProcess?: RecordedProcessClassifier;
+  /**
+   * Whether a recorded process GROUP (a utility worker's, an agent pane's)
+   * may still hold a run process: see `groupCanStillOwnRun`. Every production
+   * caller supplies it; without it the pid rule or any live member counts.
+   */
+  groupCanStillOwnRun?: (pgid: number, reference: string) => boolean;
   now: () => string;
   pidCanStillOwnRun: (pid: number, stoppedAt: string) => boolean;
   runtimeAbsent: (manifestPath: string) => Promise<boolean>;
   terminalState?: "failed" | "stopped";
 }
+
+const INVALID_INSTANT = "invalid-instant";
+
+/**
+ * The latest of several instants, as the PID-reuse reference. A live PID is
+ * provably unrelated only when it started strictly after a moment by which the
+ * recorded process had certainly started; the LATER that moment, the fewer PIDs
+ * qualify, so taking the maximum is the conservative choice. In particular a
+ * hand-edited `workspaceReleasedAt` earlier than the run's last recorded
+ * activity cannot license a live run process as "reused". Any unparsable
+ * input yields an unparsable reference, which `pidCanStillOwnRun` reads as
+ * ownership for every live PID.
+ */
+export const latestInstant = (...values: readonly string[]): string => {
+  let latest: number | undefined;
+  for (const value of values) {
+    const ms = Date.parse(value);
+    if (!Number.isFinite(ms)) {
+      return INVALID_INSTANT;
+    }
+    latest = latest === undefined ? ms : Math.max(latest, ms);
+  }
+  return latest === undefined
+    ? INVALID_INSTANT
+    : new Date(latest).toISOString();
+};
+
+/** A run-owned PID recorded outside the manifest's own pid fields. */
+export interface RecordedRunPid {
+  /**
+   * `pid` is a process GROUP id: the group may hold a run process while any
+   * member exists, after its leader is gone (see `groupCanStillOwnRun`).
+   */
+  readonly group?: true;
+  readonly pid: number;
+  /** A moment by which the recorded process had certainly started. */
+  readonly reference: string;
+  readonly source: string;
+}
+
+/**
+ * Release evidence for processes another run may hold too: built once per
+ * evidence read, then asked for each live recorded process. `count: false`
+ * means the live process does not keep this run's workspace owned (it is
+ * shared with another live run and does not work in this workspace, or it is
+ * a daemon that re-parented away and works outside it). `rule` names why.
+ */
+export type RecordedProcessClassifier = (
+  manifestPath: string,
+  manifest: RunManifest
+) => (entry: RecordedRunPid) => {
+  readonly count: boolean;
+  readonly detail?: string;
+  readonly otherRunId?: string;
+  readonly rule: string;
+};
+
+export type AuxiliaryRunPids =
+  | { readonly kind: "read"; readonly pids: readonly RecordedRunPid[] }
+  | { readonly kind: "unreadable"; readonly reason: string };
+
+const isPositiveSafePid = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+/**
+ * `undefined` when the file is absent (a gone descendant group's record may be
+ * pruned between the listing and the read); throws on any other read failure.
+ * An agent pane record (`kind: "agent-pane"`) names the pane's process GROUP,
+ * which can outlive the pane process; a descendant group record (`kind:
+ * "agent-descendant-group"`) names the group of a tool subprocess the CLI
+ * started outside the pane group (see `recordAgentDescendantGroups`).
+ */
+const readRecordedPidFile = (
+  path: string,
+  reference: string
+): { group?: true; pid: number | undefined; reference: string } | undefined => {
+  let raw: string;
+  let mtime: Date;
+  try {
+    raw = readFileSync(path, "utf8");
+    mtime = statSync(path).mtime;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+  let pid: unknown;
+  let group = false;
+  try {
+    const record = JSON.parse(raw) as {
+      kind?: unknown;
+      pgid?: unknown;
+      pid?: unknown;
+    } | null;
+    group =
+      record?.kind === PANE_PROCESS_KIND || record?.kind === AGENT_GROUP_KIND;
+    pid = group ? record?.pgid : record?.pid;
+  } catch {
+    pid = undefined;
+  }
+  return {
+    ...(group ? { group: true as const } : {}),
+    // A group id of 1 (or 0) is never a recordable group: it would address
+    // every process (or the reader's own group), so it is unreadable.
+    pid: isPositiveSafePid(pid) && !(group && pid <= 1) ? pid : undefined,
+    // The file is written after its process exists, so its mtime is a moment
+    // by which that process had started.
+    reference: latestInstant(reference, mtime.toISOString()),
+  };
+};
+
+/**
+ * Every run-owned PID recorded beside the manifest: the Codex app-server, the
+ * bridge worker (`bridge-worker.json`), each `run-processes/` entry, and the
+ * worker of every claimed utility job (`utility/jobs.jsonl`). A
+ * record that exists but names no valid PID is unreadable evidence, never
+ * absence: the run may own a process we can no longer identify.
+ */
+export const readAuxiliaryRunPids = (
+  manifestPath: string,
+  manifest: RunManifest,
+  reference: string,
+  nowMs: number = Date.now()
+): AuxiliaryRunPids => {
+  const runDir = dirname(manifestPath);
+  const pids: RecordedRunPid[] = [];
+  if (manifest.codexAppServerPid !== undefined) {
+    pids.push({
+      pid: manifest.codexAppServerPid,
+      reference,
+      source: "codexAppServerPid",
+    });
+  }
+  const files: { path: string; source: string }[] = [
+    { path: join(runDir, "bridge-worker.json"), source: "bridge-worker.json" },
+  ];
+  const registry = join(runDir, "run-processes");
+  try {
+    for (const entry of readdirSync(registry).sort()) {
+      files.push({
+        path: join(registry, entry),
+        source: `run-processes/${entry}`,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return {
+        kind: "unreadable",
+        reason: `run-processes is unreadable: ${(error as Error).message}`,
+      };
+    }
+  }
+  for (const { path, source } of files) {
+    let record: ReturnType<typeof readRecordedPidFile>;
+    try {
+      record = readRecordedPidFile(path, reference);
+    } catch (error) {
+      return {
+        kind: "unreadable",
+        reason: `${source} is unreadable: ${(error as Error).message}`,
+      };
+    }
+    if (!record) {
+      continue;
+    }
+    if (record.pid === undefined) {
+      return { kind: "unreadable", reason: `${source} names no valid pid` };
+    }
+    pids.push({
+      ...(record.group ? { group: true as const } : {}),
+      pid: record.pid,
+      reference: record.reference,
+      source,
+    });
+  }
+  const workers = readUtilityWorkerPids(runDir, nowMs);
+  if (workers.kind === "unreadable") {
+    return workers;
+  }
+  pids.push(...workers.pids);
+  return { kind: "read", pids };
+};
+
+/**
+ * How long a torn final append to `utility/jobs.jsonl` is treated as possibly
+ * still in flight. An append is one write; a worker whose claim append was
+ * torn throws at its very next store call, before any work. Past this grace
+ * the torn line is a dead writer's remains, not a live worker's claim.
+ */
+export const UTILITY_TORN_TAIL_GRACE_MS = 60_000;
+
+/**
+ * The worker pid of every utility job the run ever claimed. A worker is
+ * spawned detached with its cwd in the workspace and its pid is recorded
+ * nowhere else, so it is release evidence like any other run process. Jobs
+ * that already ended count too: a worker fenced or timed out may still be
+ * exiting, and a dead or provably reused pid costs nothing.
+ *
+ * The PID-reuse reference is the claim instant ALONE. The worker writes its
+ * own claim (`runUtilityWorker` calls `claimUtilityJob` with its own pid and
+ * the time is taken in that process), so it had certainly started by then,
+ * and a live process that started after the claim is provably not that
+ * worker. Taking a later instant (such as the run's last update) would only
+ * misread unrelated processes that recycled an old worker pid as the worker,
+ * and a long run with many ended jobs would then rarely ever release.
+ *
+ * A journal that cannot be read is unreadable evidence, except for a torn
+ * final append older than `UTILITY_TORN_TAIL_GRACE_MS`, which is dropped (see
+ * `readUtilityJobsAsEvidence`). A fresh torn append may still be in flight.
+ */
+const readUtilityWorkerPids = (
+  runDir: string,
+  nowMs: number
+): AuxiliaryRunPids => {
+  let evidence: UtilityJobsEvidence;
+  try {
+    evidence = readUtilityJobsAsEvidence(runDir);
+  } catch (error) {
+    return {
+      kind: "unreadable",
+      reason: `utility/jobs.jsonl is unreadable: ${(error as Error).message}`,
+    };
+  }
+  const torn = evidence.tornTailModifiedAt;
+  if (torn && !(nowMs - torn.getTime() >= UTILITY_TORN_TAIL_GRACE_MS)) {
+    return {
+      kind: "unreadable",
+      reason: `utility/jobs.jsonl is unreadable: its final append (at ${torn.toISOString()}) is torn and may still be in flight`,
+    };
+  }
+  const pids: RecordedRunPid[] = [];
+  for (const job of evidence.jobs) {
+    for (const event of job.events) {
+      if (event.claim) {
+        // The worker is spawned detached, so it leads its own process group
+        // (pgid = its pid; both the installed ea968d82 line and this one spawn
+        // it that way). Its bounded commands run in that group with their cwd
+        // in the workspace and can outlive it, so the GROUP is the evidence.
+        pids.push({
+          group: true,
+          pid: event.claim.workerPid,
+          reference: latestInstant(event.at),
+          source: `utility job ${job.jobId} worker`,
+        });
+      }
+    }
+  }
+  return { kind: "read", pids };
+};
+
+/**
+ * The first recorded auxiliary process that may still belong to the run, or a
+ * reason the records cannot be read. `undefined` means every recorded process
+ * is positively dead or provably a later, unrelated process.
+ */
+export const auxiliaryProcessOwnership = (
+  manifestPath: string,
+  manifest: RunManifest,
+  reference: string,
+  pidCanStillOwnRun: (pid: number, reference: string) => boolean,
+  groupCanStillOwnRun: (
+    pgid: number,
+    reference: string
+  ) => boolean = conservativeGroupOwnership(pidCanStillOwnRun),
+  classifyRecordedProcess?: RecordedProcessClassifier
+): string | undefined => {
+  const auxiliary = readAuxiliaryRunPids(manifestPath, manifest, reference);
+  if (auxiliary.kind === "unreadable") {
+    return `recorded-process-evidence-unreadable: ${auxiliary.reason}`;
+  }
+  const classify = classifyRecordedProcess?.(manifestPath, manifest);
+  const live = auxiliary.pids.find(
+    (entry) =>
+      (entry.group
+        ? groupCanStillOwnRun(entry.pid, entry.reference)
+        : pidCanStillOwnRun(entry.pid, entry.reference)) &&
+      // A live process another run holds too, or a daemon that re-parented
+      // away from the run outside its workspace, may not count.
+      (classify?.(entry).count ?? true)
+  );
+  if (!live) {
+    return undefined;
+  }
+  return live.group
+    ? `recorded-process-may-be-live: ${live.source} pid ${live.pid} (or a member of its process group)`
+    : `recorded-process-may-be-live: ${live.source} pid ${live.pid}`;
+};
+
+/**
+ * The group rule for a caller that supplied only a pid rule: the leader by
+ * that rule, or else any live member of the group. A leader the pid rule
+ * proves reused may still be counted live here if it leads a group of its
+ * own, which can only block a release, never grant one.
+ */
+const conservativeGroupOwnership =
+  (pidCanStillOwnRun: (pid: number, reference: string) => boolean) =>
+  (pgid: number, reference: string): boolean =>
+    pidCanStillOwnRun(pgid, reference) || processGroupAlive(pgid);
 
 const sameWorkspaceIdentity = (
   current: RunManifest,
@@ -926,6 +1276,42 @@ const sameWorkspaceIdentity = (
   current.state === expected.state &&
   current.status === expected.status &&
   current.updatedAt === expected.updatedAt;
+
+/**
+ * Why a recorded process of the run (its pid, its launch attempt, or any
+ * auxiliary process or group) may still be live, or `undefined` when none is.
+ */
+const recordedProcessRefusal = (
+  manifestPath: string,
+  manifest: RunManifest,
+  evidence: RunOwnershipEvidence,
+  reference: string,
+  deps: StoppedRunReconcileDeps
+): string | undefined => {
+  if (
+    evidence.pid.kind !== "valid" ||
+    deps.pidCanStillOwnRun(evidence.pid.value, reference)
+  ) {
+    return "run-process-may-be-live";
+  }
+  const attempt = evidence.launchAttemptPid;
+  if (
+    attempt.kind === "invalid" ||
+    attempt.kind === "conflicting" ||
+    (attempt.kind === "valid" &&
+      deps.pidCanStillOwnRun(attempt.value, reference))
+  ) {
+    return "launch-process-may-be-live";
+  }
+  return auxiliaryProcessOwnership(
+    manifestPath,
+    manifest,
+    reference,
+    deps.pidCanStillOwnRun,
+    deps.groupCanStillOwnRun,
+    deps.classifyRecordedProcess
+  );
+};
 
 /**
  * Adds release proof to one legacy stopped manifest only after every ownership
@@ -961,20 +1347,9 @@ export const reconcileLegacyStoppedRun = async (
       status: "refused",
     };
   }
-  if (evidence.workspaceReleasedAt.kind === "valid") {
-    return {
-      runId: expectedRunId,
-      status: "already-released",
-      workspaceReleasedAt: evidence.workspaceReleasedAt.value,
-    };
-  }
-  if (evidence.workspaceReleasedAt.kind !== "absent") {
-    return {
-      reason: "invalid-release-evidence",
-      runId: expectedRunId,
-      status: "refused",
-    };
-  }
+  // The state first: a recorded handback speaks only for a run that is still
+  // in the terminal state it was released in. A run that was resumed since is
+  // a new life of the run, and an earlier marker is no release of it.
   if (
     evidence.state.kind !== "valid" ||
     evidence.state.value !== terminalState ||
@@ -987,8 +1362,38 @@ export const reconcileLegacyStoppedRun = async (
       status: "refused",
     };
   }
+  const marker = evidence.workspaceReleasedAt;
+  if (marker.kind !== "valid" && marker.kind !== "absent") {
+    return {
+      reason: "invalid-release-evidence",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  // A marker this call did not write is re-verified on the same full evidence
+  // before it is reported as a release: it may have been written by startup
+  // GC or an older binary on less evidence, or a process of the run may have
+  // appeared since. Its PID-reuse reference is the later of the marker and the
+  // last update, as in the launch scan. A launch that never bound tmux (GC's
+  // `abandoned-never-bound` handback) has no runtime to probe.
+  const neverBound =
+    marker.kind === "valid" &&
+    manifest.workspaceReleaseKind === "abandoned-never-bound" &&
+    !manifest.tmuxSession;
+  const reference =
+    marker.kind === "valid"
+      ? latestInstant(marker.value, manifest.updatedAt)
+      : manifest.updatedAt;
+  // A legacy manifest that recorded its session but no socket still has a
+  // runtime identity: `runtimeAbsent` must then prove the session gone on
+  // every socket the launcher could have used. Only the session is required
+  // (and, to write a new handback, the workspace binding).
   if (
-    !(manifest.workspaceBinding && manifest.tmuxSession && manifest.tmuxSocket)
+    !(
+      neverBound ||
+      (manifest.tmuxSession &&
+        (marker.kind === "valid" || manifest.workspaceBinding))
+    )
   ) {
     return {
       reason: "missing-runtime-identity",
@@ -996,34 +1401,28 @@ export const reconcileLegacyStoppedRun = async (
       status: "refused",
     };
   }
-  if (
-    evidence.pid.kind !== "valid" ||
-    deps.pidCanStillOwnRun(evidence.pid.value, manifest.updatedAt)
-  ) {
-    return {
-      reason: "run-process-may-be-live",
-      runId: expectedRunId,
-      status: "refused",
-    };
+  const processOwner = recordedProcessRefusal(
+    manifestPath,
+    manifest,
+    evidence,
+    reference,
+    deps
+  );
+  if (processOwner) {
+    return { reason: processOwner, runId: expectedRunId, status: "refused" };
   }
-  const attempt = evidence.launchAttemptPid;
-  if (
-    attempt.kind === "invalid" ||
-    attempt.kind === "conflicting" ||
-    (attempt.kind === "valid" &&
-      deps.pidCanStillOwnRun(attempt.value, manifest.updatedAt))
-  ) {
-    return {
-      reason: "launch-process-may-be-live",
-      runId: expectedRunId,
-      status: "refused",
-    };
-  }
-  if (!(await deps.runtimeAbsent(manifestPath))) {
+  if (!(neverBound || (await deps.runtimeAbsent(manifestPath)))) {
     return {
       reason: "tmux-runtime-not-absent",
       runId: expectedRunId,
       status: "refused",
+    };
+  }
+  if (marker.kind === "valid") {
+    return {
+      runId: expectedRunId,
+      status: "already-released",
+      workspaceReleasedAt: marker.value,
     };
   }
   const releasedAt = deps.now();
@@ -1158,11 +1557,12 @@ export const createRunManifest = (
 export const touchRunManifest = (
   manifest: RunManifest,
   now = new Date().toISOString()
-): RunManifest => ({
-  ...manifest,
-  status: runStatusFromState(manifest.state),
-  updatedAt: now,
-});
+): RunManifest =>
+  handbackForState({
+    ...manifest,
+    status: runStatusFromState(manifest.state),
+    updatedAt: now,
+  });
 
 export const writeRunManifest = (
   manifestPath: string,
