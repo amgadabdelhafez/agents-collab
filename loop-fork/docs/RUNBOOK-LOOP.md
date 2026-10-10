@@ -1793,6 +1793,26 @@ before that a terminal manifest alone made a run dead.
 
 The rules (`src/loop/shared-process-ownership.ts`), first match wins:
 
+0. The A2A V2 orchestration host (r6 line, added when the dead-run hotfix was
+   ported onto claude/fix-integration-r6-2026-10-09): `shared-process-skipped`
+   with `otherRunId` `orchestration-host` when a member, or any process up a
+   member's whole parent chain (not stopped at the pane processes), runs
+   `loop orchestration serve <config>` (the compiled binary under any name
+   starting with `loop`, or `src/cli.ts`) or `src/orchestration-cli.ts`. The
+   host is normally the launchd agent `com.harness.loop-orchestration` and is
+   then never in a run's tree at all; the rule covers a host started from an
+   agent's tool shell, one running in a pane's group, its headless wake
+   sessions, and a run a wake launched (its app-server while the launcher
+   still runs). It applies to every record kind (walked groups, pane groups,
+   the manifest app-server, worker targets) at collection, at every signal
+   round and in the release evidence: never signalled; release evidence only
+   while a member's cwd is inside this run's workspace or cannot be read. It
+   needs no other run, so it holds while other runs are unreadable. Limits: it
+   is judged on the check's command lines (`ps -axww -o pid=,command=`);
+   without them rules 1 to 4 decide alone, and a host renamed so that neither
+   form matches is judged like any other process. The host's Codex delivery
+   reaches each run's app-server over its recorded `codexRemoteUrl` and starts
+   no app-server of its own, so a run's bound app-server stays that run's.
 1. `shared-process-skipped`: another run that is not provably dead records
    the process or its group (manifest pid, launch attempt, `codexAppServerPid`,
    `bridge-worker.json`, `run-processes/` records, utility worker claims), or

@@ -70,6 +70,8 @@ import {
   commandNamesRun,
   defaultOwnershipProbes,
   defaultStorageRoots,
+  isOrchestrationHostCommand,
+  ORCHESTRATION_HOST_OWNER,
   type OwnershipProbes,
   ownershipContext,
   readOtherRunIndex,
@@ -1729,6 +1731,278 @@ test("the teardown logs shared-process-skipped with the other run's id at collec
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+// --- (e) The orchestration host (A2A V2 service) is never run-owned -------------
+//
+// The V2 orchestration service (`loop orchestration serve <config>`, normally
+// a launchd agent) and every process it starts (its headless wake sessions, a
+// run some wake launched) serve the whole host. However one of them came to
+// descend from a run's pane, or to sit in a group the run recorded, no run's
+// teardown may signal it; it keeps a workspace owned only while it works
+// inside it, as a process another live run holds does.
+
+const HOST = 7950;
+const HOST_COMMAND =
+  "/Users/me/.local/bin/loop-ed33f43f orchestration serve /Users/me/.loop/orchestration/config.json";
+
+test("the orchestration host command is recognised in its compiled, source and package-script forms, and nothing else is", () => {
+  for (const command of [
+    HOST_COMMAND,
+    "/Users/me/.local/bin/loop orchestration serve /tmp/o.json",
+    "bun run src/cli.ts orchestration serve /tmp/o.json",
+    "bun run /repo/loop-fork/src/orchestration-cli.ts /tmp/o.json",
+    "/opt/homebrew/bin/bun src/orchestration-cli.ts '/tmp/my config.json'",
+  ]) {
+    expect(isOrchestrationHostCommand(command), command).toBe(true);
+  }
+  for (const command of [
+    "/Users/me/.local/bin/loop orchestration v2-quarantine-list /tmp/o.json",
+    "/Users/me/.local/bin/loop --tmux --run-id 5",
+    "pgrep -fl orchestration serve",
+    "vim src/orchestration-cli.ts.orig",
+    "codex app-server --listen ws://127.0.0.1:4500",
+  ]) {
+    expect(isOrchestrationHostCommand(command), command).toBe(false);
+  }
+});
+
+test("a walked group that is the orchestration host, or descends from it, is never signalled and counts only while it works inside the workspace", async () => {
+  await withTwoRuns("working", {}, async ({ a, b, storage }) => {
+    const WAKE = 7960;
+    recordWalkedGroup(a.runDir, HOST);
+    recordWalkedGroup(a.runDir, WAKE);
+    // The host was started from A's tool shell (601) and re-parented to
+    // launchd when that shell exited; a headless wake it started leads a
+    // group of its own. Both are walk records of A.
+    const reparented = [
+      row(PANE, 1, PANE),
+      row(HOST, 1, HOST),
+      row(WAKE, HOST, WAKE),
+    ];
+    // The same while the host still descends from A's live pane.
+    const attached = [
+      row(PANE, 1, PANE),
+      row(601, PANE, 601),
+      row(HOST, 601, HOST),
+      row(WAKE, HOST, WAKE),
+    ];
+    const commands = {
+      [HOST]: HOST_COMMAND,
+      [WAKE]: "claude -p --resume wake-session",
+    };
+    for (const table of [reparented, attached]) {
+      for (const cwd of [a.workspace, "/Users/me/.loop/orchestration"]) {
+        const probes = fakeProbes(
+          storage,
+          table,
+          { [HOST]: cwd, [WAKE]: cwd },
+          commands
+        );
+        const ctx = ownershipContext({
+          manifest: readRunManifest(a.manifestPath),
+          probes,
+          runDir: a.runDir,
+          table,
+        });
+        for (const id of [HOST, WAKE]) {
+          expect(classifyGroup(id, ctx, { inferred: true })).toMatchObject({
+            count: cwd === a.workspace,
+            detail: expect.stringContaining("orchestration host"),
+            kill: false,
+            otherRunId: ORCHESTRATION_HOST_OWNER,
+            rule: "shared-process-skipped",
+          });
+        }
+        useCleanupProbes(probes);
+        const collected = collectRunAgentGroups(
+          a.runDir,
+          readRunManifest(a.manifestPath)
+        );
+        // A's own tool shell group (601) is A's to end while it lives.
+        expect(collected.groups?.map((target) => target.id)).toEqual(
+          table === attached ? [PANE, 601] : [PANE]
+        );
+        expect(
+          collected.skipped.filter((entry) => entry.pid !== PANE)
+        ).toMatchObject([
+          { otherRunId: ORCHESTRATION_HOST_OWNER, pid: HOST },
+          { otherRunId: ORCHESTRATION_HOST_OWNER, pid: WAKE },
+        ]);
+        // Re-checked right before every signal round.
+        const signals: string[] = [];
+        const ended = await terminateTargets(
+          [inferredTarget(HOST), inferredTarget(WAKE)],
+          fakeTermination(signals, {
+            sharedSkips: sharedTargetCheck(
+              a.runDir,
+              () => readRunManifest(a.manifestPath),
+              probes
+            ),
+          })
+        );
+        expect(signals).toEqual([]);
+        expect(ended.shared).toHaveLength(2);
+        // Release evidence only while it works inside the workspace.
+        expect(
+          await reconcileA(a.manifestPath, recordedProcessClassifier(probes), [
+            HOST,
+            WAKE,
+          ])
+        ).toMatchObject({
+          status: cwd === a.workspace ? "refused" : "changed",
+        });
+        writeRunManifest(a.manifestPath, {
+          ...(readRunManifest(a.manifestPath) as RunManifest),
+          workspaceReleasedAt: undefined,
+        });
+      }
+    }
+    // Control: the same groups running anything else are A's to end.
+    const probes = fakeProbes(
+      storage,
+      reparented,
+      { [HOST]: a.workspace, [WAKE]: a.workspace },
+      { [HOST]: "make -j8 test", [WAKE]: "sh -c ./run.sh" }
+    );
+    useCleanupProbes(probes);
+    const control = collectRunAgentGroups(
+      a.runDir,
+      readRunManifest(a.manifestPath)
+    );
+    expect(control.groups?.map((target) => target.id).sort()).toEqual(
+      [PANE, HOST, WAKE].sort()
+    );
+    // The host needs no other run: with B unreadable it is still the host
+    // (outside the workspace: not evidence), where any other walked group is
+    // ownership-unknown.
+    makeUnreadable(b.runDir);
+    const unreadable = (command: string) =>
+      classifyGroup(
+        HOST,
+        ownershipContext({
+          manifest: readRunManifest(a.manifestPath),
+          probes: fakeProbes(
+            storage,
+            reparented,
+            { [HOST]: "/Users/me/.loop/orchestration" },
+            { [HOST]: command }
+          ),
+          runDir: a.runDir,
+          table: reparented,
+        }),
+        { inferred: true }
+      );
+    expect(unreadable(HOST_COMMAND)).toMatchObject({
+      count: false,
+      kill: false,
+      otherRunId: ORCHESTRATION_HOST_OWNER,
+    });
+    expect(unreadable("make -j8 test")).toMatchObject({
+      count: true,
+      kill: false,
+      rule: "ownership-unknown",
+    });
+  });
+});
+
+test("an explicit record of the run (its pane group, its app-server) that holds or descends from the orchestration host is never signalled", async () => {
+  await withTwoRuns("working", {}, ({ a, storage }) => {
+    // A pane group with the host running in it (started in the foreground of
+    // the pane), and an app-server the host's wake launched.
+    const table = [
+      row(PANE, 1, PANE),
+      row(HOST, PANE, PANE),
+      row(HOST + 1, 1, HOST + 1),
+      row(HOST + 2, HOST + 1, HOST + 2),
+      row(APP_SERVER, HOST + 2, APP_SERVER),
+    ];
+    const commands = {
+      [APP_SERVER]: `codex app-server --listen ${APP_SERVER_URL}`,
+      [HOST]: HOST_COMMAND,
+      [HOST + 1]:
+        "bun run /repo/loop-fork/src/orchestration-cli.ts /tmp/o.json",
+      [HOST + 2]: "/Users/me/.local/bin/loop --tmux --run-id 1",
+    };
+    const probes = fakeProbes(storage, table, {}, commands);
+    const paneTarget: TerminationTarget = {
+      id: PANE,
+      kind: "group",
+      reference: SNAPSHOT_AT,
+      source: "agent pane %1",
+    };
+    const appServerTarget: TerminationTarget = {
+      id: APP_SERVER,
+      kind: "group",
+      reference: SNAPSHOT_AT,
+      source: "codex app-server",
+    };
+    const skips = sharedTargetCheck(
+      a.runDir,
+      () => readRunManifest(a.manifestPath),
+      probes
+    )([paneTarget, appServerTarget]);
+    expect(skips.get(`group:${PANE}`)).toMatchObject({
+      otherRunId: ORCHESTRATION_HOST_OWNER,
+      reason: "shared-process-skipped",
+    });
+    expect(skips.get(`group:${APP_SERVER}`)).toMatchObject({
+      otherRunId: ORCHESTRATION_HOST_OWNER,
+      reason: "shared-process-skipped",
+    });
+
+    // The run's own cleanup leaves a bound app-server the host's wake
+    // launched alone, and says why.
+    useCleanupProbes(probes);
+    const signals: string[] = [];
+    const deps = runProcessCleanupInternals.deps;
+    deps.commandForPid = (pid) => commands[pid as keyof typeof commands];
+    deps.listeningPids = (port) => (port === 4500 ? [APP_SERVER] : []);
+    deps.signal = (pid, signal) => {
+      signals.push(`${pid}:${signal}`);
+    };
+    const manifest = {
+      ...(readRunManifest(a.manifestPath) as RunManifest),
+      codexAppServerPid: APP_SERVER,
+      codexRemoteUrl: APP_SERVER_URL,
+    };
+    const result = cleanupRunOwnedProcesses(a.runDir, manifest);
+    expect(signals).toEqual([]);
+    expect(result.skipped).toContainEqual(
+      expect.objectContaining({
+        detail: expect.stringContaining("orchestration host"),
+        otherRunId: ORCHESTRATION_HOST_OWNER,
+        pid: APP_SERVER,
+        reason: "shared-process-skipped",
+      })
+    );
+
+    // Control: once the app-server re-parented to launchd (the wake and the
+    // host are not its ancestors), it is A's own and ended.
+    const detached = fakeProbes(
+      storage,
+      [row(APP_SERVER, 1, APP_SERVER)],
+      {},
+      commands
+    );
+    useCleanupProbes(detached);
+    deps.commandForPid = (pid) => commands[pid as keyof typeof commands];
+    deps.listeningPids = (port) => (port === 4500 ? [APP_SERVER] : []);
+    deps.signal = (pid, signal) => {
+      signals.push(`${pid}:${signal}`);
+    };
+    expect(cleanupRunOwnedProcesses(a.runDir, manifest).killed).toEqual([
+      APP_SERVER,
+    ]);
+    expect(signals).toEqual([`-${APP_SERVER}:SIGTERM`]);
+    expect(
+      sharedTargetCheck(
+        a.runDir,
+        () => readRunManifest(a.manifestPath),
+        detached
+      )([appServerTarget]).size
+    ).toBe(0);
+  });
 });
 
 // --- Real processes -------------------------------------------------------------

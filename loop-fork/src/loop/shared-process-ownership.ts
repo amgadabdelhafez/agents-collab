@@ -43,6 +43,14 @@ import {
  *
  * Rules (`classifyGroup`), first match wins:
  *
+ * 0. `shared-process-skipped` (owner `orchestration-host`): a member, or any
+ *    process up a member's whole parent chain, runs the A2A V2 orchestration
+ *    host (`isOrchestrationHostCommand`). The host serves every run, and so
+ *    does everything it starts (wake sessions, a run a wake launched). Never
+ *    signalled, by any record kind; release evidence only while a member's
+ *    cwd is inside this run's workspace (or cannot be read). Needs no other
+ *    run, so it holds while other runs are unreadable; needs the check's
+ *    command lines, without which rules 1 to 4 decide alone.
  * 1. `shared-process-skipped`: another run that is not provably dead (its
  *    manifest is active or unreadable, or terminal while a process it
  *    records still lives or its tmux runtime is not positively gone, see
@@ -612,12 +620,82 @@ const referenceNamesAncestor = (
     : reference.pid === ancestor.pid) &&
   startedByReference(ancestor, reference.reference);
 
+/**
+ * The owner a process of the A2A V2 orchestration host is reported under
+ * (`otherRunId` of its `shared-process-skipped` verdict).
+ */
+export const ORCHESTRATION_HOST_OWNER = "orchestration-host";
+
+const ORCHESTRATION_CLI_RE = /(?:^|\/)orchestration-cli\.[cm]?[jt]s$/;
+const LOOP_EXECUTABLE_RE = /(?:^|\/)(?:loop(?:[-._][^/]*)?|cli\.[cm]?[jt]s)$/;
+
+/**
+ * Whether a command line is the A2A V2 orchestration host: `loop
+ * orchestration serve <config>` (the compiled binary under any name starting
+ * with `loop`, or `src/cli.ts` run by Bun) or `src/orchestration-cli.ts
+ * <config>` (`bun run orchestration:serve`). Other `orchestration`
+ * subcommands are short-lived operator commands, not the host.
+ */
+export const isOrchestrationHostCommand = (command: string): boolean => {
+  const words = command
+    .trim()
+    .split(WHITESPACE_RE)
+    .map((word) => word.replace(QUOTES_RE, ""));
+  return words.some(
+    (word, index) =>
+      ORCHESTRATION_CLI_RE.test(word) ||
+      (word === "orchestration" &&
+        words[index + 1] === "serve" &&
+        LOOP_EXECUTABLE_RE.test(words[index - 1] ?? ""))
+  );
+};
+
+/**
+ * The orchestration host, when a member, an ancestor of a member, or any
+ * process up a member's whole parent chain runs it. The host (normally a
+ * launchd agent) serves every run on this machine, and so does everything it
+ * starts (its headless wake sessions, a run a wake launched): however one of
+ * them came to descend from a run's pane, or to sit in a group the run
+ * recorded, it is never that run's to end. Judged on the command lines of the
+ * check's snapshot; without them nothing is concluded here.
+ */
+const orchestrationHostOf = (
+  input: SharedCheckInput
+): SharedWith | undefined => {
+  const chain = input.table
+    ? ancestorsOf(input.members, input.table)
+    : (input.ancestors ?? []);
+  const rows = [
+    ...input.members.map((row) => ({ label: "pid", row })),
+    ...chain.map((row) => ({ label: "ancestor pid", row })),
+  ];
+  if (rows.length === 0) {
+    return undefined;
+  }
+  const commands = input.commands();
+  if (!commands) {
+    return undefined;
+  }
+  for (const { label, row } of rows) {
+    const command = commands.get(row.pid);
+    if (command && isOrchestrationHostCommand(command)) {
+      return {
+        kind: "shared",
+        otherRunId: ORCHESTRATION_HOST_OWNER,
+        source: `${label} ${row.pid} is the orchestration host`,
+      };
+    }
+  }
+  return undefined;
+};
+
 export type SharedWith =
   | { readonly kind: "none" }
   | { readonly kind: "unknown"; readonly reason: string }
   | {
       readonly kind: "shared";
-      readonly otherRunDir: string;
+      /** Absent for the orchestration host, which is no run. */
+      readonly otherRunDir?: string;
       readonly otherRunId: string;
       readonly source: string;
     };
@@ -638,6 +716,11 @@ export interface SharedCheckInput {
   readonly members: readonly ProcessRow[];
   readonly pgid: number;
   readonly self: SelfIdentity;
+  /**
+   * The check's process table snapshot: the orchestration host is looked for
+   * up each member's whole parent chain in it (`orchestrationHostOf`).
+   */
+  readonly table?: readonly ProcessRow[];
 }
 
 /** The `source` of another run's ppid-walk record. */
@@ -645,9 +728,14 @@ export const WALK_RECORD_SOURCE_RE = /^run-processes\/agent-group-\d+\.json$/;
 
 /**
  * Whether another live run records or names the group, one of its members,
- * or one of their `ancestors`.
+ * or one of their `ancestors`; or whether it is (or descends from) the
+ * orchestration host, which is checked first and needs no other run.
  */
 export const sharedWithOtherRun = (input: SharedCheckInput): SharedWith => {
+  const host = orchestrationHostOf(input);
+  if (host) {
+    return host;
+  }
   const index = input.index();
   if (index.kind === "unknown") {
     // For an explicit record of this run's own, a readable live run that
@@ -830,6 +918,7 @@ export const classifyGroup = (
     members,
     pgid: id,
     self: ctx.self,
+    table: ctx.table,
   });
   if (shared.kind === "shared") {
     const where = workspacePresence(members, ctx.workspaceRoot, ctx.cwdOfPid);
@@ -1168,6 +1257,7 @@ export const sharedTargetCheck =
             members,
             pgid: target.id,
             self,
+            table,
           })
         : { kind: "unknown", reason: "process table unavailable" };
       const skip = targetSkip(shared, target);

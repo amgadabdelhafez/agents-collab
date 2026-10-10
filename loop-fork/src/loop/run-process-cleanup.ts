@@ -949,6 +949,7 @@ const appServerSharedWith = (
     members,
     pgid: pid,
     self: selfOf(manifest),
+    ...(table ? { table } : {}),
   });
 };
 
