@@ -24,6 +24,7 @@ import {
 } from "./run-state";
 
 const PROCESS_REGISTRY_DIR = "run-processes";
+const BRIDGE_WORKER_FILE = "bridge-worker.json";
 const BRIDGE_PROCESS_PREFIX = "bridge-";
 const WHITESPACE_RE = /\s+/;
 
@@ -249,36 +250,63 @@ const signalOwnedProcess = (
   }
 };
 
+/** The pid `bridge-worker.json` names, or `undefined` when it names none. */
+const readBridgeWorkerPid = (runDir: string): number | undefined => {
+  try {
+    const pid = (
+      JSON.parse(readFileSync(join(runDir, BRIDGE_WORKER_FILE), "utf8")) as {
+        pid?: unknown;
+      } | null
+    )?.pid;
+    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0
+      ? pid
+      : undefined;
+  } catch {
+    // Absent or malformed: never kill authority.
+    return undefined;
+  }
+};
+
+/**
+ * Ends the run's bridge worker. It is spawned detached, so the session kill
+ * never reaches it, and between wakes it sleeps up to the reconciliation
+ * heartbeat; left alone it outlives the teardown as a live recorded process
+ * and blocks the workspace handback. It is signalled only when the live
+ * process is provably this run's worker: its live argv ends with exactly the
+ * worker subcommand and this run directory (r6's exact-tail rule, so a run
+ * directory that merely prefixes another, or contains spaces, never matches).
+ * The record is kept, since a dead pid is absence evidence for the release
+ * check.
+ */
+const signalRunBridgeWorker = (
+  result: RunProcessCleanupResult,
+  runDir: string,
+  deps: RunProcessCleanupDeps
+): void => {
+  const pid = readBridgeWorkerPid(runDir);
+  if (pid === undefined) {
+    return;
+  }
+  const command = deps.commandForPid(pid);
+  signalOwnedProcess(
+    result,
+    pid,
+    Boolean(
+      command &&
+        commandEndsWithArgs(command, [BRIDGE_WORKER_SUBCOMMAND, runDir])
+    ),
+    command ? "bridge-worker-command-mismatch" : "bridge-worker-not-running",
+    deps.signal
+  );
+};
+
 const cleanupRunOwnedProcessesWithDeps = (
   runDir: string,
   manifest: RunManifest | undefined,
   deps: RunProcessCleanupDeps
 ): RunProcessCleanupResult => {
   const result: RunProcessCleanupResult = { killed: [], skipped: [] };
-  // A worker is owned by this run only when both its recorded PID and live
-  // argv agree. Keep the record as evidence; PID reuse must never be signaled.
-  try {
-    const worker = JSON.parse(
-      readFileSync(join(runDir, "bridge-worker.json"), "utf8")
-    );
-    if (Number.isSafeInteger(worker?.pid) && worker.pid > 0) {
-      const command = deps.commandForPid(worker.pid);
-      signalOwnedProcess(
-        result,
-        worker.pid,
-        Boolean(
-          command &&
-            commandEndsWithArgs(command, [BRIDGE_WORKER_SUBCOMMAND, runDir])
-        ),
-        command
-          ? "bridge-worker-identity-mismatch"
-          : "bridge-worker-not-running",
-        deps.signal
-      );
-    }
-  } catch {
-    // Missing or malformed worker evidence grants no process authority.
-  }
+  signalRunBridgeWorker(result, runDir, deps);
   for (const { path, record } of readBridgeRegistrations(runDir)) {
     const command = deps.commandForPid(record.pid);
     const retainRegistration = signalOwnedProcess(

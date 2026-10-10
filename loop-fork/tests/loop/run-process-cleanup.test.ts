@@ -176,6 +176,104 @@ test("teardown requires both app-server command and owned listener port", () => 
   }
 });
 
+// The bridge worker is spawned detached, so a session kill never reaches it,
+// and it sleeps up to BRIDGE_RECONCILIATION_INTERVAL_MS between wakes. Unless
+// teardown ends it, the run keeps a live recorded process and the teardown's
+// workspace release is deferred.
+test("teardown ends the run's own bridge worker and nothing else bridge-worker.json names", () => {
+  const cases: [
+    string,
+    string | undefined,
+    number[],
+    { pid: number; reason: string }[],
+  ][] = [
+    ["the run's own worker", "WORKER", [4601], []],
+    [
+      "another run's worker",
+      "OTHER",
+      [],
+      [{ pid: 4601, reason: "bridge-worker-command-mismatch" }],
+    ],
+    [
+      "a bridge MCP server, not a worker",
+      "MCP",
+      [],
+      [{ pid: 4601, reason: "bridge-worker-command-mismatch" }],
+    ],
+    [
+      "an exited worker",
+      undefined,
+      [],
+      [{ pid: 4601, reason: "bridge-worker-not-running" }],
+    ],
+  ];
+  for (const [name, shape, killed, skipped] of cases) {
+    const runDir = makeRunDir();
+    const signals: number[] = [];
+    const original = { ...runProcessCleanupInternals.deps };
+    writeFileSync(
+      join(runDir, "bridge-worker.json"),
+      `${JSON.stringify({ pid: 4601 })}\n`
+    );
+    const commands: Record<string, string> = {
+      MCP: `loop __bridge-mcp ${runDir} claude`,
+      OTHER: `loop __bridge-worker ${runDir}-other`,
+      WORKER: `/Users/me/.local/bin/loop __bridge-worker ${runDir}`,
+    };
+    try {
+      runProcessCleanupInternals.deps.commandForPid = (pid) =>
+        pid === 4601 && shape ? commands[shape] : undefined;
+      runProcessCleanupInternals.deps.listeningPids = () => [];
+      runProcessCleanupInternals.deps.signal = (pid) => {
+        signals.push(pid);
+      };
+
+      const result = cleanupRunOwnedProcesses(runDir, undefined);
+
+      expect(result.killed, name).toEqual(killed);
+      expect(result.skipped, name).toEqual(skipped);
+      expect(signals, name).toEqual(killed);
+      // The record stays: a dead pid is absence evidence, a missing file is not
+      // something the release check may assume.
+      expect(existsSync(join(runDir, "bridge-worker.json")), name).toBe(true);
+    } finally {
+      Object.assign(runProcessCleanupInternals.deps, original);
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  }
+});
+
+test("teardown signals no bridge worker when bridge-worker.json is absent or names no pid", () => {
+  for (const contents of [undefined, "{}\n", "not json\n", '{"pid":-4}\n']) {
+    const runDir = makeRunDir();
+    const asked: number[] = [];
+    const signals: number[] = [];
+    const original = { ...runProcessCleanupInternals.deps };
+    if (contents !== undefined) {
+      writeFileSync(join(runDir, "bridge-worker.json"), contents);
+    }
+    try {
+      runProcessCleanupInternals.deps.commandForPid = (pid) => {
+        asked.push(pid);
+        return `loop __bridge-worker ${runDir}`;
+      };
+      runProcessCleanupInternals.deps.listeningPids = () => [];
+      runProcessCleanupInternals.deps.signal = (pid) => {
+        signals.push(pid);
+      };
+
+      const result = cleanupRunOwnedProcesses(runDir, undefined);
+
+      expect(result, String(contents)).toEqual({ killed: [], skipped: [] });
+      expect(asked, String(contents)).toEqual([]);
+      expect(signals, String(contents)).toEqual([]);
+    } finally {
+      Object.assign(runProcessCleanupInternals.deps, original);
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  }
+});
+
 test("startup GC reaps only provably abandoned runs in the current repository", () => {
   const root = makeRunDir();
   const storageRoot = join(root, "runs");

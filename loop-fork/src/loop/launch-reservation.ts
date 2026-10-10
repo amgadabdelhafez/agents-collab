@@ -413,6 +413,12 @@ const reconcileKind = (state: string): string | undefined => {
 const resolution = (manifest: RunManifest): string => {
   const kind = reconcileKind(manifest.state);
   if (kind && !manifest.workspaceReleasedAt) {
+    // `loop reconcile` refuses a run with no recorded binding or session
+    // (missing-runtime-identity), so naming it would send the operator to a
+    // command that cannot succeed.
+    if (!(manifest.workspaceBinding && manifest.tmuxSession)) {
+      return `run ${manifest.runId} recorded no workspace binding or tmux session, so no \`loop reconcile\` command can prove it gone; it needs an owner decision`;
+    }
     return `once nothing of run ${manifest.runId} is still running, run \`loop reconcile ${kind} ${manifest.runId}\``;
   }
   if (isActiveRunState(manifest.state)) {

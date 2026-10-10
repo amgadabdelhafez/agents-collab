@@ -30,6 +30,10 @@ import {
   tmuxRuntimeAbsentForManifest,
 } from "../../src/loop/launch-reservation";
 import {
+  cleanupRunOwnedProcesses,
+  runProcessCleanupInternals,
+} from "../../src/loop/run-process-cleanup";
+import {
   createRunManifest,
   readRunManifest,
   reconcileLegacyStoppedRun,
@@ -658,13 +662,29 @@ const RUN_70: RunShape = {
 };
 
 interface TeardownScript {
-  /** Pids the run-process cleanup actually ends. */
-  cleanupEnds: number[];
+  /**
+   * Pids that exit when the real run-process cleanup signals them. Which pids
+   * get signalled is the cleanup's own decision, not the script's.
+   */
+  exitOnSignal: number[];
+  /** Teardown through the Temporal journal's close-then-kill path. */
+  journal?: boolean;
   /** Whether the kill command itself fails. */
   killThrows?: boolean;
   /** What the session answers after the kill. */
   sessionAfterKill: Liveness;
 }
+
+/** What `ps -o command=` shows for each of run 70's recorded processes. */
+const run70Command = (runDir: string, pid: number): string | undefined => {
+  if (pid === 70_003) {
+    return `/Users/me/.local/bin/loop __bridge-worker ${runDir}`;
+  }
+  if (pid === 70_004) {
+    return `/Users/me/.local/bin/loop __bridge-mcp ${runDir} claude`;
+  }
+  return undefined;
+};
 
 const tearDown = async (
   fixture: Fixture,
@@ -678,50 +698,73 @@ const tearDown = async (
     epoch: 1,
     logFile: join(fixture.home, "governess.jsonl"),
     manifestPath,
+    journalTemporal: script.journal === true,
     runDir: join(fixture.repoDir, "70"),
     runId: "70",
     session: "ai-cur-loop-70",
   } as unknown as GovernessConfig;
+  const runDir = join(fixture.repoDir, "70");
   const launch = fakeDeps(fixture.home, world);
-  await stopGovernessLoop(
-    config,
-    {
-      ...defaultGovernessDeps(),
-      appendLog: (_file, record) => {
-        events.push((record as { event: string }).event);
+  const original = { ...runProcessCleanupInternals.deps };
+  // The real run-process cleanup decides what to signal; only the process
+  // table it consults and the signal it sends are faked.
+  runProcessCleanupInternals.deps.commandForPid = (pid) =>
+    world.livePids.has(pid) ? run70Command(runDir, pid) : undefined;
+  runProcessCleanupInternals.deps.listeningPids = () => [];
+  runProcessCleanupInternals.deps.signal = (pid) => {
+    if (!world.livePids.has(pid)) {
+      throw Object.assign(new Error("no such process"), { code: "ESRCH" });
+    }
+    if (script.exitOnSignal.includes(pid)) {
+      world.livePids.delete(pid);
+    }
+  };
+  try {
+    await stopGovernessLoop(
+      config,
+      {
+        ...defaultGovernessDeps(),
+        appendLog: (_file, record) => {
+          events.push((record as { event: string }).event);
+        },
+        cleanupRunProcesses: () =>
+          cleanupRunOwnedProcesses(runDir, readRunManifest(manifestPath)),
+        closeBeatWorkflow: script.journal
+          ? () => Promise.resolve(undefined)
+          : undefined,
+        fenceCurrent: () => true,
+        killSession: () => {
+          world.liveness.set(RUN_70_SOCKET, script.sessionAfterKill);
+          // The launcher's tmux client exits with its session.
+          world.livePids.delete(70_001);
+          world.livePids.delete(70_002);
+          if (script.killThrows) {
+            // The kill may even have landed, but the teardown was not told so;
+            // an unconfirmed kill must not be followed by a release attempt.
+            throw new Error("tmux control unavailable");
+          }
+        },
+        now: () => Date.parse("2026-10-06T11:00:00.000Z"),
+        releaseWorkspaceAfterTeardown: (teardown) =>
+          confirmTeardownRelease(
+            String(teardown.manifestPath),
+            teardown.runId,
+            {
+              attempts: 3,
+              now: () => "2026-10-06T11:00:01.000Z",
+              pidCanStillOwnRun: (pid) => world.livePids.has(pid),
+              retryMs: 0,
+              runtimeAbsent: (path) =>
+                tmuxRuntimeAbsentForManifest(path, launch),
+              sleep: async () => undefined,
+            }
+          ),
       },
-      cleanupRunProcesses: () => {
-        for (const pid of script.cleanupEnds) {
-          world.livePids.delete(pid);
-        }
-        return { killed: script.cleanupEnds, skipped: [] };
-      },
-      closeBeatWorkflow: undefined,
-      fenceCurrent: () => true,
-      killSession: () => {
-        world.liveness.set(RUN_70_SOCKET, script.sessionAfterKill);
-        // The launcher's tmux client exits with its session.
-        world.livePids.delete(70_001);
-        world.livePids.delete(70_002);
-        if (script.killThrows) {
-          // The kill may even have landed, but the teardown was not told so;
-          // an unconfirmed kill must not be followed by a release attempt.
-          throw new Error("tmux control unavailable");
-        }
-      },
-      now: () => Date.parse("2026-10-06T11:00:00.000Z"),
-      releaseWorkspaceAfterTeardown: (teardown) =>
-        confirmTeardownRelease(String(teardown.manifestPath), teardown.runId, {
-          attempts: 3,
-          now: () => "2026-10-06T11:00:01.000Z",
-          pidCanStillOwnRun: (pid) => world.livePids.has(pid),
-          retryMs: 0,
-          runtimeAbsent: (path) => tmuxRuntimeAbsentForManifest(path, launch),
-          sleep: async () => undefined,
-        }),
-    },
-    "user requested teardown"
-  );
+      "user requested teardown"
+    );
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+  }
   return events;
 };
 
@@ -737,49 +780,65 @@ const liveRun70World = (): World => {
 };
 
 test("a clean teardown leaves the workspace released and the next launch proceeds with no conflict", async () => {
-  await withFixture(async (fixture) => {
-    const manifestPath = writeRun(fixture, RUN_70);
-    const world = liveRun70World();
-    const events = await tearDown(fixture, world, manifestPath, {
-      cleanupEnds: [70_003, 70_004],
-      sessionAfterKill: "dead",
-    });
-    expect(events).toContain("workspace-released");
-    expect(readRunManifest(manifestPath)).toMatchObject({
-      state: "stopped",
-      status: "stopped",
-      workspaceReleasedAt: "2026-10-06T11:00:01.000Z",
-    });
+  for (const journal of [false, true]) {
+    await withFixture(async (fixture) => {
+      const name = journal ? "journal path" : "plain path";
+      const manifestPath = writeRun(fixture, RUN_70);
+      const world = liveRun70World();
+      // Every recorded process exits when signalled. The detached bridge
+      // worker (70_003) is ended only because the cleanup itself signals it.
+      const events = await tearDown(fixture, world, manifestPath, {
+        exitOnSignal: [70_003, 70_004],
+        journal,
+        sessionAfterKill: "dead",
+      });
+      expect(world.livePids.has(70_003), name).toBe(false);
+      expect(events, name).toContain("workspace-released");
+      expect(readRunManifest(manifestPath), name).toMatchObject({
+        state: "stopped",
+        status: "stopped",
+        workspaceReleasedAt: "2026-10-06T11:00:01.000Z",
+      });
 
-    const claim = await reservePairedLaunch(
-      makeOptions(),
-      fixture.binding,
-      fakeDeps(fixture.home, world)
-    );
-    expect(claim.storage.runId).toBe("71");
-    // Released by the teardown itself, so the launch had nothing to repair.
-    expect(world.logs).toEqual([]);
-  });
+      const claim = await reservePairedLaunch(
+        makeOptions(),
+        fixture.binding,
+        fakeDeps(fixture.home, world)
+      );
+      expect(claim.storage.runId, name).toBe("71");
+      // Released by the teardown itself, so the launch had nothing to repair.
+      expect(world.logs, name).toEqual([]);
+    });
+  }
 });
 
 test("a teardown whose cleanup cannot confirm absence does not release", async () => {
   const unconfirmed: [string, TeardownScript][] = [
     [
-      "a signalled bridge worker is still alive",
-      { cleanupEnds: [70_004], sessionAfterKill: "dead" },
+      "the signalled bridge worker is still alive",
+      { exitOnSignal: [70_004], sessionAfterKill: "dead" },
     ],
     [
       "the session still answers live",
-      { cleanupEnds: [70_003, 70_004], sessionAfterKill: "live" },
+      { exitOnSignal: [70_003, 70_004], sessionAfterKill: "live" },
     ],
     [
       "the session cannot be asked",
-      { cleanupEnds: [70_003, 70_004], sessionAfterKill: "unknown" },
+      { exitOnSignal: [70_003, 70_004], sessionAfterKill: "unknown" },
     ],
     [
       "the kill command failed",
       {
-        cleanupEnds: [70_003, 70_004],
+        exitOnSignal: [70_003, 70_004],
+        killThrows: true,
+        sessionAfterKill: "dead",
+      },
+    ],
+    [
+      "the kill command failed on the journal path",
+      {
+        exitOnSignal: [70_003, 70_004],
+        journal: true,
         killThrows: true,
         sessionAfterKill: "dead",
       },
@@ -815,6 +874,62 @@ test("a teardown whose cleanup cannot confirm absence does not release", async (
         [manifestPath],
         "loop reconcile stopped-run 70"
       );
+    });
+  }
+});
+
+// --- A dead run reconcile cannot release ------------------------------------
+//
+// `loop reconcile` refuses a run that recorded no workspace binding or no tmux
+// session (missing-runtime-identity). The launch conflict for such a run must
+// not tell the operator to run that command.
+
+test("the conflict for a dead run with no binding or session names no reconcile command", async () => {
+  const shapes: [string, string][] = [
+    ["no workspace binding", "workspaceBinding"],
+    ["no tmux session", "tmuxSession"],
+  ];
+  for (const [name, field] of shapes) {
+    await withFixture(async (fixture) => {
+      const manifestPath = writeRun(fixture, {
+        pid: 80_001,
+        runId: "80",
+        socket: "/tmp/ls-dead/tmux-80.sock",
+        state: "stopped",
+        status: "stopped",
+      });
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      delete manifest[field];
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      const world = newWorld();
+
+      const refusal = await reconcileLegacyStoppedRun(manifestPath, "80", {
+        now: () => "2026-10-06T12:00:00.000Z",
+        pidCanStillOwnRun: () => false,
+        runtimeAbsent: () => Promise.resolve(true),
+      });
+      expect(refusal, name).toMatchObject({
+        reason: "missing-runtime-identity",
+        status: "refused",
+      });
+
+      let message = "";
+      try {
+        await reservePairedLaunch(
+          makeOptions(),
+          fixture.binding,
+          fakeDeps(fixture.home, world)
+        );
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, name).toContain("launch conflict: run 80");
+      expect(message, name).toContain("it needs an owner decision");
+      expect(message, name).not.toContain("loop reconcile stopped-run");
+      expect(
+        readRunManifest(manifestPath)?.workspaceReleasedAt,
+        name
+      ).toBeUndefined();
     });
   }
 });

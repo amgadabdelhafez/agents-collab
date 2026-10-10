@@ -5581,14 +5581,22 @@ export const stopGovernessLoop = (
   const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
   if (!close) {
     const killed = killTeardownSession(config, deps, record);
-    return killed && deps.releaseWorkspaceAfterTeardown
-      ? releaseAfterTeardown(config, deps)
-      : Promise.resolve();
+    if (!(killed && deps.releaseWorkspaceAfterTeardown)) {
+      settleTeardownHangupGrace();
+      return Promise.resolve();
+    }
+    return releaseAfterTeardown(config, deps).finally(
+      settleTeardownHangupGrace
+    );
   }
   const closeThenKill = async (): Promise<void> => {
     await closeBeatBeforeKill(config, deps, reason, close);
-    if (killTeardownSession(config, deps, record)) {
-      await releaseAfterTeardown(config, deps);
+    try {
+      if (killTeardownSession(config, deps, record)) {
+        await releaseAfterTeardown(config, deps);
+      }
+    } finally {
+      settleTeardownHangupGrace();
     }
   };
   return closeThenKill();
@@ -5672,23 +5680,67 @@ export interface TeardownReleaseResult {
 const TEARDOWN_RELEASE_ATTEMPTS = 10;
 const TEARDOWN_RELEASE_RETRY_MS = 300;
 const TEARDOWN_HANGUP_GRACE_MS = 10_000;
-let teardownHangupGraceArmed = false;
+
+/**
+ * Process hooks and state of the teardown hangup grace. Production uses the
+ * real process; tests replace the hooks and reset the state.
+ */
+export const teardownHangupInternals = {
+  exit: (code: number): void => {
+    process.exit(code);
+  },
+  graceMs: TEARDOWN_HANGUP_GRACE_MS,
+  onHangup: (handler: () => void): void => {
+    process.on("SIGHUP", handler);
+  },
+  schedule: (callback: () => void, ms: number): void => {
+    setTimeout(callback, ms);
+  },
+  state: { armed: false, hungUp: false, settled: false },
+};
 
 /**
  * Killing the session also hangs up this process, which runs in one of its
  * panes. Without this the governess dies before it can observe that the
  * session and the run's processes are gone, so a clean teardown could never
- * hand back its workspace. On hangup the process keeps running for a bounded
- * grace window, long enough for `releaseAfterTeardown`, and then exits.
+ * hand back its workspace. Armed just before the kill, a hangup no longer ends
+ * the process at once: it exits as soon as the teardown settles (its release
+ * attempt done or skipped) or when the bounded grace runs out, whichever comes
+ * first. A hangup after the teardown settled exits at once, as before arming.
  */
-const armTeardownHangupGrace = (): void => {
-  if (teardownHangupGraceArmed) {
+export const armTeardownHangupGrace = (): void => {
+  const hooks = teardownHangupInternals;
+  if (hooks.state.armed) {
     return;
   }
-  teardownHangupGraceArmed = true;
-  process.on("SIGHUP", () => {
-    setTimeout(() => process.exit(0), TEARDOWN_HANGUP_GRACE_MS);
+  hooks.state.armed = true;
+  hooks.onHangup(() => {
+    if (hooks.state.hungUp) {
+      return;
+    }
+    hooks.state.hungUp = true;
+    if (hooks.state.settled) {
+      hooks.exit(0);
+      return;
+    }
+    hooks.schedule(() => hooks.exit(0), hooks.graceMs);
   });
+};
+
+/**
+ * The teardown is done with this process. If the session kill already hung
+ * it up, exit now; a later hangup exits at once. No effect unless the grace
+ * was armed, which only the default `killSession` does.
+ */
+export const settleTeardownHangupGrace = (): void => {
+  const hooks = teardownHangupInternals;
+  if (!hooks.state.armed || hooks.state.settled) {
+    return;
+  }
+  hooks.state.settled = true;
+  if (hooks.state.hungUp) {
+    hooks.exit(0);
+  }
 };
 
 // Refusals that can clear on their own within moments of a session kill: the
