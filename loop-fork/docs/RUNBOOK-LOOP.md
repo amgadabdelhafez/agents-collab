@@ -2098,6 +2098,47 @@ releases on a live shared socket..." and "a present endpoint with unknown
 liveness blocks...") failed once at 607a3890 and passed on every rerun; the
 base ea968d82 passed them on three runs.
 
+### Port onto the r6 control-plane line (claude/fix7-dead-run-release, 2026-10-10)
+
+The installed hotfix (claude/hotfix-dead-run-release, ea968d82..93c00070,
+20 commits) was cherry-picked commit by commit onto
+claude/fix-integration-r6-2026-10-09 (c16636fc), which descends from
+ea968d82. What the port changed beyond conflict resolution:
+
+- `pidCanStillOwnRun` and `defaultPidOwnershipDeps` stay in r6's
+  `pid-ownership.ts`; the defaults also carry `processGroupAlive`.
+- Detached-worker identity uses r6's exact argv-tail rule
+  (`commandEndsWithArgs`, now in `utility-constants.ts`) instead of the
+  hotfix's `commandHasExactArg`: the bridge worker must end with
+  `__bridge-worker <runDir>`, a utility worker with `__utility-worker
+  <runDir> <epoch> <jobId>`. r6's startup GC no longer ends the bridge
+  worker (the hotfix's teardown-only scope).
+- The orchestration host rule (rule 0 above).
+- `scripts/test-hermetic.sh` passes the docker endpoint on as
+  `DOCKER_HOST` (its context lives under the swapped `HOME`); without it
+  every Docker-backed Postgres file failed under the launcher.
+- teardown-helper-gate's intake test no longer races a 50 ms key timer
+  against r6's heavier first tick (failed 12 of 20 runs).
+- The Temporal-journal teardown order is pinned on a real local Temporal
+  test server (`governess-beat-close.test.ts`): beat close, then pre-kill
+  collection, kill, group end, handback.
+
+No Temporal-workflow-reachable source changed: a rebuilt bundle differs
+from the committed one only in source-map paths (as a rebuild of r6 itself
+does), so the generated bundle is unchanged.
+
+Evidence (2026-10-10, bun 1.4.2, macOS arm64, every file under the hermetic
+launcher, Docker/colima Postgres and `TestWorkflowEnvironment.createLocal`):
+r6 157 files, 2655 pass, 17 fail; the port 168 files, 2798 pass, 16 fail.
+The 16 failing tests are the same names on both (loop.test.ts runCli x6,
+governed-supervisor-message x2, native-subagent x1, seat-pane-identity x1,
+tmux.test.ts x5, utility-composed-release x1); r6's 17th ("rejects malformed
+stopped-run reconciliation") passes with the ported usage text. A real tmux
+smoke (private socket in a scratch `TMUX_TMPDIR`) and a real Codex
+app-server smoke (codex-cli 0.162.1, scratch `CODEX_HOME`) passed on the
+port's sources; the host-rule and teardown-wiring mutants fail the tmux
+smoke. 25 core-guard mutants were killed by the suite.
+
 ## Verifying a build (provenance, 2026-10-10)
 
 The compiled `loop` binary is not byte-reproducible, so its sha256 names one
