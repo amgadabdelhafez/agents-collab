@@ -49,11 +49,11 @@ import {
   promoteMemoryCheckpoint,
 } from "./loop/memory-checkpoint";
 import { runOrchestrationCommand } from "./loop/orchestration-command";
-import { groupCanStillOwnRun } from "./loop/process-group";
 import {
   defaultPidOwnershipDeps,
   pidCanStillOwnRun,
 } from "./loop/pid-ownership";
+import { groupCanStillOwnRun } from "./loop/process-group";
 import {
   RECON_PANE_SUBCOMMAND,
   type ReconPaneIndex,

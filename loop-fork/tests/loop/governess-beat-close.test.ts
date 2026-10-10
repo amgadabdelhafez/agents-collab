@@ -545,7 +545,7 @@ describe("governess-beat close on a real Temporal test server", () => {
           terminateRunProcessGroups: (_ending, targets) => {
             order.push(`terminate:${targets.map((target) => target.id)}`);
             return Promise.resolve({
-              exited: [9_999_001],
+              exited: ["agent pane %1 process group 9999001"],
               failed: [],
               killed: [],
               survivors: [],

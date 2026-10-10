@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
 import { resolveLaunchModel } from "./launch-defaults";
-import { groupCanStillOwnRun, processGroupAlive } from "./process-group";
 import {
   defaultPidLiveness,
   defaultPidStartedAt,
   pidCanStillOwnRun,
 } from "./pid-ownership";
+import { groupCanStillOwnRun, processGroupAlive } from "./process-group";
 import {
   auxiliaryProcessOwnership,
   createRunManifest,
