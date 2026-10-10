@@ -12,6 +12,7 @@ import { spawn } from "bun";
 import type { ImmediateInfoRequest } from "../src/loop/args";
 import { HELP, RECONCILE_USAGE } from "../src/loop/constants";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
+import { recordRunPaneProcesses } from "../src/loop/run-pane-processes";
 import {
   createRunManifest,
   readRunManifest,
@@ -1255,6 +1256,64 @@ test("runCli reconcile stopped-run does not wait on a live process another live 
       write.mockRestore();
       stub.kill("SIGKILL");
       rmSync(elsewhere, { force: true, recursive: true });
+    }
+  });
+});
+
+test("runCli reconcile stopped-run waits while a member of a recorded agent pane group lives after its leader is gone", async () => {
+  await withSyntheticHome(async (home) => {
+    const storage = writeSyntheticTerminalRun(home, "34", "stopped");
+    // A pane process group whose leader exited and left a tool running in it.
+    const leader = spawn(
+      [
+        "/usr/bin/perl",
+        "-e",
+        "setpgrp(0,0); if (fork() == 0) { sleep 30; exit 0 } exit 0",
+      ],
+      { detached: true, stderr: "ignore", stdin: "ignore", stdout: "ignore" }
+    );
+    const pgid = leader.pid;
+    await leader.exited;
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      recordRunPaneProcesses({
+        agentPaneIds: ["%1"],
+        now: () => new Date(Date.now() + 2000).toISOString(),
+        panes: [{ paneId: "%1", pid: pgid }],
+        pgidOf: () => pgid,
+        runDir: storage.runDir,
+        session: "synthetic-loop-34",
+      });
+      const { runCli } = await loadRunCli({
+        closeGovernessBeatForTerminalRun: () => Promise.resolve(undefined),
+      });
+      await expect(runCli(["reconcile", "stopped-run", "34"])).rejects.toThrow(
+        "stopped-run reconciliation refused: recorded-process-may-be-live"
+      );
+      expect(
+        readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+      ).toBeUndefined();
+      // Once the group's last member is gone the same command releases.
+      process.kill(-pgid, "SIGKILL");
+      for (let waited = 0; waited < 50; waited += 1) {
+        try {
+          process.kill(-pgid, 0);
+        } catch {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      await runCli(["reconcile", "stopped-run", "34"]);
+      expect(
+        readRunManifest(storage.manifestPath)?.workspaceReleasedAt
+      ).toBeString();
+    } finally {
+      write.mockRestore();
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
     }
   });
 });
