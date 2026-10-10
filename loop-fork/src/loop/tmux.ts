@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -172,7 +173,16 @@ const ONLY_MODE_FLAGS = [
 ] as const;
 const RUN_BASE_ENV = "LOOP_RUN_BASE";
 const RUN_ID_ENV = "LOOP_RUN_ID";
-const CLAUDE_TRUST_PROMPT = "Is this a project you created or one you trust?";
+// Claude Code's folder trust dialog, across the headings it has shipped. The
+// 2026-10-11 fresh-repo capture read "Do you trust this folder?" with
+// "No, exit" selected above "Yes, I trust this folder".
+const CLAUDE_TRUST_PROMPTS = [
+  "Do you trust this folder?",
+  "Do you trust the files in this folder?",
+  "Is this a project you created or one you trust?",
+] as const;
+const CLAUDE_TRUST_ACCEPT = "Yes, I trust this folder";
+const CLAUDE_DEV_CHANNELS_LIST = "Channels:";
 const CLAUDE_BYPASS_PROMPT = "running in Bypass Permissions mode";
 const CLAUDE_BYPASS_MODE = "Bypass Permissions mode";
 const CLAUDE_BYPASS_ACCEPT = "Yes, I accept";
@@ -2495,7 +2505,11 @@ const detectClaudePrompt = (text: string): ClaudeStartupPrompt | undefined => {
   ) {
     return "bypass";
   }
-  if (normalized.includes(CLAUDE_TRUST_PROMPT)) {
+  if (
+    CLAUDE_TRUST_PROMPTS.some((marker) => normalized.includes(marker)) ||
+    (normalized.includes(CLAUDE_TRUST_ACCEPT) &&
+      normalized.includes(CLAUDE_EXIT_OPTION))
+  ) {
     return "trust";
   }
   if (
@@ -2619,6 +2633,235 @@ const readClaudeModalSelection = (
   }
   return CLAUDE_SELECTED_BYPASS_EXIT_RE.test(normalized) ? "exit" : "ambiguous";
 };
+
+/**
+ * What the launch knows about the Claude seat it starts: the loop-bridge
+ * server its `--dangerously-load-development-channels` names, whether the
+ * operator passed `--trust-workspace`, and the spellings of the workspace the
+ * pane was started in (the folder trust prompt may print any of them).
+ */
+export interface ClaudeStartupContext {
+  channelServer: string | undefined;
+  trustWorkspace: boolean;
+  workspacePaths: readonly string[];
+}
+
+const resolvedPath = (path: string): string | undefined => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * The workspace as a folder trust prompt may print it: as given, resolved,
+ * and relative to the home directory.
+ */
+const workspacePathSpellings = (
+  cwd: string,
+  home: string | undefined
+): string[] => {
+  const absolute = [cwd, resolvedPath(cwd)].filter((path): path is string =>
+    Boolean(path)
+  );
+  const homes = home
+    ? [home, resolvedPath(home)].filter((path): path is string => Boolean(path))
+    : [];
+  const spellings = new Set(absolute);
+  for (const path of absolute) {
+    for (const root of homes) {
+      if (path === root) {
+        spellings.add("~");
+      } else if (path.startsWith(`${root}/`)) {
+        spellings.add(`~${path.slice(root.length)}`);
+      }
+    }
+  }
+  return [...spellings];
+};
+
+// Without a context nothing is answered: no channel is this run's, and the
+// folder trust prompt is never accepted.
+const NO_CLAUDE_STARTUP_CONTEXT: ClaudeStartupContext = {
+  channelServer: undefined,
+  trustWorkspace: false,
+  workspacePaths: [],
+};
+
+const ALL_WHITESPACE_RE = /\s+/g;
+const CLAUDE_MODAL_OPTION_ROW_RE = /^\s*(?:❯\s*)?\d+\.\s/;
+const CLAUDE_TRUST_CONFIRM_ROW_RE = /^\s*(?:❯\s*)?(?:\d+\.\s*)?Yes,/;
+const CLAUDE_TRUST_EXIT_ROW_RE = /^\s*(?:❯\s*)?(?:\d+\.\s*)?No,/;
+const CLAUDE_TRUST_PATH_ROW_RE = /^\s*(?:\/|~(?:\/|\s*$))/;
+// The legacy dialog prints its path under this heading, above the question.
+const CLAUDE_TRUST_TAIL_MARKERS = [
+  "Accessing workspace:",
+  ...CLAUDE_TRUST_PROMPTS,
+  CLAUDE_TRUST_ACCEPT,
+];
+
+const isClaudeModalOptionRow = (line: string): boolean =>
+  CLAUDE_SELECTED_ROW_RE.test(line) ||
+  CLAUDE_MODAL_OPTION_ROW_RE.test(line) ||
+  CLAUDE_TRUST_CONFIRM_ROW_RE.test(line) ||
+  CLAUDE_TRUST_EXIT_ROW_RE.test(line);
+
+/**
+ * The channel list of the active development-channels prompt with all
+ * whitespace removed (a narrow pane hard-wraps it mid-name), or `undefined`
+ * when no `Channels:` row is readable. It runs from the `Channels:` row to the
+ * first blank or option row.
+ */
+const readDevChannelList = (text: string): string | undefined => {
+  const tail = activeClaudeModalTail(text, CLAUDE_DEV_CHANNELS_PROMPT);
+  const start = tail.findIndex((line) =>
+    line.trimStart().startsWith(CLAUDE_DEV_CHANNELS_LIST)
+  );
+  if (start === -1) {
+    return undefined;
+  }
+  const parts = [
+    (tail[start] ?? "").trimStart().slice(CLAUDE_DEV_CHANNELS_LIST.length),
+  ];
+  for (const line of tail.slice(start + 1)) {
+    if (!line.trim() || isClaudeModalOptionRow(line)) {
+      break;
+    }
+    parts.push(line);
+  }
+  const list = parts.join("").replace(ALL_WHITESPACE_RE, "");
+  return list || undefined;
+};
+
+/**
+ * Why the development-channels prompt must not be answered, or `undefined`
+ * when it lists exactly this run's loop-bridge server and nothing else. Loop
+ * loads only its own bridge; any other listed channel is not loop's to accept.
+ */
+const devChannelRefusal = (
+  pane: string,
+  text: string,
+  channelServer: string | undefined
+): string | undefined => {
+  const listed = readDevChannelList(text);
+  const expected = channelServer ? `server:${channelServer}` : undefined;
+  if (expected && listed === expected) {
+    return undefined;
+  }
+  return `Claude pane "${pane}" development-channels prompt lists ${listed === undefined ? "no readable channel" : `"${listed}"`}, not this run's loop bridge ${expected ? `"${expected}"` : "(this launch loads none)"}; refused to answer it.`;
+};
+
+/** The active folder trust dialog, from its topmost heading down. */
+const claudeTrustModalTail = (text: string): string[] => {
+  let tail: string[] = [];
+  for (const marker of CLAUDE_TRUST_TAIL_MARKERS) {
+    const candidate = activeClaudeModalTail(text, marker);
+    if (candidate.length > tail.length) {
+      tail = candidate;
+    }
+  }
+  return tail;
+};
+
+type ClaudeTrustSelection =
+  | { kind: "ambiguous" }
+  | { kind: "confirm" }
+  | { kind: "exit"; toward: "Down" | "Up" };
+
+/**
+ * Which trust option is selected. With exit selected, `toward` is the key
+ * that moves the selection to the one trust row.
+ */
+const readClaudeTrustSelection = (tail: string[]): ClaudeTrustSelection => {
+  const rowsMatching = (re: RegExp): number[] =>
+    tail.flatMap((line, index) => (re.test(line) ? [index] : []));
+  const selected = rowsMatching(CLAUDE_SELECTED_ROW_RE);
+  const confirmRows = rowsMatching(CLAUDE_TRUST_CONFIRM_ROW_RE);
+  const [row] = selected;
+  if (selected.length !== 1 || row === undefined || confirmRows.length !== 1) {
+    return { kind: "ambiguous" };
+  }
+  const line = tail[row] ?? "";
+  if (CLAUDE_TRUST_CONFIRM_ROW_RE.test(line)) {
+    return { kind: "confirm" };
+  }
+  if (!CLAUDE_TRUST_EXIT_ROW_RE.test(line)) {
+    return { kind: "ambiguous" };
+  }
+  return {
+    kind: "exit",
+    toward: (confirmRows[0] ?? row) > row ? "Down" : "Up",
+  };
+};
+
+/**
+ * The folders the trust dialog names above its options, whitespace removed
+ * (a long path wraps onto the next rows).
+ */
+const readClaudeTrustPaths = (tail: string[]): string[] => {
+  const paths: string[] = [];
+  for (let index = 0; index < tail.length; index += 1) {
+    const line = tail[index] ?? "";
+    if (isClaudeModalOptionRow(line)) {
+      break;
+    }
+    if (!CLAUDE_TRUST_PATH_ROW_RE.test(line)) {
+      continue;
+    }
+    let path = line;
+    while (
+      index + 1 < tail.length &&
+      tail[index + 1]?.trim() &&
+      !isClaudeModalOptionRow(tail[index + 1] ?? "")
+    ) {
+      index += 1;
+      path += tail[index];
+    }
+    paths.push(path.replace(ALL_WHITESPACE_RE, ""));
+  }
+  return paths;
+};
+
+/**
+ * Why `--trust-workspace` must not answer this trust dialog, or `undefined`
+ * when every folder it names is this workspace (or it names none: the pane
+ * was started in this workspace, so that is the folder it asks about).
+ */
+const trustWorkspaceRefusal = (
+  pane: string,
+  tail: string[],
+  workspacePaths: readonly string[]
+): string | undefined => {
+  const accepted = new Set(
+    workspacePaths.map((path) => path.replace(ALL_WHITESPACE_RE, ""))
+  );
+  const named = readClaudeTrustPaths(tail);
+  if (named.every((path) => accepted.has(path))) {
+    return undefined;
+  }
+  return `Claude pane "${pane}" folder trust prompt names ${named.join(", ")}, not this workspace (${workspacePaths[0] ?? "unknown"}); --trust-workspace answers only for this workspace, so it refused.`;
+};
+
+/**
+ * Claude Code asks once per folder whether to trust it. That is a security
+ * consent, so loop never gives it on its own: without `--trust-workspace` the
+ * launch fails at once with the exact remedy. A plain Error, not a
+ * `ClaudeStartupInputRequiredError`: the remedy is a relaunch, so the failed
+ * start is terminalized (session, transports and run state) instead of being
+ * preserved and locking the workspace.
+ */
+class ClaudeWorkspaceTrustRequiredError extends Error {
+  readonly pane: string;
+
+  constructor(pane: string, workspace: string) {
+    super(
+      `Claude Code has not trusted ${workspace} yet: run \`claude\` once in this folder and accept, or relaunch with --trust-workspace. (Claude pane "${pane}" is showing its folder trust prompt; loop never accepts it without that flag.)`
+    );
+    this.name = "ClaudeWorkspaceTrustRequiredError";
+    this.pane = pane;
+  }
+}
 
 const observeClaudeModal = (
   previous: ClaudeModalStability | undefined,
@@ -2937,9 +3180,13 @@ const unblockClaudePane = async (
   deps: Pick<
     TmuxDeps,
     "capturePane" | "capturePaneSnapshot" | "nowMs" | "sendKeys" | "sleep"
-  >
+  >,
+  startup: ClaudeStartupContext = NO_CLAUDE_STARTUP_CONTEXT
 ): Promise<void> => {
-  const handledPrompts = new Set<ClaudeStartupPrompt>();
+  let trustConfirmSent = false;
+  let trustInitialSelection: ClaudeTrustSelection["kind"] | undefined;
+  let trustInitialStability: ClaudeModalStability | undefined;
+  let trustNavigationSent = false;
   let bypassConfirmSent = false;
   let bypassInitialSelection: ClaudeModalSelection | undefined;
   let bypassInitialStability: ClaudeModalStability | undefined;
@@ -3047,6 +3294,16 @@ const unblockClaudePane = async (
           await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
           continue;
         }
+        // Judged on the settled frame the Enter would answer: a partial
+        // redraw never refuses, a settled foreign channel always does.
+        const refusal = devChannelRefusal(
+          pane,
+          paneText,
+          startup.channelServer
+        );
+        if (refusal) {
+          throw new Error(refusal);
+        }
         deps.sendKeys(pane, ["Enter"]);
         devChannelConfirmAttempts = 1;
         devChannelPreConfirmStability = undefined;
@@ -3078,6 +3335,14 @@ const unblockClaudePane = async (
         throw new Error(
           `Claude pane "${pane}" development-channel confirmation remained active after ${CLAUDE_DEV_CHANNEL_CONFIRM_MAX_ATTEMPTS} positively detected attempts; refused to paste the launch bootstrap.`
         );
+      }
+      const retryRefusal = devChannelRefusal(
+        pane,
+        paneText,
+        startup.channelServer
+      );
+      if (retryRefusal) {
+        throw new Error(retryRefusal);
       }
       deps.sendKeys(pane, ["Enter"]);
       devChannelConfirmAttempts += 1;
@@ -3127,10 +3392,57 @@ const unblockClaudePane = async (
       bypassConfirmSent = true;
       continue;
     }
-    if (prompt === "trust" && !handledPrompts.has(prompt)) {
+    if (prompt === "trust") {
+      if (!startup.trustWorkspace) {
+        throw new ClaudeWorkspaceTrustRequiredError(
+          pane,
+          startup.workspacePaths[0] ?? "this workspace"
+        );
+      }
+      if (trustConfirmSent) {
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      const tail = claudeTrustModalTail(paneText);
+      const selection = readClaudeTrustSelection(tail);
+      if (trustNavigationSent) {
+        if (selection.kind === "confirm") {
+          deps.sendKeys(pane, ["Enter"]);
+          trustConfirmSent = true;
+          continue;
+        }
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (selection.kind === "ambiguous") {
+        trustInitialSelection = undefined;
+        trustInitialStability = undefined;
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (selection.kind !== trustInitialSelection) {
+        trustInitialSelection = selection.kind;
+        trustInitialStability = undefined;
+      }
+      trustInitialStability = observeClaudeModal(
+        trustInitialStability,
+        windowActivity
+      );
+      if (!isClaudeModalSettled(trustInitialStability)) {
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      const refusal = trustWorkspaceRefusal(pane, tail, startup.workspacePaths);
+      if (refusal) {
+        throw new Error(refusal);
+      }
+      if (selection.kind === "exit") {
+        deps.sendKeys(pane, [selection.toward]);
+        trustNavigationSent = true;
+        continue;
+      }
       deps.sendKeys(pane, ["Enter"]);
-      handledPrompts.add(prompt);
-      await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+      trustConfirmSent = true;
       continue;
     }
     if (devChannelConfirmAttempts > 0 && prompt === undefined) {
@@ -3154,6 +3466,11 @@ const unblockClaudePane = async (
   if (bypassNavigationSent || bypassConfirmSent) {
     throw new Error(
       `Claude pane "${pane}" bypass-permissions confirmation did not reach a verified next state; refused to send another key or paste the launch bootstrap.`
+    );
+  }
+  if (trustNavigationSent || trustConfirmSent) {
+    throw new Error(
+      `Claude pane "${pane}" folder trust confirmation did not reach a verified next state; refused to send another key or paste the launch bootstrap.`
     );
   }
   throw new ClaudeStartupReadinessTimeoutError(
@@ -3353,6 +3670,7 @@ const submitVisibleClaudeKickoff = async (input: {
 };
 
 const createPairedPaneLayout = async (input: {
+  claudeStartup: ClaudeStartupContext;
   deps: TmuxDeps;
   governess: boolean;
   leftCommand: string;
@@ -3421,10 +3739,14 @@ const createPairedPaneLayout = async (input: {
   ]);
   try {
     if (input.paneAgents.left === "claude") {
-      await unblockClaudePane(left, input.deps);
+      await unblockClaudePane(left, input.deps, input.claudeStartup);
     }
     if (input.paneAgents.right === "claude") {
-      await unblockClaudePane(rightBeforeUtility, input.deps);
+      await unblockClaudePane(
+        rightBeforeUtility,
+        input.deps,
+        input.claudeStartup
+      );
     }
   } catch (error) {
     if (error instanceof ClaudeStartupInputRequiredError) {
@@ -3599,6 +3921,11 @@ const startPairedSession = async (
         manifest.claudeChannelServer
       )
     : undefined;
+  const claudeStartup: ClaudeStartupContext = {
+    channelServer: claudeChannelServer,
+    trustWorkspace: Boolean(launch.opts.trustWorkspace),
+    workspacePaths: workspacePathSpellings(deps.cwd, deps.env.HOME),
+  };
   // Recorded before the panes launch so a kickoff-confirmation failure still
   // leaves the observed producer version in the run manifest for forensics.
   if (claudeChannelServer) {
@@ -3941,6 +4268,7 @@ const startPairedSession = async (
         );
       try {
         let targets = await createPairedPaneLayout({
+          claudeStartup,
           deps,
           governess: true,
           leftCommand: "",
@@ -4242,6 +4570,7 @@ const startPairedSession = async (
     let paneTargets: PairedPaneTargets;
     try {
       paneTargets = await createPairedPaneLayout({
+        claudeStartup,
         deps,
         governess: Boolean(launch.opts.governess),
         leftCommand,

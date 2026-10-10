@@ -390,6 +390,11 @@ export interface Options {
   reviewPlan?: PlanReviewMode;
   sessionId?: string;
   tmux?: boolean;
+  /**
+   * `--trust-workspace`: answer Claude Code's folder trust prompt, for this
+   * launch's workspace only. Off by default; the prompt is a security consent.
+   */
+  trustWorkspace?: boolean;
   workspace?: string;
   workspaceBinding?: LaunchWorkspaceBinding;
   worktree?: boolean;
