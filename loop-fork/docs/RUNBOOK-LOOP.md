@@ -679,15 +679,23 @@ which was written before key rotation was merged.
    plan one host at a time knowing that a host whose format another host
    changed refuses to record until it restarts. On the candidate checkout run
    `bun run test:file tests/loop/temporal-bundle-replay.test.ts`. The file
-   is not on r4 or the round-5 base (c7646ed3): it is on
+   is not in the round-5 base commit (c7646ed3) or in r4: it is on
    claude/fix5-temporal-replay (c2ea0eae) and r5 integration (merge
-   9b3dca36). All 29 pass on r5 integration (2026-10-09, at 9b3dca36 with
-   only test files changed), so in-flight V2 messages and task graphs need
-   no drain when upgrading to it from 40097564 or ef570282. A candidate
-   without the file (r4, the round-5 base) was not checked this way: do not
-   upgrade to it with V2 executions in flight. If any of the 29 fails on the
-   candidate, do not upgrade with executions in flight (see "In-flight
-   Temporal executions across a bundle change").
+   9b3dca36). c2ea0eae is c7646ed3 plus test files, the history recorder
+   script and this runbook only (`git diff --stat c7646ed3 c2ea0eae --
+   loop-fork/src` is empty), so its run checked the round-5 base's own
+   bundle: all 29 pass there (2026-10-07) and on r5 integration (2026-10-09,
+   at 9b3dca36 with only test files changed). For either candidate,
+   in-flight V2 messages and task graphs need no drain when upgrading from
+   40097564 or ef570282; to run the check on a round-5 base checkout, take
+   the test, fixture and support files from c2ea0eae. r4 (00094c66) was not
+   checked: its committed bundle and workflow port differ from c7646ed3's,
+   and no recorded run replayed the histories on it. Do not upgrade to r4
+   with V2 executions in flight. If any of the 29 fails on the candidate,
+   do not upgrade with executions in flight (see "In-flight Temporal
+   executions across a bundle change"). (Corrected 2026-10-09: this step
+   said all 29 pass "on the round-5 base", right about the code but not
+   about where the file is.)
 2. Config, on every host: if `resultArtifacts` has entries, add
    `resultGraphKeyEnv` and provide the key through the secret store.
    Recompute each entry's `graphWorkflowId` with `loop orchestration
@@ -990,9 +998,13 @@ launcher lineage remains available as a degraded alternative (Rollback B1).
    delivery in flight at the switch may reach the pane twice (untested).
 
 Roll forward again: put the V2 config back, point `LOOP_BIN` at the V2
-candidate, and kickstart. Held V2 executions resume (tested). How the V2
-runtime treats claim, retry and escalation deadlines that passed during the
-rollback is unverified.
+candidate, and kickstart. Held V2 executions resume (tested). Before the
+kickstart, check `bridge-dedupe-claims/` for stale claim files (Pre-upgrade
+checklist, item 4): a V2 process that step 4 ended inside an enqueue leaves
+one, 455ccc32 never removes it, and the V2 build would answer `deferred` to
+that message for as long as it stays. How the V2 runtime treats claim,
+retry and escalation deadlines that passed during the rollback is
+unverified.
 
 #### Rollback B: to the launcher lineage or origin/main
 
@@ -1148,13 +1160,35 @@ Before the V2 line replaces the live service:
      another; 455ccc32 keys each attempt by its idempotency key and
      deduplicates pending messages only. Every keyed enqueue on the V2 line
      holds a claim file `<runDir>/bridge-dedupe-claims/<sha256>.lock`
-     (0600, removed when the enqueue ends) and answers `deferred` while
-     another holds it; 455ccc32 has no claim files and ignores the
-     directory. By code reading, the live config has no `manifestPath`
-     supervisor, so this path is idle there until an `a2aV2` recipient is
-     added (item 6). Back up, with the state above, the run directory
-     (`bridge.jsonl`) of any supervisor that has a `manifestPath`. The
-     reverse direction is Rollback A, step 9.
+     (0600, created with exclusive create, holding `<pid>:<uuid>`) for the
+     length of the enqueue, removes it when the enqueue returns or throws,
+     and answers `deferred` while the file exists; 455ccc32 has no claim
+     files and ignores the directory. Nothing recovers a stale claim: no
+     code checks the pid or the file's age, so a process that dies
+     mid-enqueue (a crash, `kill -9`, a restart that lands inside the
+     enqueue) leaves the file behind, and every later enqueue of that
+     message, same source, target and key, answers `deferred` until
+     someone removes it. Supervisor delivery treats `deferred` as a
+     transient failure, so that message is retried but not queued while
+     the file exists (bridge-store.ts `acquireBridgeDedupeClaim` and
+     `enqueueBridgeMessage`, bridge-supervisor-message-delivery.ts at
+     9b3dca36; reproduced 2026-10-09 in a scratch run directory: a claim
+     acquired and never released, three enqueues under its key all
+     `deferred`, another key `queued`). Pre-existing on the V2 line, not
+     fixed here. So before an upgrade, after it, and before and after any
+     rollback or roll forward, list `bridge-dedupe-claims/` in the run
+     directory of every supervisor with a `manifestPath`, and of any
+     run whose own processes run a V2-line build (governess controls and
+     the bridge tool's `dedupe_key` take claims too). With every process
+     that writes that run's bridge stopped, any file there is stale. While
+     they run, a file whose pid (the text before the first `:`) is not a
+     running process (`ps -p <pid>`) is stale; a reused pid can make a
+     stale file look live, so stop the writers when in doubt. Remove only
+     stale files, and record what you removed. By code reading, the live
+     config has no `manifestPath` supervisor, so this path is idle there
+     until an `a2aV2` recipient is added (item 6). Back up, with the state
+     above, the run directory (`bridge.jsonl`) of any supervisor that has a
+     `manifestPath`. The reverse direction is Rollback A, step 9.
    - mailbox-command.ts (blob 98a01a2d at 455ccc32, d6193278 at 9b3dca36),
      the `loop mailbox` command recipients run against the mailbox files.
      The V2 line adds `loop mailbox send`, a peer note between sessions:

@@ -445,3 +445,12 @@ Changes to the round-5 list above:
    deployed-build fixtures claude/fix5-rollback-to-deployed added
    (tests/fixtures/deployed-455ccc32 22, deployed-4439b2e7 11,
    deployed-dde60215 10); matched by count only, not error by error.
+6. New open risk, pre-existing on the V2 line (found on review,
+   2026-10-09): a bridge dedupe claim file
+   (`<runDir>/bridge-dedupe-claims/<sha256>.lock`) left by a process that
+   died inside a keyed enqueue is never recovered, so every later enqueue
+   of that message answers `deferred` until someone removes the file
+   (bridge-store.ts `acquireBridgeDedupeClaim`; reproduced in a scratch run
+   directory). The runbook now has operators check for stale files around
+   an upgrade, a rollback and a roll forward. A code fix (stale-owner
+   recovery by pid or age) is not on this branch or on r5 integration.

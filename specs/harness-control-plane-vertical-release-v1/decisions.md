@@ -618,6 +618,18 @@ given at r5 integration (claude/fix-integration-r5-2026-10-06, 9b3dca36),
 plus the tests added on claude/fix6-runbook-tests. Nothing here is merged
 into main or installed, and nothing has runtime evidence on a live host.
 
+The owner's list, verbatim as the task relayed it (added on review,
+2026-10-09, so a reader can check each decision below against it): "keep
+legacy-write id format, no flip; no seat ids on unauthenticated /healthz;
+no hand-recorded terminal outcomes; legacy-write is the shipping default;
+accept the bound_by_deployment column; accept the database refusing
+40097564's re-bind on rollback; a missing task or a COMPLETED task without
+its accepted artifact stays unsettled; pin LOOP_BIN to the retained
+678e2fde binary in the activation rollback; strip retired identities'
+manifestPath from a copy before Rollback B1; replay test keeps failing (not
+skipping) on shallow clones". In that order they are decisions 1, 3, 4, 2,
+5, 6, 7, 8, 9 and 10 below.
+
 1. **Keep the legacy-write workflow id format; no flip (Q1).** Status:
    accepted, in effect by default. A host with `a2aV2.workflowIdFormat`
    unset writes legacy ids and the database marker records `legacy`
@@ -710,7 +722,11 @@ into main or installed, and nothing has runtime evidence on a live host.
 10. **The replay test keeps failing, not skipping, on a shallow clone.**
     Status: accepted, in effect: tests/support/temporal-replay-builds.ts
     extracts each earlier commit's source and fails when the commit is not
-    in the clone. Not exercised on a shallow clone in this task.
+    in the clone. Exercised on review, 2026-10-09: in a `git clone --depth
+    1` of claude/fix6-runbook-tests (fb00559b, 40097564 and ef570282
+    absent) the file reports 26 pass, 3 fail, 0 skip; the three failures
+    are the live handoffs, each with `git archive ... failed (128): fatal:
+    not a tree object`.
 
 ## 2026-10-09: corrections to the round-5 records
 
@@ -724,10 +740,19 @@ applied on its own and reverted byte for byte.
   `a2aV2.previousResultGraphKeyEnvs` (claude/fix5-key-rotation, merge
   8e965197); it is the only `a2aV2` key added since r4 (`git diff 00094c66
   9b3dca36 -- loop-fork/src/loop/loop-orchestration-server.ts`).
-- Runbook, upgrade step 1: "all 29 pass on the round-5 base". The replay
-  test is not at the round-5 base c7646ed3; it is on
-  claude/fix5-temporal-replay (c2ea0eae) and r5 integration. All 29 pass at
-  9b3dca36.
+- Runbook, upgrade step 1: "all 29 pass on the round-5 base". Right about
+  the code, wrong about where the file is. The replay test is not in the
+  round-5 base commit c7646ed3; it is on claude/fix5-temporal-replay
+  (c2ea0eae) and r5 integration. c2ea0eae is c7646ed3 plus test files, the
+  history recorder script and the runbook only (`git diff --stat c7646ed3
+  c2ea0eae -- loop-fork/src` is empty), so the 29 that passed there on
+  2026-10-07 checked the round-5 base's own bundle. All 29 also pass at
+  9b3dca36 (2026-10-09). r4 (00094c66) is the build that was never
+  checked: its committed bundle and workflow port differ from c7646ed3's.
+  Corrected on review, 2026-10-09: the first version of this bullet, and
+  of the runbook step (fb00559b), said the round-5 base "was not checked
+  this way" and told operators not to upgrade to it with executions in
+  flight. That was false; the step now keeps that instruction for r4 only.
 - Runbook, upgrade step 3: "Start every host on r4" now names the candidate
   checked in step 1.
 - Runbook, replay section: "A start or signal the new code refuses fails
@@ -736,7 +761,12 @@ applied on its own and reverted byte for byte.
   a signal and records it as the command's error outcome, so the workflow
   task succeeds. Every task graph `claim` refused, and every V2 message
   `claim` refused, each with the bundle regenerated: all 22 histories replay
-  clean on both bundles and only the three live handoffs fail.
+  clean on both bundles and only the three live handoffs fail. The same
+  false claim was in the replay control's doc comment
+  (tests/fixtures/temporal-replay/refuse-last-signal-workflow.ts said it
+  fails the workflow task "as a build that refuses a recorded signal
+  would"); corrected on review, 2026-10-09. The control's behaviour and
+  the test are unchanged.
 - Mutation claim that does not reproduce: 41c4c1a2 (claude/fix5-key-rotation)
   says thirteen mutations "of the scope, the recorded deployment, the tenant
   limit and the settled check are each killed by these tests". At 9b3dca36,
@@ -777,5 +807,33 @@ applied on its own and reverted byte for byte.
   vendored dde60215 parser refusing `tokenEnv` fails 3 tests (the blob
   pin, its rolled-back config and the pre-activation shape), not only "its
   test". Only the refused-signal half and the settled-check claim above
-  fail to reproduce; if "M4" meant another claim, it is not in this
-  repository's records.
+  fail to reproduce.
+- "M4", searched wider on review (2026-10-09): `git grep -w M4` over the
+  whole tracked tree of the round-5 base, every claude/fix5 branch, r5
+  integration, claude/fix6-dead-run-release, -hygiene and
+  -replay-coverage, the r4 integration line, claude/fix4-key-rotation,
+  -runbook-docs, -recovery-escape-path, -deployment-rollback-safety and
+  -compat-and-migrations, and claude/fix3-docs-decisions, plus commit
+  messages on every ref since 2026-09-20, finds one record that labels a
+  mutation M4 (besides this entry and fb00559b's message), outside
+  specs/ and docs/: runs/helper-observability-routing-v1/
+  claude-implementation-evidence.md, "M4: git reason hidden (tools, 1
+  fail)", a helper-routing claim for d2663336 (propose_patch reporting git
+  apply's reason), not part of the A2A V2 line. It reproduces at fb00559b:
+  `gitApplyReason`'s result replaced by undefined in
+  src/loop/utility-tools.ts, utility-tools goes from 51 pass to 50 pass and
+  1 fail ("refuses a corrupt patch before recording an artifact or
+  manifest"), reverted with `git checkout`. Its siblings M1, M2, M3 and M5
+  were not re-run. So no record's M4 fails to reproduce; the two claims
+  above that do not reproduce carry no M label.
+- Runbook, pre-upgrade checklist item 4, added on review (2026-10-09): the
+  first version said a bridge dedupe claim file is "removed when the
+  enqueue ends". It is removed only when the enqueue returns or throws in
+  a live process. `acquireBridgeDedupeClaim` creates it exclusively and
+  answers busy on EEXIST, and nothing recovers a stale one, so a process
+  that dies inside a keyed enqueue leaves it, and every later enqueue of
+  that message answers `deferred` until it is removed (reproduced in a
+  scratch run directory at fb00559b). The checklist and the Rollback A
+  roll-forward paragraph now tell operators to look for and remove stale
+  claim files. A pre-existing code risk on the V2 line, not introduced or
+  fixed by this branch; see status.md, "Status at r5 integration", item 6.
