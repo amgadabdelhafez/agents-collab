@@ -6,15 +6,24 @@
  * each history's last signal and that a passing replay could have failed.
  */
 import { condition, defineSignal, setHandler } from "@temporalio/workflow";
-import { replayScenarios } from "../../support/temporal-replay-scenarios";
+import {
+  deployedReplayScenarios,
+  replayScenarios,
+} from "../../support/temporal-replay-scenarios";
 
 const lastCommands = new Set(
-  replayScenarios({
-    label: "control",
-    messageWorkflowId: (dedupeKey) => dedupeKey,
-    parseMessageInput: (input) => input,
-    resultGraphWorkflowId: (messageWorkflowId) => messageWorkflowId,
-  }).flatMap((scenario) =>
+  [
+    ...replayScenarios({
+      label: "control",
+      messageWorkflowId: (dedupeKey) => dedupeKey,
+      parseMessageInput: (input) => input,
+      resultGraphWorkflowId: (messageWorkflowId) => messageWorkflowId,
+    }),
+    ...deployedReplayScenarios({
+      label: "control",
+      v1MessageWorkflowId: (dedupeKey) => dedupeKey,
+    }),
+  ].flatMap((scenario) =>
     scenario.before.slice(-1).map((command) => command.requestId)
   )
 );
