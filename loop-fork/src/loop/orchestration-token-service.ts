@@ -150,29 +150,56 @@ const sameSubtree = (left: RoleBinding, right: RoleBinding): boolean =>
   left.repoKey === right.repoKey && left.project === right.project;
 
 /**
- * Grants by role subtree: an owner may message anyone; a supervisor messages
- * (and controls) the workers of its own repoKey/project; a worker messages
- * only its own subtree's supervisor; an operator messages supervisors.
+ * How a role-bound sender may address a recipient:
+ * - "allowed": an owner anyone; a supervisor the workers of its own
+ *   repoKey/project and any operator (upward); a worker only its own
+ *   subtree's supervisor; an operator supervisors.
+ * - "owner-thread-reply" (RA2): a supervisor to the owner, only as a reply on
+ *   a thread the owner started; the caller checks the thread. An unprompted
+ *   owner notification is an attention-os interaction, never a message.
+ * - "denied": anything else.
  */
-export const roleMayMessage = (
+export type RoleMessagePolicy = "allowed" | "denied" | "owner-thread-reply";
+
+export const roleMessagePolicy = (
   sender: RoleBinding,
   recipient: RoleBinding | undefined
-): boolean => {
+): RoleMessagePolicy => {
+  const allowed = (condition: boolean): RoleMessagePolicy =>
+    condition ? "allowed" : "denied";
   switch (sender.role) {
     case "owner":
-      return true;
+      return "allowed";
     case "supervisor":
-      return recipient?.role === "worker" && sameSubtree(sender, recipient);
+      if (recipient?.role === "owner") {
+        return "owner-thread-reply";
+      }
+      return allowed(
+        recipient?.role === "operator" ||
+          (recipient?.role === "worker" && sameSubtree(sender, recipient))
+      );
     case "worker":
-      return recipient?.role === "supervisor" && sameSubtree(sender, recipient);
+      return allowed(
+        recipient?.role === "supervisor" && sameSubtree(sender, recipient)
+      );
     case "operator":
-      return recipient?.role === "supervisor";
+      return allowed(recipient?.role === "supervisor");
     default:
-      return false;
+      return "denied";
   }
 };
 
-/** Who may mint an enrollment code for, or revoke a session of, `target`. */
+/** Whether the pair is allowed with no further condition. */
+export const roleMayMessage = (
+  sender: RoleBinding,
+  recipient: RoleBinding | undefined
+): boolean => roleMessagePolicy(sender, recipient) === "allowed";
+
+/**
+ * Who may revoke a session of `target`: an owner any, a supervisor its own
+ * subtree's workers. Minting an enrollment code is narrower (RA2): only the
+ * host and an owner (`mayMintEnrollmentCode`).
+ */
 export const roleMayControl = (
   actor: RoleBinding,
   target: RoleBinding
@@ -606,7 +633,12 @@ export class OrchestrationTokenService {
     );
   }
 
-  /** A single-use code that enrolls one session as `address`. */
+  /**
+   * A single-use code that enrolls one session as `address`. RA2: only the
+   * host (its CLI) and an owner session mint. A supervisor never does: a code
+   * it minted for a worker of its subtree would let it hold that worker's
+   * identity.
+   */
   issueEnrollmentCode(
     actor: TokenActor,
     address: string
@@ -615,7 +647,7 @@ export class OrchestrationTokenService {
     if (!binding) {
       throw new TokenAuthorityError(`${address} has no configured role`);
     }
-    if (!this.#mayControl(actor, binding)) {
+    if (!mayMintEnrollmentCode(actor)) {
       throw new TokenAuthorityError("not allowed to enroll this address");
     }
     const code = randomBytes(32).toString("base64url");
@@ -641,13 +673,23 @@ export class OrchestrationTokenService {
     return signTokenClaims(this.#options.key, claims);
   }
 
-  /** Exchanges a code (consumed whatever the outcome) for a session token. */
+  /**
+   * Exchanges a code (consumed whatever the outcome) for a session token.
+   * RA2: a code that matches no record is refused from a lock-free read, so
+   * an unauthenticated caller can neither hold the store lock nor make the
+   * store be rewritten. A match is re-checked under the lock.
+   */
   enroll(code: string): IssuedToken | undefined {
     if (!CODE_RE.test(code)) {
       return undefined;
     }
     const now = this.#now();
     const hash = hashCode(code);
+    if (
+      !this.#options.store.read().codes.some((entry) => entry.hash === hash)
+    ) {
+      return undefined;
+    }
     return this.#options.store.update(now, (state) => {
       const index = state.codes.findIndex((entry) => entry.hash === hash);
       const record = index === -1 ? undefined : state.codes[index];
@@ -787,6 +829,10 @@ export class OrchestrationTokenService {
 const isHostOrOwner = (actor: TokenActor): boolean =>
   actor.kind === "host" || actor.session.claims.role === "owner";
 
+/** RA2: the host and an owner session mint enrollment codes; no one else. */
+export const mayMintEnrollmentCode = (actor: TokenActor): boolean =>
+  isHostOrOwner(actor);
+
 /**
  * Host or owner: any jti; a session: its own token's. Every token expires
  * within its lifetime of being issued and none with this jti can be issued
@@ -807,6 +853,90 @@ const denyJti = (
   }
   state.denied.push({ expiresAt: own?.exp ?? now + TOKEN_TTL_SECONDS, jti });
 };
+
+// --------------------------------------------------------- enroll rate limit
+
+export const ENROLL_FAILURE_LIMIT = 10;
+export const ENROLL_FAILURE_WINDOW_MS = 60_000;
+export const ENROLL_LIMITER_MAX_SOURCES = 1024;
+/** The one shared window every new source lands in while the map is full. */
+const OVERFLOW_SOURCE = "\u0000overflow";
+
+interface FailureWindow {
+  count: number;
+  startedAt: number;
+}
+
+/**
+ * RA2: failed enrollments per source address, in a fixed window, in memory.
+ * Bounded: at most `maxSources` addresses plus one shared overflow window.
+ * When the map is full (after dropping expired windows) a new address shares
+ * the overflow window, so flooding addresses cannot evict a blocked one; it
+ * only blocks the flood sooner.
+ */
+export class EnrollmentAttemptLimiter {
+  readonly #limit: number;
+  readonly #maxSources: number;
+  readonly #now: () => number;
+  readonly #windowMs: number;
+  readonly #windows = new Map<string, FailureWindow>();
+
+  constructor(
+    options: {
+      limit?: number;
+      maxSources?: number;
+      now?: () => number;
+      windowMs?: number;
+    } = {}
+  ) {
+    this.#limit = options.limit ?? ENROLL_FAILURE_LIMIT;
+    this.#maxSources = options.maxSources ?? ENROLL_LIMITER_MAX_SOURCES;
+    this.#now = options.now ?? Date.now;
+    this.#windowMs = options.windowMs ?? ENROLL_FAILURE_WINDOW_MS;
+  }
+
+  get size(): number {
+    return this.#windows.size;
+  }
+
+  /** Seconds until the source may try again, or 0 when it may now. */
+  retryAfterSeconds(source: string): number {
+    const window = this.#current(this.#keyFor(source));
+    if (!window || window.count < this.#limit) {
+      return 0;
+    }
+    const remaining = window.startedAt + this.#windowMs - this.#now();
+    return Math.max(1, Math.ceil(remaining / 1000));
+  }
+
+  recordFailure(source: string): void {
+    const key = this.#keyFor(source);
+    const window = this.#current(key) ?? { count: 0, startedAt: this.#now() };
+    window.count += 1;
+    this.#windows.set(key, window);
+  }
+
+  #current(key: string): FailureWindow | undefined {
+    const window = this.#windows.get(key);
+    if (window && this.#now() - window.startedAt >= this.#windowMs) {
+      this.#windows.delete(key);
+      return undefined;
+    }
+    return window;
+  }
+
+  #keyFor(source: string): string {
+    if (this.#windows.has(source)) {
+      return source;
+    }
+    if (this.#windows.size >= this.#maxSources) {
+      for (const key of [...this.#windows.keys()]) {
+        this.#current(key);
+      }
+    }
+    return this.#windows.size >= this.#maxSources ? OVERFLOW_SOURCE : source;
+  }
+}
 
 // -------------------------------------------------------------------- routes
 
@@ -893,17 +1023,37 @@ const issuedResponse = (
 ): Response =>
   issued ? routeJson(200, issuedBody(issued)) : routeError(401, refusal);
 
-/** The code is the credential: no bearer is read. */
+/** The source key of a request whose peer address is unknown. */
+const UNKNOWN_SOURCE = "unknown";
+
+/**
+ * The code is the credential: no bearer is read. RA2: a source over its
+ * failure window is refused (429) before its body is read, and every refused
+ * enrollment counts against its source.
+ */
 const enrollRoute = async (
   service: OrchestrationTokenService,
-  request: Request
+  request: Request,
+  limiter: EnrollmentAttemptLimiter,
+  source: string
 ): Promise<Response> => {
+  const retryAfter = limiter.retryAfterSeconds(source);
+  if (retryAfter > 0) {
+    return Response.json(
+      { error: { code: "too-many-attempts" } },
+      {
+        headers: { ...noStore, "retry-after": String(retryAfter) },
+        status: 429,
+      }
+    );
+  }
   const body = await readRouteBody(request);
   const code = body ? onlyKey(body, "code") : undefined;
-  return issuedResponse(
-    code === undefined ? undefined : service.enroll(code),
-    "enrollment-refused"
-  );
+  const issued = code === undefined ? undefined : service.enroll(code);
+  if (!issued) {
+    limiter.recordFailure(source);
+  }
+  return issuedResponse(issued, "enrollment-refused");
 };
 
 /** Minting and revoking act as the verified session, never as a body field. */
@@ -935,12 +1085,20 @@ const sessionRoute = async (
 
 /**
  * The token routes under /api/v1/tokens, or undefined for any other path.
- * `enroll` is authenticated by its code; every other route by a session
- * token (a static legacy token never mints, refreshes or revokes).
+ * `enroll` is authenticated by its code and rate limited per `source` (the
+ * request's peer address); every other route by a session token (a static
+ * legacy token never mints, refreshes or revokes).
  */
 export const createTokenRoutes =
-  (service: OrchestrationTokenService) =>
-  async (request: Request, pathname: string): Promise<Response | undefined> => {
+  (
+    service: OrchestrationTokenService,
+    limiter: EnrollmentAttemptLimiter = new EnrollmentAttemptLimiter()
+  ) =>
+  async (
+    request: Request,
+    pathname: string,
+    source: string = UNKNOWN_SOURCE
+  ): Promise<Response | undefined> => {
     if (!pathname.startsWith(`${TOKEN_ROUTE_PREFIX}/`)) {
       return undefined;
     }
@@ -955,7 +1113,7 @@ export const createTokenRoutes =
     }
     try {
       if (route === "enroll") {
-        return await enrollRoute(service, request);
+        return await enrollRoute(service, request, limiter, source);
       }
       const token = bearer(request);
       if (route === "refresh") {

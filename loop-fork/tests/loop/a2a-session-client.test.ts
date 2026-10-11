@@ -54,6 +54,11 @@ import {
   runMailboxCommand,
   runMailboxCommandWithV2Ack,
 } from "../../src/loop/mailbox-command";
+import {
+  OWNER_NOTIFICATION_PATH,
+  OWNER_REPLY_ONLY,
+  ownerReplyOnlyResponse,
+} from "../../src/loop/orchestration-owner-messaging";
 import { callRecipientRoute } from "../../src/loop/recipient-api-client";
 import { readRunManifest, updateRunManifest } from "../../src/loop/run-state";
 import { mailboxPathFor } from "../../src/loop/supervisor-mailbox-delivery";
@@ -713,6 +718,42 @@ test("a channel session is claimed by its id under the caller's own sessions roo
   expect(readdirSync(join(h.home, ".loop", "sessions", "alice"))).toEqual([
     "desk-1",
   ]);
+});
+
+test("RA2: an owner-reply-only refusal reaches the sender with the attention-os path", async () => {
+  const h = harness();
+  const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
+  const answering = (response: () => Response) =>
+    Object.assign(() => Promise.resolve(response()), {
+      preconnect: fetch.preconnect,
+    });
+  const send = async (response: () => Response): Promise<A2AClientError> => {
+    const outcome: unknown = await sendA2AMessage(
+      endpoint,
+      { body: "done", contextId: "ctx-1", messageId: "m-1", to: BOB },
+      answering(response)
+    ).catch((error: unknown) => error);
+    return outcome as A2AClientError;
+  };
+  const refused = await send(ownerReplyOnlyResponse);
+  expect(refused).toBeInstanceOf(A2AClientError);
+  expect(refused.code).toBe(OWNER_REPLY_ONLY);
+  expect(refused.message).toContain("attention-os interaction");
+  expect(refused.message).toContain("Nothing is claimed delivered");
+  expect(refused.detail).toEqual({ notifyVia: OWNER_NOTIFICATION_PATH });
+  // Any other refusal stays the opaque one.
+  for (const body of [
+    { error: { code: "identity-mismatch" } },
+    { error: { code: OWNER_REPLY_ONLY } },
+  ]) {
+    const other = await send(() => Response.json(body, { status: 401 }));
+    expect(other.code).toBe("unavailable");
+  }
+  const mismatch = await send(() =>
+    Response.json({ error: { code: "identity-mismatch" } }, { status: 403 })
+  );
+  expect(mismatch.code).toBe("unavailable");
+  expect(h.server.seen).toEqual([]);
 });
 
 test("send goes through the SDK client to the recipient's own ingress as the authenticated sender", async () => {

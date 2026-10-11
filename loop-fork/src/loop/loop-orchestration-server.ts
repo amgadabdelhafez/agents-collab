@@ -37,9 +37,16 @@ import { spawnHeadless } from "./headless-runner";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
 import {
   assertListenPolicy,
+  isLoopbackListenHost,
   parseServerOrigin,
   serverOriginFor,
 } from "./orchestration-origin-policy";
+import {
+  OWNER_REPLY_ONLY,
+  OwnerContextRegistry,
+  type OwnerThreadIndex,
+  ownerThreadsFromBoard,
+} from "./orchestration-owner-messaging";
 import {
   createTokenRoutes,
   loadTokenSigningKey,
@@ -47,7 +54,7 @@ import {
   parseRoleBinding,
   type RoleBinding,
   roleEpochKey,
-  roleMayMessage,
+  roleMessagePolicy,
   type TokenRevocation,
   TokenStore,
   writeOwnerOnlyFile,
@@ -444,12 +451,19 @@ export interface LoopOrchestrationFetchHandlerOptions {
   reconciliationHealthy: () => boolean;
   /**
    * RA1: the session token routes (`/api/v1/tokens/...`), when the config
-   * has a `tokens` section; see `createTokenRoutes`.
+   * has a `tokens` section; see `createTokenRoutes`. RA2: `source` is the
+   * request's peer address, the key of the enroll rate limit.
    */
   tokenRoutes?: (
     request: Request,
-    pathname: string
+    pathname: string,
+    source?: string
   ) => Promise<Response | undefined>;
+}
+
+/** What Bun's `serve` passes as the fetch handler's second argument. */
+export interface OrchestrationPeer {
+  requestIP(request: Request): { address: string } | null;
 }
 
 const planeHealth = (
@@ -527,18 +541,25 @@ const allSupervisorsResponse = (
  */
 export const createLoopOrchestrationFetchHandler = (
   options: LoopOrchestrationFetchHandlerOptions
-): ((request: Request) => Promise<Response>) => {
+): ((request: Request, peer?: OrchestrationPeer) => Promise<Response>) => {
   // The V1 surface refuses result graph ids; its refusal names the V2 route
   // that starts one instead, when this server mounts it.
   const v1Handler = options.host.httpHandler(options.authenticator, {
     resultGraphRoutePath: options.a2aV2Service?.resultGraphRoute?.pathname,
   });
-  return async (request: Request): Promise<Response> => {
+  return async (
+    request: Request,
+    peer?: OrchestrationPeer
+  ): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
       return orchestrationHealth(options);
     }
-    const tokenResponse = await options.tokenRoutes?.(request, url.pathname);
+    const tokenResponse = await options.tokenRoutes?.(
+      request,
+      url.pathname,
+      peer?.requestIP(request)?.address
+    );
     if (tokenResponse) {
       return tokenResponse;
     }
@@ -1263,6 +1284,11 @@ const assertRoleBindings = (supervisors: readonly SupervisorConfig[]): void => {
   }
 };
 
+/** RA2: static `tokenEnv` tokens work on a loopback listener only. */
+export const staticTokensAccepted = (
+  config: Pick<ServerConfig, "hostname">
+): boolean => isLoopbackListenHost(config.hostname);
+
 const equalToken = (left: string, right: string): boolean => {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
@@ -1278,9 +1304,12 @@ const equalToken = (left: string, right: string): boolean => {
  * the address its session enrolled as (the token subject decides it), with
  * that address's configured principal, so every downstream sender and
  * principal check binds to the token subject.
+ *
+ * RA2: a static token is accepted only on a loopback listener. A server
+ * listening beyond loopback accepts session tokens alone.
  */
 export const orchestrationAuthenticator = (
-  config: Pick<ServerConfig, "supervisors">,
+  config: Pick<ServerConfig, "hostname" | "supervisors">,
   env: NodeJS.ProcessEnv,
   tokens?: Pick<OrchestrationTokenService, "verify">
 ): SupervisorControlSurfaceAuthenticator => ({
@@ -1290,7 +1319,8 @@ export const orchestrationAuthenticator = (
       return undefined;
     }
     const token = authorization.slice("Bearer ".length);
-    for (const supervisor of config.supervisors) {
+    const staticTokens = staticTokensAccepted(config);
+    for (const supervisor of staticTokens ? config.supervisors : []) {
       const expected = env[supervisor.tokenEnv];
       if (expected && equalToken(token, expected)) {
         return {
@@ -1321,8 +1351,55 @@ interface GrantRequest {
   from: string;
   operation: SupervisorMessageGovernedOperation;
   principal: string;
+  /** The message's thread (V1) or A2A context id; RA2 owner replies. */
+  threadId?: string;
   to: string;
 }
+
+export type OrchestrationGrantReason =
+  | "configured-grant"
+  | "no-configured-grant"
+  | typeof OWNER_REPLY_ONLY;
+
+export interface OrchestrationGrantDecision {
+  allowed: boolean;
+  reasonCode: OrchestrationGrantReason;
+}
+
+const ALLOW: OrchestrationGrantDecision = {
+  allowed: true,
+  reasonCode: "configured-grant",
+};
+const DENY: OrchestrationGrantDecision = {
+  allowed: false,
+  reasonCode: "no-configured-grant",
+};
+const OWNER_REPLY_REFUSED: OrchestrationGrantDecision = {
+  allowed: false,
+  reasonCode: OWNER_REPLY_ONLY,
+};
+
+const decided = (allowed: boolean): OrchestrationGrantDecision =>
+  allowed ? ALLOW : DENY;
+
+/**
+ * RA2: a message to the owner from anyone but the owner is sent (receive)
+ * only as a reply on a thread the owner started with that sender. Other
+ * operations on such a message exist only because its receive was allowed.
+ */
+const unpromptedOwnerMessage = (
+  request: GrantRequest,
+  ownerThreads: OwnerThreadIndex | undefined
+): boolean =>
+  request.operation === "receive" &&
+  !(
+    request.threadId &&
+    ownerThreads?.ownerStarted({
+      owner: request.to,
+      replier: request.from,
+      threadId: request.threadId,
+    })
+  );
 
 const configuredGrant = (
   config: Pick<ServerConfig, "grants">,
@@ -1356,39 +1433,102 @@ const roleActorMayOperate = (actor: string, request: GrantRequest): boolean => {
  * RA1: whether `request.principal` may perform the operation on the pair.
  * A sender without a role: the configured grants, exactly as before. A
  * role-bound sender's pair must be one its role subtree allows
- * (`roleMayMessage`; an owner's is any pair), and no configured grant
+ * (`roleMessagePolicy`; an owner's is any pair), and no configured grant
  * widens that. Within it, a role-bound actor must be the sender (receive,
  * cancel), the recipient (claim, acknowledge) or either (tick), an owner
  * actor may do anything, and an actor without a role (a legacy recipient
  * of an owner's message) still needs its configured grant. A claimant must
  * be the actor itself.
+ *
+ * RA2: a supervisor messages any operator (upward). A message to the owner
+ * from a supervisor, or from a sender without a role, is sent only as a
+ * reply on a thread the owner started (`ownerThreads`); otherwise it is
+ * refused with `owner-reply-only`, whose refusal names the attention-os
+ * interaction path. No index means no owner thread is known (fail closed).
  */
-export const orchestrationGrantAllows = (
+export const orchestrationGrantDecision = (
   config: Pick<ServerConfig, "grants" | "supervisors">,
-  request: GrantRequest
-): boolean => {
+  request: GrantRequest,
+  ownerThreads?: OwnerThreadIndex
+): OrchestrationGrantDecision => {
   const roleOf = (id: string) =>
     config.supervisors.find((entry) => entry.supervisorId === id)?.role;
   const sender = roleOf(request.from);
+  const recipient = roleOf(request.to);
   if (!sender) {
-    return configuredGrant(config, request);
+    if (
+      recipient?.role === "owner" &&
+      unpromptedOwnerMessage(request, ownerThreads)
+    ) {
+      return OWNER_REPLY_REFUSED;
+    }
+    return decided(configuredGrant(config, request));
   }
   const actor = config.supervisors.find(
     (entry) => entry.role && entry.principal === request.principal
   );
   if (actor?.role?.role === "owner") {
-    return request.claimant == null || request.claimant === actor.supervisorId;
+    return decided(
+      request.claimant == null || request.claimant === actor.supervisorId
+    );
   }
-  if (!roleMayMessage(sender, roleOf(request.to))) {
-    return false;
+  const pair = roleMessagePolicy(sender, recipient);
+  if (pair === "denied") {
+    return DENY;
+  }
+  if (
+    pair === "owner-thread-reply" &&
+    unpromptedOwnerMessage(request, ownerThreads)
+  ) {
+    return OWNER_REPLY_REFUSED;
   }
   if (!actor) {
-    return configuredGrant(config, request);
+    return decided(configuredGrant(config, request));
   }
-  return (
+  return decided(
     (request.claimant == null || request.claimant === actor.supervisorId) &&
-    roleActorMayOperate(actor.supervisorId, request)
+      roleActorMayOperate(actor.supervisorId, request)
   );
+};
+
+/** Whether the decision allows it; see `orchestrationGrantDecision`. */
+export const orchestrationGrantAllows = (
+  config: Pick<ServerConfig, "grants" | "supervisors">,
+  request: GrantRequest,
+  ownerThreads?: OwnerThreadIndex
+): boolean => orchestrationGrantDecision(config, request, ownerThreads).allowed;
+
+/**
+ * RA2: the A2A ingress decision for a message `from` sends `to`, on the
+ * A2A context `threadId`. An allowed owner send records the context it
+ * opened with that recipient, so the recipient may reply on it; nothing
+ * else records. An unprompted message to the owner answers
+ * `owner-reply-only` (the ingress names the attention-os path).
+ */
+export const orchestrationA2AReceive = (
+  config: Pick<ServerConfig, "grants" | "supervisors">,
+  ownerContexts: OwnerContextRegistry,
+  request: { from: string; principal: string; threadId?: string; to: string }
+): boolean | typeof OWNER_REPLY_ONLY => {
+  const decision = orchestrationGrantDecision(
+    config,
+    { ...request, operation: "receive" },
+    ownerContexts
+  );
+  if (!decision.allowed) {
+    return decision.reasonCode === OWNER_REPLY_ONLY ? OWNER_REPLY_ONLY : false;
+  }
+  const sender = config.supervisors.find(
+    (entry) => entry.supervisorId === request.from
+  );
+  if (sender?.role?.role === "owner" && request.threadId) {
+    ownerContexts.record({
+      owner: request.from,
+      recipient: request.to,
+      threadId: request.threadId,
+    });
+  }
+  return true;
 };
 
 /**
@@ -1420,15 +1560,26 @@ const roleTickPrincipal = (
   return undefined;
 };
 
-const authority = (config: ServerConfig): SupervisorMessageAuthorityPort => ({
+/**
+ * The V1 authority. RA2: owner threads are read from the V1 thread board,
+ * which holds accepted messages only.
+ */
+export const orchestrationAuthority = (
+  config: Pick<ServerConfig, "grants" | "supervisors">,
+  ownerThreads?: OwnerThreadIndex
+): SupervisorMessageAuthorityPort => ({
   decide(request) {
-    const allowed = orchestrationGrantAllows(config, request);
+    const { allowed, reasonCode } = orchestrationGrantDecision(
+      config,
+      request,
+      ownerThreads
+    );
     return {
       allowed,
       authorityRef: allowed
         ? "authority:loop-orchestration-config"
         : "authority:deny-default",
-      reasonCode: allowed ? "configured-grant" : "no-configured-grant",
+      reasonCode,
     };
   },
 });
@@ -2269,31 +2420,37 @@ const createDefaultRuntimeHost = async (input: {
   ]);
   // Fresh per host: a V2 start that fails closes the host it created, and
   // the V1-only host it falls back to must not share its stores.
-  const makeHostOptions = () => ({
-    authority: authority(input.config),
-    buildId: input.config.buildId,
-    delivery,
-    identity: input.config.identity,
-    namespace: input.config.namespace,
-    nativeConnection: input.nativeConnection,
-    receipts: new JsonlSupervisorMessageReceiptPort(
-      join(input.config.stateDir, "governance.jsonl")
-    ),
-    store: new JsonlSupervisorThreadStore(
+  const makeHostOptions = () => {
+    const store = new JsonlSupervisorThreadStore(
       join(input.config.stateDir, "threads.jsonl")
-    ),
-    taskQueue: input.config.taskQueue,
-    workflowClient: new WorkflowClient({
-      connection: input.connection,
-      namespace: input.config.namespace,
-    }),
-    workflowBundle: {
-      code: Buffer.from(temporalWorkflowBundleBase64, "base64").toString(
-        "utf8"
+    );
+    return {
+      authority: orchestrationAuthority(
+        input.config,
+        ownerThreadsFromBoard(() => store.read())
       ),
-    },
-    workflowExecution: "in-process" as const,
-  });
+      buildId: input.config.buildId,
+      delivery,
+      identity: input.config.identity,
+      namespace: input.config.namespace,
+      nativeConnection: input.nativeConnection,
+      receipts: new JsonlSupervisorMessageReceiptPort(
+        join(input.config.stateDir, "governance.jsonl")
+      ),
+      store,
+      taskQueue: input.config.taskQueue,
+      workflowClient: new WorkflowClient({
+        connection: input.connection,
+        namespace: input.config.namespace,
+      }),
+      workflowBundle: {
+        code: Buffer.from(temporalWorkflowBundleBase64, "base64").toString(
+          "utf8"
+        ),
+      },
+      workflowExecution: "in-process" as const,
+    };
+  };
   const v1Only = async () => ({
     a2aV2Service: undefined,
     host: await TemporalSupervisorRuntimeHost.create(makeHostOptions()),
@@ -2310,6 +2467,8 @@ const createDefaultRuntimeHost = async (input: {
     if (!databaseUrl) {
       throw new Error("configured A2A V2 database environment is absent");
     }
+    // RA2: the A2A contexts the owner opened, for supervisor replies.
+    const ownerContexts = new OwnerContextRegistry();
     const controlAuthenticator = authenticator(
       input.config,
       input.env,
@@ -2403,10 +2562,7 @@ const createDefaultRuntimeHost = async (input: {
         legacySeats,
         log: (line) => console.error(line),
         mayReceive: (request) =>
-          orchestrationGrantAllows(input.config, {
-            ...request,
-            operation: "receive",
-          }),
+          orchestrationA2AReceive(input.config, ownerContexts, request),
         principalForRecipient,
         // The lease sweep's renewal, on demand: a recipient whose session is
         // live is not refused while the sweep's renewal lags.
@@ -2608,7 +2764,7 @@ const createDefaultRuntimeHost = async (input: {
   }
 };
 
-const validateConfiguredRuntimeEnvironment = (
+export const validateConfiguredRuntimeEnvironment = (
   config: ServerConfig,
   env: NodeJS.ProcessEnv,
   options: LoopOrchestrationServerOptions
@@ -2616,7 +2772,9 @@ const validateConfiguredRuntimeEnvironment = (
   if (config.a2aV2 && options.a2aV2Service) {
     throw new Error("configured A2A V2 cannot use an injected service");
   }
-  for (const supervisor of config.supervisors) {
+  // RA2: beyond loopback no static token is accepted, so none is required.
+  const required = staticTokensAccepted(config) ? config.supervisors : [];
+  for (const supervisor of required) {
     if (!env[supervisor.tokenEnv]) {
       throw new Error(
         `missing orchestration token environment ${supervisor.tokenEnv}`

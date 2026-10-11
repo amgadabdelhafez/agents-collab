@@ -43,6 +43,10 @@ import {
 } from "./a2a-v2-routes-contract";
 import { readBoundedRequestText } from "./bounded-request-body";
 import {
+  OWNER_REPLY_ONLY,
+  ownerReplyOnlyResponse,
+} from "./orchestration-owner-messaging";
+import {
   SupervisorEndpointLeaseError,
   type SupervisorEndpointLeaseFenceRefusal,
   type SupervisorEndpointLeaseHolderSummary,
@@ -1304,23 +1308,41 @@ export const createA2AV2SessionRoutesHandler = (
   };
 };
 
+/**
+ * A `receive` decision for the ingress: allowed, refused, or (RA2)
+ * `owner-reply-only`, an unprompted message to the owner, refused with a
+ * body that names the attention-os interaction path.
+ */
+export type A2AV2ReceiveDecision = boolean | typeof OWNER_REPLY_ONLY;
+
+export interface A2AV2ReceiveRequest {
+  from: string;
+  principal: string;
+  /** The message's A2A context id, when it carries one. */
+  threadId?: string;
+  to: string;
+}
+
 export interface A2AV2SupervisorIngressGateOptions {
   /** Any configured supervisor identity. */
   authenticator: SupervisorA2AAuthenticator;
   /**
    * The configured grants: may this principal, as `from`, send to `to`
-   * (operation `receive`)?
+   * (operation `receive`) on this context? Only `true` allows.
    */
-  mayReceive(input: { from: string; principal: string; to: string }): boolean;
+  mayReceive(input: A2AV2ReceiveRequest): A2AV2ReceiveDecision;
 }
 
 /** The SDK methods that carry a message to the path's supervisor. */
 const SENDING_METHODS = new Set(["SendMessage", "SendStreamingMessage"]);
 
-/** `harness.dev/from` of the message a JSON-RPC request sends, if it sends. */
+/**
+ * `harness.dev/from` and the context id of the message a JSON-RPC request
+ * sends, if it sends.
+ */
 const sentFrom = (
   parsed: unknown
-): { from: unknown; sends: true } | { sends: false } => {
+): { contextId?: string; from: unknown; sends: true } | { sends: false } => {
   if (!isPlainRecord(parsed)) {
     return { sends: false };
   }
@@ -1332,7 +1354,15 @@ const sentFrom = (
   const metadata = isPlainRecord(message?.metadata)
     ? message.metadata
     : undefined;
-  return { from: metadata?.[FROM_METADATA_KEY], sends: true };
+  const contextId =
+    typeof message?.contextId === "string" && message.contextId.trim()
+      ? message.contextId
+      : undefined;
+  return {
+    ...(contextId ? { contextId } : {}),
+    from: metadata?.[FROM_METADATA_KEY],
+    sends: true,
+  };
 };
 
 const parseJsonOrUndefined = (raw: string): unknown => {
@@ -1342,6 +1372,36 @@ const parseJsonOrUndefined = (raw: string): unknown => {
     // The SDK answers a parse error itself.
     return undefined;
   }
+};
+
+/**
+ * The refusal of a request that sends, or undefined to let it through: the
+ * sender must be the authenticated supervisor and the grant must hold
+ * (only `true` allows). RA2: an unprompted message to the owner is refused
+ * with the body that names the attention-os interaction path.
+ */
+const ingressSendRefusal = (
+  options: A2AV2SupervisorIngressGateOptions,
+  sent: ReturnType<typeof sentFrom>,
+  identity: SupervisorA2AAuthenticatedIdentity,
+  to: string
+): Response | undefined => {
+  if (!sent.sends) {
+    return undefined;
+  }
+  if (sent.from !== identity.supervisorId) {
+    return routeError("identity-mismatch");
+  }
+  const decision = options.mayReceive({
+    from: identity.supervisorId,
+    principal: identity.principal,
+    ...(sent.contextId ? { threadId: sent.contextId } : {}),
+    to,
+  });
+  if (decision === OWNER_REPLY_ONLY) {
+    return ownerReplyOnlyResponse();
+  }
+  return decision === true ? undefined : routeError("identity-mismatch");
 };
 
 /**
@@ -1380,17 +1440,9 @@ export const createA2AV2SupervisorIngressGate = (
       // A batch is not a request this ingress serves.
       return routeError("request-invalid");
     }
-    const sent = sentFrom(parsed);
-    if (
-      sent.sends &&
-      (sent.from !== identity.supervisorId ||
-        !options.mayReceive({
-          from: identity.supervisorId,
-          principal: identity.principal,
-          to,
-        }))
-    ) {
-      return routeError("identity-mismatch");
+    const refusal = ingressSendRefusal(options, sentFrom(parsed), identity, to);
+    if (refusal) {
+      return refusal;
     }
     const headers = new Headers(request.headers);
     headers.delete("content-length");
@@ -1537,7 +1589,7 @@ export interface SupervisorA2AV2AllSupervisorsOptions {
   /** r8's manifest-bound seats; see SupervisorMessageV2RecipientEndpoints. */
   legacySeats: readonly string[];
   log?: (line: string) => void;
-  mayReceive(input: { from: string; principal: string; to: string }): boolean;
+  mayReceive(input: A2AV2ReceiveRequest): A2AV2ReceiveDecision;
   principalForRecipient(recipient: string): string | undefined;
   /** See SupervisorMessageV2RecipientEndpoints.renewExpiredLease. */
   renewExpiredLease?(recipient: string): Promise<boolean>;

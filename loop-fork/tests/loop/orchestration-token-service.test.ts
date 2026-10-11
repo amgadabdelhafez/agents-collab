@@ -14,11 +14,13 @@ import { join } from "node:path";
 import {
   createTokenRoutes,
   ENROLLMENT_CODE_TTL_SECONDS,
+  EnrollmentAttemptLimiter,
   loadTokenSigningKey,
   OrchestrationTokenService,
   type RoleBinding,
   roleMayControl,
   roleMayMessage,
+  roleMessagePolicy,
   signTokenClaims,
   TOKEN_AUDIENCE,
   TOKEN_TTL_SECONDS,
@@ -471,25 +473,42 @@ describe("RA1 grants by role subtree", () => {
     expect(allowed(OPERATOR, OTHER_SUP)).toBe(true);
     expect(allowed(OPERATOR, WORKER)).toBe(false);
     expect(roleMayMessage(of(SUP), undefined)).toBe(false);
+    // RA2: a supervisor messages an operator (upward), and the owner only as
+    // a reply on a thread the owner started (the caller checks the thread).
+    expect(allowed(SUP, OPERATOR)).toBe(true);
+    expect(allowed(OTHER_SUP, OPERATOR)).toBe(true);
+    expect(roleMessagePolicy(of(SUP), of(OWNER))).toBe("owner-thread-reply");
+    expect(roleMessagePolicy(of(SUP), of(OPERATOR))).toBe("allowed");
+    expect(roleMessagePolicy(of(SUP), of(OTHER_SUP))).toBe("denied");
+    for (const from of [WORKER, OPERATOR]) {
+      expect(roleMessagePolicy(of(from), of(OWNER))).toBe("denied");
+    }
+    expect(allowed(WORKER, OPERATOR)).toBe(false);
+    expect(allowed(OPERATOR, OPERATOR)).toBe(false);
     expect(roleMayControl(of(SUP), of(WORKER))).toBe(true);
     expect(roleMayControl(of(SUP), of(OTHER_WORKER))).toBe(false);
     expect(roleMayControl(of(OPERATOR), of(SUP))).toBe(false);
     expect(roleMayControl(of(OWNER), of(OTHER_SUP))).toBe(true);
   });
 
-  test("minting and revoking follow the same subtree", () => {
-    const { actor, enroll, service } = setup();
+  test("RA2: only the host and an owner mint; revoking follows the subtree", () => {
+    const { actor, enroll, host, service } = setup();
     const owner = actor(enroll(OWNER).token);
     const supervisor = actor(enroll(SUP).token);
     const worker = actor(enroll(WORKER).token);
     const operator = actor(enroll(OPERATOR).token);
     expect(service.issueEnrollmentCode(owner, OTHER_SUP).code).toBeString();
-    expect(service.issueEnrollmentCode(supervisor, WORKER).code).toBeString();
+    expect(service.issueEnrollmentCode(owner, WORKER).code).toBeString();
+    expect(service.issueEnrollmentCode(host, WORKER).code).toBeString();
+    // A supervisor never mints, not even for a worker of its own subtree: a
+    // code it held would let it enroll as that worker.
     for (const [who, address] of [
+      [supervisor, WORKER],
       [supervisor, OTHER_WORKER],
       [supervisor, SUP],
       [worker, WORKER],
       [operator, SUP],
+      [operator, WORKER],
     ] as const) {
       expect(() => service.issueEnrollmentCode(who, address)).toThrow(
         TokenAuthorityError
@@ -568,20 +587,26 @@ describe("RA1 token routes", () => {
     expect(
       (await call(routes, post("/api/v1/tokens/refresh", {}, token))).status
     ).toBe(401);
+    // RA2: a supervisor session never mints, even for its own worker.
+    for (const supervisorId of [WORKER, OWNER]) {
+      expect(
+        await call(
+          routes,
+          post("/api/v1/tokens/enrollment-codes", { supervisorId }, next)
+        )
+      ).toEqual({ body: { error: { code: "authority-denied" } }, status: 403 });
+    }
+    const ownerToken = enroll(OWNER).token;
     const minted = await call(
       routes,
-      post("/api/v1/tokens/enrollment-codes", { supervisorId: WORKER }, next)
+      post(
+        "/api/v1/tokens/enrollment-codes",
+        { supervisorId: WORKER },
+        ownerToken
+      )
     );
     expect(minted.status).toBe(200);
     expect(service.enroll(minted.body.data.code)?.sessionId).toBeString();
-    expect(
-      (
-        await call(
-          routes,
-          post("/api/v1/tokens/enrollment-codes", { supervisorId: OWNER }, next)
-        )
-      ).status
-    ).toBe(403);
     const victim = enroll(OTHER_WORKER);
     expect(
       (
@@ -637,5 +662,123 @@ describe("RA1 token routes", () => {
         "/api/v1/supervisor-threads"
       )
     ).toBeUndefined();
+  });
+});
+
+describe("RA2 unauthenticated enrollment", () => {
+  const BOGUS = "A".repeat(43);
+  const storeStat = (root: string) => {
+    const path = join(root, "tokens", "token-store.json");
+    const stat = statSync(path);
+    return {
+      body: readFileSync(path, "utf8"),
+      ino: stat.ino,
+      mtimeMs: stat.mtimeMs,
+    };
+  };
+
+  test("a code that matches nothing takes no lock and rewrites nothing", () => {
+    const { enroll, host, root, service } = setup();
+    enroll(SUP);
+    const pending = service.issueEnrollmentCode(host, WORKER);
+    const before = storeStat(root);
+    // A held lock: an enroll that wanted it would wait and then throw.
+    const lock = join(root, "tokens", "token-store.lock");
+    writeFileSync(lock, "");
+    const started = Date.now();
+    for (const code of [BOGUS, `${"b".repeat(42)}_`]) {
+      expect(service.enroll(code)).toBeUndefined();
+    }
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(storeStat(root)).toEqual(before);
+    expect(statSync(lock).isFile()).toBe(true);
+    rmSync(lock);
+    // A real code is still exchanged (re-checked under the lock).
+    expect(service.enroll(pending.code)?.sessionId).toBeString();
+    expect(storeStat(root).body).not.toBe(before.body);
+  });
+
+  test("with no store yet, a code that matches nothing creates no store", () => {
+    const { root, service } = setup();
+    expect(service.enroll(BOGUS)).toBeUndefined();
+    expect(() => statSync(join(root, "tokens", "token-store.json"))).toThrow();
+  });
+
+  test("failures are limited per source in a bounded window", () => {
+    const clock = { now: 0 };
+    const limiter = new EnrollmentAttemptLimiter({
+      limit: 3,
+      maxSources: 2,
+      now: () => clock.now,
+      windowMs: 10_000,
+    });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(0);
+      limiter.recordFailure("203.0.113.1");
+    }
+    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(10);
+    expect(limiter.retryAfterSeconds("203.0.113.2")).toBe(0);
+    limiter.recordFailure("203.0.113.2");
+    // Full: new addresses share one overflow window and evict nobody.
+    for (let index = 3; index < 50; index += 1) {
+      limiter.recordFailure(`203.0.113.${index}`);
+    }
+    expect(limiter.size).toBe(3);
+    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(10);
+    expect(limiter.retryAfterSeconds("203.0.113.99")).toBe(10);
+    expect(limiter.retryAfterSeconds("203.0.113.2")).toBe(0);
+    clock.now = 4000;
+    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(6);
+    // The windows end. Expired windows are dropped when the map is full, so
+    // a new source gets its own window again, not the shared overflow one.
+    clock.now = 10_000;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      limiter.recordFailure("198.51.100.1");
+    }
+    expect(limiter.retryAfterSeconds("198.51.100.1")).toBe(10);
+    expect(limiter.retryAfterSeconds("198.51.100.2")).toBe(0);
+    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(0);
+    expect(limiter.retryAfterSeconds("203.0.113.99")).toBe(0);
+    expect(limiter.size).toBeLessThanOrEqual(3);
+  });
+
+  test("the enroll route refuses a source over its window before reading the code", async () => {
+    const { host, service } = setup();
+    const limiter = new EnrollmentAttemptLimiter({ limit: 2 });
+    const routes = createTokenRoutes(service, limiter);
+    const enrollAs = async (source: string, code: unknown) => {
+      const request = new Request(
+        "http://127.0.0.1:7321/api/v1/tokens/enroll",
+        {
+          body: JSON.stringify({ code }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }
+      );
+      const response = await routes(request, "/api/v1/tokens/enroll", source);
+      if (!response) {
+        throw new Error("not a token route");
+      }
+      return response;
+    };
+    const attacker = "203.0.113.7";
+    expect((await enrollAs(attacker, BOGUS)).status).toBe(401);
+    expect((await enrollAs(attacker, 42)).status).toBe(401);
+    const { code } = service.issueEnrollmentCode(host, WORKER);
+    const blocked = await enrollAs(attacker, code);
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get("retry-after")).toBe("60");
+    expect(await blocked.json()).toEqual({
+      error: { code: "too-many-attempts" },
+    });
+    // The blocked attempt did not consume the code; another source uses it.
+    expect((await enrollAs("198.51.100.2", code)).status).toBe(200);
+    // A success counts nothing against its source.
+    for (const address of [SUP, OTHER_SUP]) {
+      const fresh = service.issueEnrollmentCode(host, address);
+      expect((await enrollAs("198.51.100.3", fresh.code)).status).toBe(200);
+    }
+    expect(limiter.retryAfterSeconds("198.51.100.3")).toBe(0);
+    expect(limiter.retryAfterSeconds("198.51.100.2")).toBe(0);
   });
 });

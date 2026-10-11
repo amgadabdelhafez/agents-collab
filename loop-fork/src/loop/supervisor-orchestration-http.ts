@@ -1,4 +1,8 @@
 import { readBoundedRequestText } from "./bounded-request-body";
+import {
+  OWNER_REPLY_ONLY,
+  ownerReplyOnlyResponse,
+} from "./orchestration-owner-messaging";
 import { SupervisorMessageGovernanceError } from "./supervisor-message-governance";
 import type {
   SupervisorMessageReceiveCommand,
@@ -420,7 +424,10 @@ const handleAuthenticatedRequest = async (
       return errorResponse(413, "body-too-large");
     }
     if (error instanceof SupervisorMessageGovernanceError) {
-      return errorResponse(403, "authority-denied");
+      // RA2: an unprompted message to the owner is told the right path.
+      return error.reasonCode === OWNER_REPLY_ONLY
+        ? ownerReplyOnlyResponse()
+        : errorResponse(403, "authority-denied");
     }
     if (error instanceof WorkflowError) {
       return workflowErrorResponse(error);

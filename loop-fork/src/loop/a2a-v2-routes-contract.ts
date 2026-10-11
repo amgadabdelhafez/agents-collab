@@ -297,6 +297,11 @@ export const A2A_V2_ROUTE_ERROR_STATUS = {
   "locator-refused": 403,
   "method-not-allowed": 405,
   "not-found": 404,
+  /**
+   * RA2: an unprompted message to the owner. The body adds `message` and
+   * `notifyVia` (the attention-os interaction path).
+   */
+  "owner-reply-only": 403,
   "request-invalid": 400,
   unauthenticated: 401,
   /** V2 disabled by a fault, or the lease/ledger store cannot answer. */
