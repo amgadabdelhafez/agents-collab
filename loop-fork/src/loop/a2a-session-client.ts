@@ -385,6 +385,57 @@ export const resolveA2AClientEndpoint = (
   });
 };
 
+/** An endpoint recipient run's own route credential (recipient-api-client). */
+const RECIPIENT_RUN_TOKEN_ENV = "LOOP_RECIPIENT_API_TOKEN";
+
+/**
+ * ra2 fix: the names (never the values) of the identity credentials `env`
+ * holds that are NOT `supervisorId`'s own: every other configured
+ * supervisor's token variable that is set, and an endpoint recipient run's
+ * route token. A session holding any of them has a fixed identity of its own
+ * that is not (or cannot be shown to be) `supervisorId`, so it must not stand
+ * in for `supervisorId`'s reader. Throws when the config cannot be read: then
+ * no absence can be shown, and the caller treats that as a refusal.
+ */
+export const foreignIdentityCredentialEnvs = (
+  supervisorIdValue: string,
+  deps: Pick<A2AClientDeps, "env" | "uid"> = {}
+): string[] => {
+  const env = deps.env ?? process.env;
+  const supervisorId = requireSupervisorEndpointRecipient(supervisorIdValue);
+  const configPath = orchestrationConfigPathFromEnv(env);
+  const text = readOrchestrationConfigText(configPath, env, deps);
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    throw new Error(`orchestration config is unavailable: ${configPath}`);
+  }
+  if (!isRecord(config)) {
+    throw new Error(`orchestration config is invalid: ${configPath}`);
+  }
+  const own = Array.isArray(config.supervisors)
+    ? config.supervisors.find(
+        (entry) => isRecord(entry) && entry.supervisorId === supervisorId
+      )
+    : undefined;
+  const ownTokenEnv =
+    isRecord(own) &&
+    typeof own.tokenEnv === "string" &&
+    TOKEN_ENV_RE.test(own.tokenEnv)
+      ? own.tokenEnv
+      : "";
+  const names = otherSupervisorTokenEnvs(config, ownTokenEnv, env);
+  if (
+    env[RECIPIENT_RUN_TOKEN_ENV] &&
+    RECIPIENT_RUN_TOKEN_ENV !== ownTokenEnv &&
+    !names.includes(RECIPIENT_RUN_TOKEN_ENV)
+  ) {
+    names.push(RECIPIENT_RUN_TOKEN_ENV);
+  }
+  return names;
+};
+
 const routeErrorCode = (value: unknown): A2AV2RouteErrorCode | undefined => {
   const code =
     isRecord(value) && isRecord(value.error) ? value.error.code : undefined;

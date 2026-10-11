@@ -391,6 +391,16 @@ token not in that session), so the reader could not acknowledge at all.
   message(s) acknowledged in the mailbox cursor only ...`); the server
   records the ACK from the cursor. A route that answered with a refusal, an
   unreachable server, and fix9's multi-token refusal still hold the key.
+- Deferral is only for a session that cannot be anyone else (review fix,
+  2026-10-11). The resolver stops at the target's missing token before its
+  fix9 check, so a session acting as `supervisor:alice` (only `ALICE_TOKEN`
+  set) running `loop mailbox ack --id supervisor:bob` used to defer Bob's
+  key, and the server then recorded Bob's ACK: a confused deputy. Now a
+  session holding another configured supervisor's token or an endpoint
+  recipient run token (`LOOP_RECIPIENT_API_TOKEN`) is refused and the key is
+  held, and so is a session that cannot read the orchestration config to
+  show it holds neither. Only a token-less reader with a readable config
+  defers.
 - Limit: the evidence is the same as V1's, a key in the recipient's cursor
   for an envelope in its registered mailbox. Anyone who can write both files
   can make that recipient's ACK. An older server without this reconciler
@@ -417,7 +427,10 @@ board and its refresh after a write (both reconcilers), cursor-only
 evidence, the target check, settling, retrying only undecided refusals, the
 delivery-key check (unit and end to end), transient classification, the
 sweep's isolation, the disabled-plane gate, deferral instead of holding, the
-unresolved-route classification, and the multi-token refusal.
+unresolved-route classification, and the multi-token refusal. The
+confused-deputy fix adds three (all killed): no foreign-credential check, no
+recipient-run-token check, and an unreadable config treated as no foreign
+credential.
 
 ### RA1: origin policy and session tokens (claude/ra1-tokens-tls)
 

@@ -464,3 +464,126 @@ test("a route that was resolved but refused or unreachable still holds the key; 
     { reason: "no config here", workflowId: WORKFLOW },
   ]);
 });
+
+// The review's reproduction: the fix9 test with BOB_TOKEN removed. The
+// resolver stops at Bob's missing token before its fix9 check, so this
+// session (fixed identity supervisor:alice) must not be read as "the
+// mailbox-only Bob reader" and defer Bob's key for the server to ACK.
+const twoSupervisorConfig = (root: string): string => {
+  const configPath = join(root, "orchestration.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      a2aV2: { routePath: "/a2a" },
+      hostname: "127.0.0.1",
+      port: 9,
+      supervisors: [
+        {
+          principal: "principal:bob",
+          supervisorId: BOB,
+          tokenEnv: "BOB_TOKEN",
+        },
+        {
+          principal: "principal:alice",
+          supervisorId: "supervisor:alice",
+          tokenEnv: "ALICE_TOKEN",
+        },
+      ],
+    }),
+    { mode: 0o600 }
+  );
+  return configPath;
+};
+
+const heldAgainst = async (
+  env: NodeJS.ProcessEnv,
+  root: string
+): Promise<Awaited<ReturnType<typeof runMailboxCommandWithV2Ack>>> => {
+  const key = deriveSupervisorMessageV2DeliveryId(SENDER, WORKFLOW, 1);
+  writeFileSync(
+    mailboxPathFor(root, BOB),
+    `${JSON.stringify(v2Envelope(key))}\n`
+  );
+  const result = await runMailboxCommandWithV2Ack(
+    ["mailbox", "ack", "--id", BOB, "--root", root, "--key", key],
+    { env }
+  );
+  expect(result.consumed).toBe(0);
+  expect(result.heldKeys).toEqual([key]);
+  expect(result.v2?.deferred).toBeUndefined();
+  expect(result.v2?.refused.map((entry) => entry.workflowId)).toEqual([
+    WORKFLOW,
+  ]);
+  // The cursor did not move, so the server's reconciler has nothing to ACK.
+  expect(
+    runMailboxCommand(["mailbox", "receive", "--id", BOB, "--root", root])
+      .messages
+  ).toHaveLength(1);
+  expect(JSON.stringify(result)).not.toContain("fixture");
+  return result;
+};
+
+test("a session holding only another supervisor's token cannot defer this supervisor's V2 key: held, never a forged ACK", async () => {
+  const root = scratch();
+  const result = await heldAgainst(
+    {
+      ALICE_TOKEN: "alice-fixture",
+      HOME: root,
+      LOOP_ORCHESTRATION_CONFIG: twoSupervisorConfig(root),
+    },
+    root
+  );
+  expect(result.v2?.refused[0]?.reason).toContain(
+    "another identity's credential (ALICE_TOKEN)"
+  );
+});
+
+test("an endpoint recipient run's session (its route token set) cannot defer a mailbox supervisor's V2 key", async () => {
+  const root = scratch();
+  const result = await heldAgainst(
+    {
+      HOME: root,
+      LOOP_ORCHESTRATION_CONFIG: twoSupervisorConfig(root),
+      LOOP_RECIPIENT_API_TOKEN: "run-fixture",
+    },
+    root
+  );
+  expect(result.v2?.refused[0]?.reason).toContain(
+    "another identity's credential (LOOP_RECIPIENT_API_TOKEN)"
+  );
+});
+
+test("a session that cannot read the orchestration config cannot show it is nobody else: its V2 key is held", async () => {
+  const root = scratch();
+  const result = await heldAgainst(
+    {
+      ALICE_TOKEN: "alice-fixture",
+      HOME: root,
+      LOOP_ORCHESTRATION_CONFIG: join(root, "missing.json"),
+    },
+    root
+  );
+  expect(result.v2?.refused[0]?.reason).toContain(
+    "cannot show that it holds no other identity's credential"
+  );
+});
+
+test("the token-less mailbox reader still defers when the config lists other supervisors whose tokens it does not hold", async () => {
+  const root = scratch();
+  const key = deriveSupervisorMessageV2DeliveryId(SENDER, WORKFLOW, 1);
+  writeFileSync(
+    mailboxPathFor(root, BOB),
+    `${JSON.stringify(v2Envelope(key))}\n`
+  );
+  const result = await runMailboxCommandWithV2Ack(
+    ["mailbox", "ack", "--id", BOB, "--root", root, "--key", key],
+    {
+      env: { HOME: root, LOOP_ORCHESTRATION_CONFIG: twoSupervisorConfig(root) },
+    }
+  );
+  expect(result.consumedKeys).toEqual([key]);
+  expect(result.heldKeys).toBeUndefined();
+  expect(result.v2?.deferred?.map((entry) => entry.workflowId)).toEqual([
+    WORKFLOW,
+  ]);
+});

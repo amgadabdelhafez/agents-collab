@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   A2AMultiTokenEnvironmentError,
   acknowledgeA2AWorkflows,
+  foreignIdentityCredentialEnvs,
   resolveA2AClientEndpoint,
 } from "./a2a-session-client";
 import { isSupervisorMessageV2WorkflowId } from "./recipient-api-client";
@@ -67,11 +68,14 @@ export interface MailboxV2Acknowledgement {
   acknowledged: { phase: string; workflowId: string }[];
   /**
    * ra2: V2 workflows this session could not reach the recipient route for
-   * (no orchestration config, no V2 section, or this supervisor's token not
-   * in this environment). Their keys still move the cursor: the cursor IS
-   * this reader's acknowledgement, and the orchestration server's mailbox
-   * consumption reconciler records it on the recipient route as this
-   * supervisor. Not acknowledged yet, and never completion.
+   * (no V2 section, or this supervisor's token not in this environment),
+   * from a session that holds no other identity's credential (no other
+   * configured supervisor's token, no endpoint recipient run token) and can
+   * read the orchestration config to show that. Their keys still move the
+   * cursor: the cursor IS this reader's acknowledgement, and the
+   * orchestration server's mailbox consumption reconciler records it on the
+   * recipient route as this supervisor. Not acknowledged yet, and never
+   * completion.
    */
   deferred?: { reason: string; workflowId: string }[];
   refused: { reason: string; workflowId: string }[];
@@ -410,9 +414,27 @@ const defaultAcknowledgeV2 = async (
       throw error;
     }
     // Messages name variables and paths, never a token value.
-    throw new MailboxV2RouteUnresolvedError(
-      error instanceof Error ? error.message : "recipient route unresolved"
-    );
+    const reason =
+      error instanceof Error ? error.message : "recipient route unresolved";
+    // Deferral lets the server record this cursor as `supervisorId`'s ACK, so
+    // it is only for a session that cannot be anyone else. The resolver
+    // stops at a missing own token before its fix9 check, so a session acting
+    // as another supervisor (its token set, this one's not) would otherwise
+    // land here and become a confused deputy for `supervisorId`.
+    let foreign: string[];
+    try {
+      foreign = foreignIdentityCredentialEnvs(supervisorId, env ? { env } : {});
+    } catch (configError) {
+      throw new Error(
+        `${reason}; this session cannot show that it holds no other identity's credential (${configError instanceof Error ? configError.message : "orchestration config unreadable"}), so the V2 key is held`
+      );
+    }
+    if (foreign.length > 0) {
+      throw new A2AMultiTokenEnvironmentError(
+        `this session holds another identity's credential (${foreign.join(", ")}); it cannot acknowledge ${supervisorId}'s V2 messages, so the keys are held`
+      );
+    }
+    throw new MailboxV2RouteUnresolvedError(reason);
   }
   return await acknowledgeA2AWorkflows(endpoint, workflowIds);
 };
@@ -426,16 +448,20 @@ const defaultAcknowledgeV2 = async (
  * the plain ack (unknown key, receipt mismatch, unreadable mailbox) happens
  * before any route call. Acknowledgement is never completion.
  *
- * ra2: a session that cannot resolve the route at all (no orchestration
- * config or V2 section here, or not holding this supervisor's own token, the
- * usual case for a mailbox-only recipient) used to hold every V2 key forever,
- * so the reader could never acknowledge and the message stayed open until
- * someone ran `loop a2a ack` with the token. Such keys now move the cursor
- * and are reported as `v2.deferred`: the orchestration server's mailbox
- * consumption reconciler sees the cursor advance and records the ACK on the
- * recipient route as this supervisor. A route that was reached and refused,
- * or could not be reached, still holds the key, as before, and so does fix9's
- * refusal of an environment holding other supervisors' tokens.
+ * ra2: a session that cannot resolve the route at all (no V2 section here,
+ * or not holding this supervisor's own token, the usual case for a
+ * mailbox-only recipient) used to hold every V2 key forever, so the reader
+ * could never acknowledge and the message stayed open until someone ran
+ * `loop a2a ack` with the token. Such keys now move the cursor and are
+ * reported as `v2.deferred`: the orchestration server's mailbox consumption
+ * reconciler sees the cursor advance and records the ACK on the recipient
+ * route as this supervisor. Deferral is only for a session that cannot be
+ * anyone else: one holding another configured supervisor's token or an
+ * endpoint recipient run token, or one that cannot read the orchestration
+ * config to show it holds neither, is refused and its keys are held (no
+ * confused deputy). A route that was reached and refused, or could not be
+ * reached, still holds the key, as before, and so does fix9's refusal of an
+ * environment holding other supervisors' tokens.
  */
 export const runMailboxCommandWithV2Ack = async (
   argv: string[],
