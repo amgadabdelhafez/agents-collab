@@ -27,6 +27,7 @@ import {
   type MailboxFileSystem,
   nodeMailboxFileSystem,
 } from "../../src/loop/mailbox-file-access";
+import { SupervisorMailboxConsumptionReconciler } from "../../src/loop/supervisor-mailbox-consumption";
 import { mailboxCursorPathFor } from "../../src/loop/supervisor-mailbox-cursor";
 import {
   type MailboxEnvelope,
@@ -361,11 +362,13 @@ test("the mailbox delivery port: a hung append is a transient failure, and a red
   expect(appends).toBe(1);
 });
 
-test("the wake driver reads every target concurrently: a hung mailbox is unreadable and another target is still woken", async () => {
+test("the wake driver reads every target concurrently: hung mailboxes are unreadable and another target is still woken", async () => {
   const root = scratch();
   mkdirSync(join(root, "a"));
   mkdirSync(join(root, "b"));
+  mkdirSync(join(root, "c"));
   const hung = join(root, "a", "supervisor_a.jsonl");
+  const alsoHung = join(root, "c", "supervisor_c.jsonl");
   const ready = join(root, "b", "supervisor_b.jsonl");
   writeFileSync(ready, line(envelope("k1", "supervisor:b")));
   writeFileSync(
@@ -380,13 +383,13 @@ test("the wake driver reads every target concurrently: a hung mailbox is unreada
   const fs: MailboxFileSystem = {
     ...real,
     readFile: (path) =>
-      path === hung
+      path === hung || path === alsoHung
         ? new Promise<string>(() => undefined)
         : real.readFile(path),
   };
   const woken: WakeRequest[] = [];
   const driver = new SupervisorWakeDriver({
-    access: new MailboxFileAccess({ deadlineMs: 100, fs }),
+    access: new MailboxFileAccess({ deadlineMs: 300, fs }),
     port: {
       wake: (request) => {
         woken.push(request);
@@ -396,12 +399,54 @@ test("the wake driver reads every target concurrently: a hung mailbox is unreada
     targets: [
       { mailbox: hung, recipient: "supervisor:a", sessionName: "a" },
       { mailbox: ready, recipient: "supervisor:b", sessionName: "b" },
+      { mailbox: alsoHung, recipient: "supervisor:c", sessionName: "c" },
     ],
   });
   const started = Date.now();
   const result = await driver.sweep();
-  expect(Date.now() - started).toBeLessThan(1000);
-  expect(result.unreadable).toEqual(["supervisor:a"]);
+  // Concurrent: both hung reads share one 300 ms deadline (in turn: 600 ms).
+  expect(Date.now() - started).toBeLessThan(550);
+  expect(result.unreadable).toEqual(["supervisor:a", "supervisor:c"]);
   expect(result.woken).toEqual(["supervisor:b"]);
   expect(woken.map((request) => request.unreadKey)).toEqual(["k1"]);
+});
+
+test("the mailbox reconciler reads every binding concurrently: hung mailboxes cost one deadline, not one each", async () => {
+  const hung = new Set(["/m/a.jsonl", "/m/c.jsonl"]);
+  const fs: MailboxFileSystem = {
+    ...nodeMailboxFileSystem,
+    readFile: (path) =>
+      hung.has(path)
+        ? new Promise<string>(() => undefined)
+        : Promise.reject(errno("ENOENT")),
+  };
+  const lines: string[] = [];
+  const reconciler = new SupervisorMailboxConsumptionReconciler({
+    access: new MailboxFileAccess({ deadlineMs: 300, fs }),
+    bindings: ["a", "b", "c"].map((name) => ({
+      mailbox: `/m/${name}.jsonl`,
+      principal: `principal:${name}`,
+      supervisorId: `supervisor:${name}`,
+    })),
+    log: (entry) => lines.push(entry),
+    runtime: {
+      acknowledge: () => Promise.reject(new Error("not expected")),
+      claim: () => Promise.reject(new Error("not expected")),
+      threads: () => ({ threads: [] }),
+    } as never,
+  });
+  const started = Date.now();
+  const result = await reconciler.reconcile();
+  expect(Date.now() - started).toBeLessThan(550);
+  expect(result.unreadable).toBe(2);
+  // The next pass refuses both at once and logs nothing new.
+  const again = Date.now();
+  expect((await reconciler.reconcile()).unreadable).toBe(2);
+  expect(Date.now() - again).toBeLessThan(100);
+  expect(
+    lines.filter((entry) => entry.startsWith("[loop] mailbox for"))
+  ).toEqual([
+    `[loop] mailbox for supervisor:a is unreadable: /m/a.jsonl did not answer within 300ms (${MAILBOX_PRIVACY_HINT})`,
+    `[loop] mailbox for supervisor:c is unreadable: /m/c.jsonl did not answer within 300ms (${MAILBOX_PRIVACY_HINT})`,
+  ]);
 });

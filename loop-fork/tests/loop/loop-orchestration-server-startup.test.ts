@@ -633,6 +633,39 @@ describe("startup phases", () => {
     }
   }, 120_000);
 
+  test("not ready until one reconciliation pass has succeeded: a failing pass keeps it starting at first-reconcile", async () => {
+    const { address } = await temporal();
+    const f = fixture({ address, parked: "file" });
+    // A directory where the run's bridge file belongs: every bridge
+    // reconciliation pass fails (EISDIR) until it is removed.
+    const bridgeFile = join(f.root, "run", "bridge.jsonl");
+    mkdirSync(bridgeFile);
+    const server = startServer(f);
+    try {
+      await waitFor("a failed reconciliation pass", () =>
+        server.lines.find((line) =>
+          line.startsWith("orchestration bridge reconciliation failed")
+        )
+      );
+      // Several passes later it is still starting, on the same phase.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(await healthz(f.port)).toEqual({
+        body: {
+          phase: "first-reconcile",
+          schema: HEALTH_SCHEMA,
+          state: "starting",
+        },
+        status: 503,
+      });
+      rmSync(bridgeFile, { recursive: true });
+      const ready = await waitReady(f, server);
+      expect(ready.body).toMatchObject({ state: "ready" });
+      expect(startupLines(server).at(-1)).toBe("orchestration startup: ready");
+    } finally {
+      expect(await server.stop()).toBe(0);
+    }
+  }, 120_000);
+
   test("ready after every phase, logged in order before each begins", async () => {
     const { address } = await temporal();
     const f = fixture({ address, parked: "file" });
