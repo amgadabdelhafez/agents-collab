@@ -1,0 +1,182 @@
+# r9 design: every supervisor as an A2A V2 recipient (from read-only design pass at claude/fix8-defaults-on f9a38faa)
+
+Paths are under loop-fork/src/loop.
+
+## Blockers today
+
+1. Only one recipient is supported.
+   - Init refuses to write the section without a manifest (a2a-v2-init.ts:505-537, 638-645).
+   - The parser requires the recipient to be a Loop binding (loop-orchestration-server.ts:563-575).
+   - Peer routes cover only seats that share the recipient manifest (:1493-1507).
+   - Senders are restricted to a2aV2.principal (:999-1008).
+2. Readiness is bound to the manifest.
+   - Enrollment observes the configured manifestPath (:1065-1098).
+   - Provider readiness goes through LoopSupervisorDirectory (supervisor-session-v2-codex-readiness.ts:36-94, loop-supervisor-directory.ts:67-92).
+   - The coordinator refuses when there is no descriptor (supervisor-message-v2-runtime.ts:1659-1668, 1800-1829), so the mailbox port is never reached. FirstAvailable already chains bridge then mailbox (loop-orchestration-server.ts:1436-1441).
+3. Descriptors are scoped by the sender principal: UNIQUE(tenant,principal,recipient) (supervisor-session-v2.ts:603-613).
+4. A V2 fault takes V1 down in three places. r8's degrade fix may already cover some; verify.
+   - parseA2AV2 throws inside the config parse (:930).
+   - A missing result-graph key refuses start (:1662-1664).
+   - createDefaultRuntimeHost or an enrollment refusal aborts the server (:1187-1200, :1923-1935).
+
+## Data model
+
+New table `loop_supervisor_endpoint_lease_v2`, created in `PostgresSupervisorSessionV2Store.migrate`:
+
+| Column | Notes |
+|---|---|
+| tenant_id, recipient | primary key |
+| epoch | BIGINT, never reset |
+| holder_ref | |
+| kind | loop-run, claude-channel or codex-thread |
+| locator_json | runDir+seat, sessionDir, or remoteUrl+threadId |
+| descriptor_id, descriptor_revision | |
+| expires_at, released_at | |
+
+- **claim** runs in one transaction with `FOR UPDATE`. It refuses a live row held by another holder unless `--takeover` is given. It bumps epoch and registers or rebinds the descriptor in the same transaction, reusing register and the rebind CAS (supervisor-session-v2.ts:650-761).
+- **renew and release** require a matching (epoch, holder_ref); that pair is the fence.
+- **locator** must hash to the descriptor's endpointDigest (codex-readiness.ts:77-81).
+- **Descriptors** live in the seat's own scope, {tenant, principalFor(recipient)}.
+- **Config:** recipient becomes optional; endpointRef is per kind (`endpoint:<kind>`). No new a2aV2 keys are added, because r8's exactKeys check would reject them on rollback. With a section present, every configured supervisor is a recipient.
+
+## Ports
+
+- **Recipient assignment** (recipient-assignment.ts:42-64): authenticate by token and principal, then resolve the lease.
+  - Live lease: assertReady in the seat scope.
+  - No lease or a released lease: accept when the supervisor has a mailbox (mailbox-held mode).
+  - publishResult follows the same rule (supervisor-a2a-v2-service.ts:565).
+- **Readiness**, in a new supervisor-message-v2-endpoint-delivery.ts:
+  - Live lease: probe by kind.
+  - Expired but not released: defer within notEnrolledBoundMs, using the existing deferral (runtime.ts:341-420).
+  - Released or no lease, with a mailbox: ready-for-mailbox.
+- **Delivery adapters by kind:**
+  - Loop run: BridgeSupervisorMessageDeliveryPort, with the directory resolving {runDir, seat} from the lease.
+  - Standalone Claude Code: reuse `__bridge-mcp <sessionDir> claude` as the channel server.
+    - It declares claude/channel (bridge.ts:550-556) and pushes notifications/claude/channel (bridge-runtime.ts:71).
+    - Readiness comes from bridge.ts:940-994 and the probe from claude-channel-readiness.ts:54-90.
+    - It needs `--dangerously-load-development-channels server:<name>` (tmux.ts:817).
+    - readBridgeStatus (bridge-store.ts:749-770) gains a session.json fallback when there is no manifest.
+  - Codex: probe with probeCodexThread (codex-app-server.ts:1485-1523, read or resume, no turn), deliver with injectCodexMessage (:1525).
+  - Mailbox: MailboxSupervisorMessageDeliveryPort (supervisor-mailbox-delivery.ts:60-116), with wake via wakeSession (supervisor-wake-driver.ts:11-22).
+- **ACK stays separate from completion.**
+  - `loop a2a ack`, and V2 envelopes in `loop mailbox ack`, call the recipient route (recipient-api-client.ts:43-127).
+  - V2 ids do not match the V1 reconciler regex (supervisor-mailbox-consumption.ts:28).
+  - Completion means a published result.
+
+## Enrollment
+
+- **Routes:** `{routePath}/sessions/{claim,renew,release}`. Each needs a bearer token, and identity.supervisorId must equal the requested id.
+- **Renewal:** generalize ConfiguredA2AV2SessionEnrollment (:1214-1288) to iterate the live leases, on the existing sweep (:1332-1420); no new scheduler.
+  - It observes the runDir, the session dir's readiness file, or the Codex probe.
+  - If an observation fails, the TTL lapses.
+  - A terminal run is released by the server.
+- **Loop runs:** a `--a2a-as supervisor:x` launch flag claims once the manifest has its session ids.
+  - Release happens in the teardown hooks (paired-loop.ts:565-580, tmux.ts:3684-3700, reconcile stopped-run cli.ts:375-430) and `loop stop` (fix8-launch-startup).
+  - It never masks an error and never fails the run.
+- **Standalone sessions:** `loop a2a enroll --as supervisor:x --kind ...`, or the MCP tools a2a_enroll and a2a_release in bridge session mode. The token comes from the supervisor's tokenEnv.
+
+## Sending
+
+- Each supervisor gets an SDK ingress at `{routePath}/supervisors/<id>`, generalizing the peer ingress (supervisor-a2a-v2-service.ts:969-994). `/a2a/v2` stays for the r8 recipient.
+- The authenticator accepts any configured identity. `harness.dev/from` must equal the authenticated supervisorId, and grants still decide.
+- `loop a2a send|status` and the MCP tools a2a_send and a2a_status use the @a2a-js/sdk client.
+- `GET {routePath}/messages/<id>` returns phase, deliveredAt, acknowledgedAt and the SDK task state, for the sender's own principal only.
+- Streaming and push stay false. A reply is a pushed A2A message.
+
+## Migration
+
+- **init with no --manifest** writes the section with no recipient, sets principal to the control principal (default: the first supervisor, printed), and uses workflowIdFormat legacy. It reports missing grant pairs and never invents them. The r8 section is unchanged.
+- **Owner decisions are kept:** /healthz shows counts only, and a V2 fault disables V2 without taking V1 down.
+- **Rollback:** the r8 parser fails on a section with no recipient, so the runbook restores the .bak-<stamp> copy.
+
+## Risks
+
+- **Mailbox and session double delivery:** a lease can appear between readiness and delivery. idempotencyKey and the per-workflow ACK cover it.
+- **Desktop channels unverified:** if a desktop session can't load the channel, it falls back to mailbox plus wake.
+- **Grant mesh:** every sender/recipient pair needs a grant the owner supplies.
+- **Rollback caveat:** see Migration above.
+- **--takeover** can evict a live holder.
+
+## Tasks
+
+Freeze the lease types and the route contracts first.
+
+- **T1 lease store:** supervisor-session-v2.ts and supervisor-session-v2-postgres.test.ts.
+- **T2 endpoint ports:** the new endpoint-delivery module, supervisor-session-v2-codex-readiness.ts, loop-supervisor-directory.ts, bridge-store.ts, plus their tests.
+- **T3 server, config and init:** loop-orchestration-server.ts, supervisor-a2a-v2-service.ts, supervisor-message-v2-recipient-assignment.ts, a2a-v2-init.ts, orchestration-command.ts, plus their tests.
+- **T4 clients and hooks:** a new a2a-session-command.ts, cli.ts, bridge.ts, recipient-api-client.ts, mailbox-command.ts, tmux.ts, paired-loop.ts.
+- **T5 sandbox E2E:** tests/loop/a2a-v2-all-supervisors-e2e.test.ts.
+  - Local Temporal and Postgres, two scripted run dirs (Claude, Codex) and one Claude channel session dir.
+  - All 6 directed sends delivered, ACKed and completed.
+  - Release, then mailbox fallback, then reclaim.
+  - A competing claim is fenced.
+  - Expiry defers, bounded.
+  - With the ledger down, V1 stays up.
+  - /healthz shows no ids.
+  - A message to an id with no session goes to the mailbox and is ACKed via `loop a2a ack`.
+
+## CONTRACTS
+
+Frozen on `claude/fix9-contracts` (from `claude/fix-integration-r8-2026-10-11` e2fa0507). Builders import these files and do not edit them; a change goes back through this branch. Each file holds types, interfaces and pure helpers only. `tests/loop/supervisor-endpoint-contracts.test.ts` pins the decisions, and every guard was mutation-proved.
+
+| File | Owns | Used by |
+|---|---|---|
+| `src/loop/supervisor-endpoint-lease.ts` | Lease row type, kinds, locators, fence, `SupervisorEndpointLeaseStore` (claim/renew/release/resolve/list), claim and fence decisions | T1 implements the store; T2, T3 and T4 read it |
+| `src/loop/supervisor-message-v2-endpoint-contract.ts` | The one routing table, readiness states, per-kind adapter interface, delivery options, fixed reasons | T2 implements it; T3 wires it |
+| `src/loop/a2a-v2-routes-contract.ts` | Paths, the route matcher, strict session request parsers, receipt, message status, error codes | T3 serves the routes; T4 calls them |
+
+### Lease decisions
+
+- **Claim** is allowed when there is no row, when the lease is expired or released, or when the claimant is the same holder.
+  - A live lease held by another holder refuses with `held` unless `takeover` is set.
+  - Every allowed claim bumps the epoch. The first claim gets epoch 1.
+  - An epoch that would pass `MAX_SAFE_INTEGER` refuses instead of wrapping.
+- **Fence:** renew and release need a matching (epoch, holderRef).
+  - Expiry alone never fences. An expired lease whose epoch nobody bumped can still be renewed by its holder.
+  - Renew refuses a released lease. Repeating a release with the same fence is an idempotent `released` with `changed: false`.
+- **Descriptor:**
+  - endpointRef is `endpoint:<kind>`.
+  - endpointDigest is the sha256 of the locator's canonical JSON (sorted keys). Readiness re-derives it from the lease. This differs from the manifest-bound r8 descriptor, which hashes the remoteUrl or channel server.
+  - The provider is set by the kind, or by the seat for `loop-run`.
+  - A Codex sessionRef must be `session:<threadId>`.
+  - The descriptor's expiresAt equals the lease's.
+- **Locators:**
+  - Directories are absolute and normalized, with no trailing slash and no NUL.
+  - A Codex remoteUrl must be `ws:` or `wss:` on literal loopback (127.0.0.1 or [::1]). It carries no credentials, query or fragment, and is accepted only in the exact spelling the probe uses.
+- **TTL** is 1000 to 86,400,000 ms, the same bounds as `a2aV2.sessionTtlMs`. The server defaults to sessionTtlMs.
+- **Store outage:** the store rejects with `SupervisorMessageV2ReadinessUnavailableError`, never with driver text.
+
+### Endpoint routing
+
+`decideSupervisorEndpointRoute` is the only rule. Readiness, delivery and recipient assignment all use it.
+
+| Lease state | Mailbox | Route |
+|---|---|---|
+| live | any | endpoint |
+| expired | any | defer |
+| released or none | yes | mailbox |
+| released or none | no | none |
+
+- **endpoint:** delivery goes through the kind's adapter only. A transient failure there retries; it never falls through to the mailbox.
+- **defer:** expiry uses the existing not-enrolled deferral, measured from expiresAt. It needs no new scheduler.
+- **Scope:** lookups use the seat's scope, {tenantId, principalFor(recipient)}.
+- **Reasons** are fixed and opaque.
+
+### Routes
+
+All routes sit under `a2aV2.routePath`. The bare routePath and the r8 sub-routes (/seats/, /assignment, /result-graph, /recipient) are unchanged, and /healthz stays counts only.
+
+| Method | Path | Rule |
+|---|---|---|
+| POST | `/sessions/{claim,renew,release}` | The bearer identity's supervisorId must equal the body's supervisorId. |
+| POST | `/supervisors/<slug>` | The SDK JSON-RPC ingress. The slug is the id without `supervisor:`. `harness.dev/from` must equal the authenticated id, and grants decide. |
+| GET | `/messages/<messageId>` | The messageId is URI-encoded. The route answers only within {route tenant, authenticated principal}; any other id gets a 404. |
+
+- **Agent card:** none is served. Clients build the card with `agentCardFor` and use `ClientFactory.createFromAgentCard`.
+- **Session bodies** use exact keys (claim takes optional takeover and ttlMs; renew takes optional ttlMs) and are decoded by `parseA2AV2SessionRequest` on both sides.
+- **Receipts** never echo the locator.
+- **Message status** returns phase, deliveredAt, acknowledgedAt, taskState (the SDK enum name, or null) and workResultCompleted. workResultCompleted is true only for TASK_STATE_COMPLETED, so delivery, the read ACK and completion stay three separate facts.
+- **Errors** use the existing `{ error: { code } }` envelope with the statuses in `A2A_V2_ROUTE_ERROR_STATUS`.
+  - `lease-held` adds the holder summary.
+  - `lease-fenced` adds the reason.
+  - `v2-unavailable` (503) means V2 is disabled by a fault or its store cannot answer. V1 is unaffected.
