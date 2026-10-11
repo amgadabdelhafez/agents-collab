@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import {
   A2A_SESSION_TOOL_NAMES,
   A2A_SESSION_TOOLS,
+  type A2ABridgeSession,
   a2aBridgeSession,
   callA2ASessionTool,
 } from "./a2a-session-command";
@@ -455,6 +456,20 @@ const handlePublishHumanAskTool = (
   }
 };
 
+// The supervisor a session-mode bridge acts as, fixed once from its start
+// argv (runDir, source) when the bridge starts and never from a tool call.
+const a2aSessionsAtStart = new Map<string, A2ABridgeSession | undefined>();
+const fixedA2ABridgeSession = (
+  runDir: string,
+  source: BridgeMcpSource
+): A2ABridgeSession | undefined => {
+  const key = `${source}\u0000${runDir}`;
+  if (!a2aSessionsAtStart.has(key)) {
+    a2aSessionsAtStart.set(key, a2aBridgeSession(runDir, source));
+  }
+  return a2aSessionsAtStart.get(key);
+};
+
 // Session mode only: a standalone Claude Code session's bridge acting as its
 // supervisor. The token stays in the protected environment; a refusal returns
 // the client's fixed, token-free message.
@@ -465,7 +480,7 @@ const handleA2ASessionTool = async (
   name: string,
   args: Record<string, unknown>
 ): Promise<void> => {
-  const session = a2aBridgeSession(runDir, source);
+  const session = fixedA2ABridgeSession(runDir, source);
   if (!session) {
     writeError(
       id,
@@ -638,7 +653,7 @@ const handleBridgeRequest = async (
         result: {
           tools: [
             ...UTILITY_BRIDGE_TOOLS,
-            ...(a2aBridgeSession(runDir, source) ? A2A_SESSION_TOOLS : []),
+            ...(fixedA2ABridgeSession(runDir, source) ? A2A_SESSION_TOOLS : []),
             ...(source !== "supervisor" && isPublicAskRunActive(runDir)
               ? [
                   {
@@ -925,6 +940,8 @@ export const runBridgeMcpServer = async (
   source: BridgeMcpSource
 ): Promise<void> => {
   const channelIdentity = readBridgeStatus(runDir);
+  // Fix the A2A acting supervisor now, before any request is read.
+  fixedA2ABridgeSession(runDir, source);
   let processRegistration: string | undefined;
   try {
     processRegistration = registerRunBridgeProcess(runDir, source);

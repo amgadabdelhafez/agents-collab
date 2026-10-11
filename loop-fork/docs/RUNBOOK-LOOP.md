@@ -233,6 +233,67 @@ Limits:
   with `@` failed every V2 start at `governance-store` ("dispatch owner is
   invalid"); found by the fix8 e2e.
 
+### A2A V2 clients: one identity, one token (fix9 client identity, 2026-10-11)
+
+The clients are `loop a2a <enroll|release|send|status|ack> --as
+<supervisor-id>`, the `--a2a-as` launch flag, the teardown release hooks,
+`loop mailbox ack` (V2 envelopes), and the bridge's session-mode MCP tools
+a2a_enroll, a2a_release, a2a_send and a2a_status (`__bridge-mcp
+<home>/.loop/sessions/<slug>/<session-id> claude`; there is no ack tool).
+All of them go through `src/loop/a2a-session-client.ts`, which enforces:
+
+- **Run each session with only its own token.** The client reads only the
+  acting supervisor's `tokenEnv`. If the environment also has another
+  configured supervisor's token variable set (non-empty), it refuses and
+  names the variables (never their values): `the environment also holds
+  other supervisors' token variables (BOB_TOKEN); run each session with only
+  ALICE_TOKEN set, or pass --allow-multi-token-env`. The fix is to start the
+  session (tmux pane, Claude Code, shell) with only its own variable, for
+  example `env -u BOB_TOKEN loop a2a ...`, or an env file per supervisor.
+  `--allow-multi-token-env` on `loop a2a` is a deliberate human override
+  for that one command, and even then only `--as`'s token is sent. The MCP
+  tools have no override; the `--a2a-as` launch claim, the teardown release
+  (logged, the lease lapses by its TTL) and `loop mailbox ack` refuse too.
+- **The acting supervisor is never tool input.** In bridge session mode it
+  is `supervisor:<slug>` of the session dir in the bridge's start argv (the
+  dir `loop a2a enroll --kind claude-channel` prints), fixed when the bridge
+  starts. No tool schema has an identity, token or takeover field, and a
+  call that sends one (`as`, `from`, `supervisor_id`, `on_behalf_of`,
+  `token_env`, `takeover`, ...) is refused before anything is read or sent.
+  On the CLI it is `--as`, still required.
+- **Takeover is a human CLI flag only.** a2a_enroll lost its `takeover`
+  option; use `loop a2a enroll ... --takeover`. Enrolling a run whose
+  manifest already names another `a2aSupervisorId` is refused (`the run is
+  enrolled as supervisor:x; only an explicit --takeover renames it`) before
+  the manifest is touched or a request is sent.
+- **No forwarding.** A message's `from` (`harness.dev/from`) is always the
+  acting identity; the client never relays a request, target or id for a
+  caller beyond that identity, and a release refuses a lease recorded for
+  another supervisor.
+- **The token goes only to the config's server.** The server is the
+  orchestration config's loopback `hostname`/`port`; every request URL is
+  checked against that origin before the token is attached (a path with
+  `//`, a backslash, whitespace or control characters is refused), and
+  redirects are refused. Ids from messages or tool input are validated as
+  ids and never become a host.
+- **A `LOOP_ORCHESTRATION_CONFIG` override must be trusted.** It must be a
+  regular file (a symlink is judged by its target) owned by the current
+  user and not group- or world-writable (`chmod 600` or `644`), else the
+  client refuses with `LOOP_ORCHESTRATION_CONFIG is not owned by the
+  current user`, `... is group- or world-writable` or `... is not a regular
+  file`. The check runs on the descriptor that is read. The default
+  `~/.loop/orchestration/config.json` is not checked by this rule.
+
+Tests (`tests/loop/a2a-session-client.test.ts`): "an MCP tool call cannot
+choose another identity, a token or a takeover", "a multi-token environment
+is refused unless --allow-multi-token-env, naming variables only", "a
+hostile LOOP_ORCHESTRATION_CONFIG is refused before any token is read",
+"the token never leaves the configured origin", "a run enrolled as another
+supervisor is renamed only by an explicit takeover"; the r9 e2e
+(`a2a-v2-all-supervisors-e2e.test.ts`) runs each `loop a2a` call with only
+its supervisor's token. Each guard was mutation-checked: reverting it fails
+those tests.
+
 ### fix8 critic fixes (2026-10-11)
 
 1. V2 start problems degrade (c3c5b106): the serve behaviour and reasons

@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
+  closeSync,
   existsSync,
+  constants as fsConstants,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -33,7 +37,10 @@ import {
   a2aV2WorkResultCompleted,
   parseA2AV2SessionRequest,
 } from "./a2a-v2-routes-contract";
-import { orchestrationConfigPathFromEnv } from "./governess-temporal-journal";
+import {
+  ORCHESTRATION_CONFIG_PATH_ENV,
+  orchestrationConfigPathFromEnv,
+} from "./governess-temporal-journal";
 import { acknowledgeRecipientWorkflow } from "./recipient-api-client";
 import { readRunManifest, updateRunManifest } from "./run-state";
 import {
@@ -59,7 +66,19 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  *   takes a server URL from argv or tool input.
  * - The bearer token is the acting supervisor's `tokenEnv`, read from the
  *   environment and held in a private field: no result, error or log line
- *   carries it.
+ *   carries it. Only that one variable is read, and an environment that also
+ *   holds another configured supervisor's token is refused unless the caller
+ *   opts in (`--allow-multi-token-env`): a process that can read several
+ *   tokens could act as any of them.
+ * - A `LOOP_ORCHESTRATION_CONFIG` override must be a regular file owned by
+ *   the current user and not group- or world-writable: whoever can write it
+ *   chooses where the token goes.
+ * - Every request URL is checked against the config's own origin before the
+ *   token is attached; nothing derived from message content or tool input
+ *   can move it elsewhere.
+ * - The acting identity is fixed by the caller (`--as`, or the bridge
+ *   session's own directory, fixed when the bridge starts) before any other
+ *   input is read; a message's `from` is always that identity.
  * - Locators are ids only; the server derives every path and URL itself.
  * - Delivery, the read ACK and completion stay three separate facts: a send
  *   reports acceptance, `ack` reports the acknowledgement, and only a
@@ -141,16 +160,119 @@ export class A2AClientEndpoint {
   token(): string {
     return this.#token;
   }
+  /**
+   * `path` on this endpoint's own origin. A path that could leave it (no
+   * leading slash, a `//` authority, a backslash, whitespace or a control
+   * character) is refused, so the token only ever goes to the configured
+   * server.
+   */
   url(path: string): string {
-    return `${this.baseUrl}${path}`;
+    if (
+      !path.startsWith("/") ||
+      path.startsWith("//") ||
+      UNSAFE_PATH_RE.test(path)
+    ) {
+      throw new Error("A2A request path is not on the configured server");
+    }
+    const url = `${this.baseUrl}${path}`;
+    if (new URL(url).origin !== new URL(this.baseUrl).origin) {
+      throw new Error("A2A request path is not on the configured server");
+    }
+    return url;
   }
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refused on purpose
+const UNSAFE_PATH_RE = /[\\\s\u0000-\u001f\u007f]/;
+
 export interface A2AClientDeps {
+  /**
+   * Accept an environment that also exposes other configured supervisors'
+   * token variables (the CLI's `--allow-multi-token-env`). Off by default;
+   * the bridge's MCP tools never set it.
+   */
+  allowMultiTokenEnv?: boolean;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
-  readFile?: (path: string) => string;
+  /** The current user's uid, for the config override check (tests). */
+  uid?: () => number;
 }
+
+/**
+ * Read the orchestration config through one descriptor. An override from
+ * `LOOP_ORCHESTRATION_CONFIG` must be a regular file owned by the current
+ * user with no group or world write bit; the checks run on the descriptor
+ * that is read, so the file cannot be swapped in between.
+ */
+const readOrchestrationConfigText = (
+  configPath: string,
+  env: NodeJS.ProcessEnv,
+  deps: A2AClientDeps
+): string => {
+  const override = Boolean(env[ORCHESTRATION_CONFIG_PATH_ENV]?.trim());
+  let fd: number;
+  try {
+    // Non-blocking, so a FIFO planted at the path cannot hang the open.
+    // biome-ignore lint/suspicious/noBitwiseOperators: open flags
+    fd = openSync(configPath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  } catch {
+    throw new Error(`orchestration config is unavailable: ${configPath}`);
+  }
+  try {
+    if (override) {
+      const stat = fstatSync(fd);
+      const uid = (deps.uid ?? (() => process.getuid?.() ?? -1))();
+      if (!stat.isFile()) {
+        throw new Error(
+          `${ORCHESTRATION_CONFIG_PATH_ENV} is not a regular file: ${configPath}`
+        );
+      }
+      if (stat.uid !== uid) {
+        throw new Error(
+          `${ORCHESTRATION_CONFIG_PATH_ENV} is not owned by the current user: ${configPath}`
+        );
+      }
+      // biome-ignore lint/suspicious/noBitwiseOperators: mode bits
+      if ((stat.mode & 0o022) !== 0) {
+        throw new Error(
+          `${ORCHESTRATION_CONFIG_PATH_ENV} is group- or world-writable: ${configPath}`
+        );
+      }
+    }
+    try {
+      return readFileSync(fd, "utf8");
+    } catch {
+      throw new Error(`orchestration config is unavailable: ${configPath}`);
+    }
+  } finally {
+    closeSync(fd);
+  }
+};
+
+/**
+ * The names (never the values) of the other configured supervisors' token
+ * variables that are set in `env`.
+ */
+export const otherSupervisorTokenEnvs = (
+  config: Record<string, unknown>,
+  ownTokenEnv: string,
+  env: NodeJS.ProcessEnv
+): string[] => {
+  const names = new Set<string>();
+  const entries = Array.isArray(config.supervisors) ? config.supervisors : [];
+  for (const entry of entries) {
+    const name = isRecord(entry) ? entry.tokenEnv : undefined;
+    if (
+      typeof name === "string" &&
+      TOKEN_ENV_RE.test(name) &&
+      name !== ownTokenEnv &&
+      env[name]
+    ) {
+      names.add(name);
+    }
+  }
+  return [...names].sort();
+};
 
 /**
  * Resolve `supervisorId`'s server and token from the orchestration config
@@ -165,11 +287,10 @@ export const resolveA2AClientEndpoint = (
   const env = deps.env ?? process.env;
   const supervisorId = requireSupervisorEndpointRecipient(supervisorIdValue);
   const configPath = orchestrationConfigPathFromEnv(env);
+  const text = readOrchestrationConfigText(configPath, env, deps);
   let config: unknown;
   try {
-    config = JSON.parse(
-      (deps.readFile ?? ((path) => readFileSync(path, "utf8")))(configPath)
-    );
+    config = JSON.parse(text);
   } catch {
     throw new Error(`orchestration config is unavailable: ${configPath}`);
   }
@@ -215,6 +336,14 @@ export const resolveA2AClientEndpoint = (
   if (!token) {
     throw new Error(
       `${supervisorId}'s token environment ${tokenEnv} is not set`
+    );
+  }
+  // One identity per process: an environment that could also act as another
+  // supervisor is refused unless the caller opted in. Names only, never values.
+  const others = otherSupervisorTokenEnvs(config, tokenEnv, env);
+  if (others.length > 0 && deps.allowMultiTokenEnv !== true) {
+    throw new Error(
+      `the environment also holds other supervisors' token variables (${others.join(", ")}); run each session with only ${tokenEnv} set, or pass --allow-multi-token-env`
     );
   }
   return new A2AClientEndpoint({
@@ -818,9 +947,21 @@ export const claimRunA2AEndpoint = async (
 ): Promise<A2AClaimResult> => {
   const supervisorId = requireSupervisorEndpointRecipient(input.supervisorId);
   const kind = input.kind ?? "loop-run";
-  const named = updateRunManifest(input.manifestPath, (current) =>
-    current ? { ...current, a2aSupervisorId: supervisorId } : undefined
-  );
+  // A run the manifest already names as another supervisor's endpoint is
+  // that supervisor's: renaming it is a takeover, which only the explicit
+  // human `--takeover` flag asks for.
+  const named = updateRunManifest(input.manifestPath, (current) => {
+    if (!current) {
+      return undefined;
+    }
+    const recorded = current.a2aSupervisorId;
+    if (recorded && recorded !== supervisorId && options.takeover !== true) {
+      throw new Error(
+        `the run is enrolled as ${recorded}; only an explicit --takeover renames it`
+      );
+    }
+    return { ...current, a2aSupervisorId: supervisorId };
+  });
   // The server re-reads the manifest it derives and refuses one that does not
   // name this supervisor, so this only needs the run to exist.
   const manifest = named && readRunManifest(input.manifestPath);

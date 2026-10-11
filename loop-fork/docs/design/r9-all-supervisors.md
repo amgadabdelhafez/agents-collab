@@ -74,6 +74,7 @@ New table `loop_supervisor_endpoint_lease_v2`, created in `PostgresSupervisorSes
   - Release happens in the teardown hooks (paired-loop.ts:565-580, tmux.ts:3684-3700, reconcile stopped-run cli.ts:375-430) and `loop stop` (fix8-launch-startup).
   - It never masks an error and never fails the run.
 - **Standalone sessions:** `loop a2a enroll --as supervisor:x --kind ...`, or the MCP tools a2a_enroll and a2a_release in bridge session mode. The token comes from the supervisor's tokenEnv.
+  - fix9 client identity: the bridge's acting supervisor is fixed at start from its session dir, never from tool input; tools take no identity, token or takeover field; takeover is the CLI's `--takeover` only. The client reads only the acting supervisor's tokenEnv and refuses an environment holding another supervisor's token (CLI override `--allow-multi-token-env`). A `LOOP_ORCHESTRATION_CONFIG` override must be owned by the user and not group/world-writable. See RUNBOOK-LOOP.md "A2A V2 clients: one identity, one token".
 
 ## Sending
 
