@@ -12,7 +12,10 @@ import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import { serve } from "bun";
 import {
+  type A2AV2EnvFileRefusal,
+  type A2AV2EnvFileRefusalCode,
   a2aV2EnvFilePath,
+  loadA2AV2EnvFile,
   probeA2AV2Database,
   withA2AV2EnvFile,
 } from "./a2a-v2-env";
@@ -262,11 +265,12 @@ export interface LoopOrchestrationFetchHandlerOptions {
   /**
    * fix8: whether the A2A V2 plane is mounted ("ready"), not configured
    * ("off": the config has no a2aV2 section) or configured but disabled at
-   * start ("disabled": its ledger database is unset or unreachable). /healthz
-   * reports it as `a2aV2`; it does not change `state`, which V1 owns. The
-   * server always supplies it; the field is left out only when it is not.
+   * start ("disabled", with a reason code: see `A2AV2DisabledReason`).
+   * /healthz reports it as `a2aV2` and, when disabled, `a2aV2Reason`; it does
+   * not change `state`, which V1 owns. The server always supplies it; the
+   * fields are left out only when it is not.
    */
-  a2aV2State?: () => A2AV2PlaneState;
+  a2aV2State?: () => A2AV2PlaneStatus;
   authenticator: SupervisorControlSurfaceAuthenticator;
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
   /**
@@ -282,6 +286,13 @@ export interface LoopOrchestrationFetchHandlerOptions {
   reconciliationHealthy: () => boolean;
 }
 
+const planeHealth = (
+  status: A2AV2PlaneStatus
+): { a2aV2: A2AV2PlaneState; a2aV2Reason?: A2AV2DisabledReason } => ({
+  a2aV2: status.state,
+  ...(status.reason ? { a2aV2Reason: status.reason } : {}),
+});
+
 /**
  * The unauthenticated GET /healthz body. Counts and aggregate state only:
  * no seat, recipient, session, or store detail reaches this route. Which
@@ -292,7 +303,7 @@ const orchestrationHealth = (
   options: LoopOrchestrationFetchHandlerOptions
 ): Response =>
   Response.json({
-    ...(options.a2aV2State ? { a2aV2: options.a2aV2State() } : {}),
+    ...(options.a2aV2State ? planeHealth(options.a2aV2State()) : {}),
     ...(options.notEnrolledSeats
       ? { notEnrolledCount: options.notEnrolledSeats().length }
       : {}),
@@ -1051,9 +1062,9 @@ const enrolledAs = (
 /**
  * The one enrollment failure that means the seat is simply not running or
  * not reachable now: its run is not active (no route), or its provider
- * session is absent from the run. Only this class lets a peer seat be
- * degraded at start; every other failure (an authority denial, an identity
- * or registration conflict, a store or configuration error) refuses start.
+ * session is absent from the run. Since fix8 no enrollment failure refuses
+ * start (see `ConfiguredA2AV2SessionEnrollment`); the class still tells an
+ * operator reading the log a stopped seat from a denial or a conflict.
  */
 export class A2AV2SeatUnavailableError extends Error {
   constructor(message: string) {
@@ -1172,34 +1183,6 @@ export type A2AV2EnrollmentOutcome =
   | { error: unknown; recipient: string; state: "failed" };
 
 /**
- * Start-time verdict on the first `maintain()` pass. The configured
- * recipient's own failure refuses start, with its own cause. A peer seat that
- * is not running or not reachable (`A2AV2SeatUnavailableError`) degrades that
- * seat alone: the server starts, the sweep reports the peer as not enrolled (a
- * log line, a count on /healthz, the seat id on the authenticated assignment
- * status) and retries it. Any other peer failure (an authority denial, an
- * identity or registration conflict, a store error) refuses start with the
- * peer's own cause. While a recipient is not enrolled, its deliveries wait
- * without spending attempts up to the not-enrolled bound (see
- * `SupervisorMessageV2NotEnrolledDeferral`), then fail as normal retryable
- * attempts.
- */
-export const requireA2AV2Enrollment = (
-  outcomes: readonly A2AV2EnrollmentOutcome[],
-  recipient: string
-): void => {
-  for (const outcome of outcomes) {
-    if (
-      outcome.state === "failed" &&
-      (outcome.recipient === recipient ||
-        !(outcome.error instanceof A2AV2SeatUnavailableError))
-    ) {
-      throw outcome.error;
-    }
-  }
-};
-
-/**
  * Keeps every configured seat's descriptor current for the life of the
  * server, not only at start: it renews before expiry and rebinds when a Codex
  * thread or Claude session restarts. It owns no timer; the server's existing
@@ -1207,6 +1190,17 @@ export const requireA2AV2Enrollment = (
  * seat's bridge status with the descriptor it last enrolled, so a quiet sweep
  * reads local files only. A failed seat is retried after a short delay, and
  * is reported as `deferred` (not as a success) until then.
+ *
+ * fix8: enrollment is per recipient and never refuses start, for the
+ * configured recipient as for a peer, whatever the cause (its run stopped,
+ * its manifest missing, its session absent, an authority denial, a
+ * registration conflict). The start-time pass only seeds the sweep: a seat
+ * that failed is reported as not enrolled (a log line, a count on /healthz,
+ * the seat id on the authenticated assignment status) and retried by the
+ * existing reconciliation sweep. While a recipient is not enrolled, its
+ * deliveries wait without spending attempts up to the not-enrolled bound
+ * (see `SupervisorMessageV2NotEnrolledDeferral`), then fail as normal
+ * retryable attempts.
  */
 export class ConfiguredA2AV2SessionEnrollment {
   readonly #enrolled = new Map<string, SupervisorSessionDescriptorV2>();
@@ -1430,6 +1424,8 @@ const createDefaultRuntimeHost = async (input: {
 }): Promise<{
   a2aV2Enrollment?: ConfiguredA2AV2SessionEnrollment;
   a2aV2Service: SupervisorA2AV2Service | undefined;
+  /** Why a configured V2 plane did not start; V1 runs alone. */
+  a2aV2StartFailure?: string;
   a2aV2StartOutcomes?: readonly A2AV2EnrollmentOutcome[];
   host: TemporalSupervisorRuntimeHost;
 }> => {
@@ -1439,7 +1435,9 @@ const createDefaultRuntimeHost = async (input: {
       directory: { resolveMailbox: (id) => input.mailboxes.get(id) },
     }),
   ]);
-  const hostOptions = {
+  // Fresh per host: a V2 start that fails closes the host it created, and
+  // the V1-only host it falls back to must not share its stores.
+  const makeHostOptions = () => ({
     authority: authority(input.config),
     buildId: input.config.buildId,
     delivery,
@@ -1463,182 +1461,184 @@ const createDefaultRuntimeHost = async (input: {
       ),
     },
     workflowExecution: "in-process" as const,
-  };
-  if (!input.config.a2aV2) {
-    return {
-      a2aV2Service: undefined,
-      host: await TemporalSupervisorRuntimeHost.create(hostOptions),
-    };
-  }
+  });
+  const v1Only = async () => ({
+    a2aV2Service: undefined,
+    host: await TemporalSupervisorRuntimeHost.create(makeHostOptions()),
+  });
   const a2aConfig = input.config.a2aV2;
-  const databaseUrl = input.env[a2aConfig.databaseUrlEnv];
-  if (!databaseUrl) {
-    throw new Error("configured A2A V2 database environment is absent");
+  if (!a2aConfig) {
+    return await v1Only();
   }
-  const controlAuthenticator = authenticator(input.config, input.env);
-  const resultGraphKeys = resolveResultGraphKeys(a2aConfig, input.env);
-  const recipientBinding = input.config.supervisors.find(
-    (entry) => entry.supervisorId === a2aConfig.recipient
-  );
-  let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
-  let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
-  let enrollmentFailure: { error: unknown } | undefined;
-  const a2aV2Service = await createSupervisorA2AV2Service({
-    card: {
-      description:
-        "Authenticated Loop supervisor A2A V2 ingress. Provider acceptance is distinct from recipient consumption.",
-      supervisorId: a2aConfig.recipient,
-      url: `http://${input.config.hostname}:${input.config.port}${a2aConfig.routePath}`,
-    },
-    databaseUrl,
-    peerRoutes: input.config.supervisors
-      .filter(
-        (entry) =>
-          entry.seat &&
-          entry.supervisorId !== a2aConfig.recipient &&
-          entry.manifestPath ===
-            input.config.supervisors.find(
-              (recipient) => recipient.supervisorId === a2aConfig.recipient
-            )?.manifestPath
-      )
-      .map((entry) => ({
-        pathname: `${a2aConfig.routePath}/seats/${entry.seat}`,
-        supervisorId: entry.supervisorId,
-      })),
-    assignmentRoute: {
-      pathname: `${a2aConfig.routePath}/assignment`,
-      principal: a2aConfig.principal,
-    },
-    resultGraphKey: resultGraphKeys.find((entry) => entry.role === "primary")
-      ?.key,
-    previousResultGraphKeys: resultGraphKeys
-      .filter((entry) => entry.role === "previous")
-      .map((entry) => entry.key),
-    resultGraphRoute: {
-      pathname: `${a2aConfig.routePath}/result-graph`,
-      principal: a2aConfig.principal,
-    },
-    // The same operator-configured entries name the graph tasks this host's
-    // tenant may bind results to.
-    resultGraphTasks: a2aConfig.resultArtifacts?.map((entry) => ({
-      graphWorkflowId: entry.graphWorkflowId,
-      graphTaskId: entry.graphTaskId,
-    })),
-    verifyResultArtifact: a2aConfig.resultArtifacts
-      ? createGitResultArtifactVerifier(a2aConfig.resultArtifacts)
-      : undefined,
-    delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
-    dispatchOwner: `v2-dispatcher:${a2aV2IdentityToken(input.config.identity)}`,
-    readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
-    workflowIdFormat: a2aConfig.workflowIdFormat,
-    notEnrolledBoundMs: a2aConfig.notEnrolledBoundMs,
-    // Read lazily: the enrollment exists once enrollSessions has run, which
-    // is before the host's first recovery sweep delivers anything.
-    recipientEnrollment: {
-      notEnrolled: () => a2aV2Enrollment?.notEnrolled() ?? [],
-      notEnrolledSince: (recipient) =>
-        a2aV2Enrollment?.notEnrolledSince(recipient),
-    },
-    // Enroll before the host's first recovery sweep checks readiness for
-    // pending deliveries: a descriptor that expired, or a seat that restarted,
-    // while the server was down is renewed or rebound first instead of
-    // refusing start on every restart. Start still refuses when the
-    // configured recipient cannot be enrolled, and when a peer fails for any
-    // reason but a seat that is not running; a stopped peer is degraded
-    // alone: the sweep reports it as not enrolled and retries it. Afterwards
-    // the sweep keeps every seat current.
-    enrollSessions: async (sessions) => {
-      a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
-        config: a2aConfig,
-        directory: input.directory,
-        now: () => new Date().toISOString(),
-        recipients: [
-          a2aConfig.recipient,
-          ...input.config.supervisors
-            .filter(
-              (peer) =>
-                peer.seat &&
-                peer.supervisorId !== a2aConfig.recipient &&
-                peer.manifestPath === recipientBinding?.manifestPath
-            )
-            .map((peer) => peer.supervisorId),
-        ],
-        service: sessions,
-      });
-      try {
-        a2aV2StartOutcomes = await a2aV2Enrollment.maintain();
-        requireA2AV2Enrollment(a2aV2StartOutcomes, a2aConfig.recipient);
-      } catch (error) {
-        enrollmentFailure = { error };
-        throw error;
-      }
-    },
-    host: hostOptions,
-    messageAuthority: {
-      decide: (request) => {
-        const allowed =
-          request.claimant === request.to &&
-          input.config.grants.some(
-            (grant) =>
-              grant.principal === request.principal &&
-              grant.from === request.from &&
-              grant.to === request.to &&
-              grant.operations.includes(request.operation)
-          );
-        return {
-          allowed,
-          authorityRef: `authority:${a2aV2IdentityToken(input.config.identity)}:recipient-v2`,
-          reasonCode: allowed ? "configured-grant" : "grant-denied",
-        };
+  const hostOptions = makeHostOptions();
+  // fix8: a V2 plane that cannot start is disabled, never fatal: the factory
+  // releases what it acquired, and V1 starts on a host of its own.
+  try {
+    const databaseUrl = input.env[a2aConfig.databaseUrlEnv];
+    if (!databaseUrl) {
+      throw new Error("configured A2A V2 database environment is absent");
+    }
+    const controlAuthenticator = authenticator(input.config, input.env);
+    const resultGraphKeys = resolveResultGraphKeys(a2aConfig, input.env);
+    const recipientBinding = input.config.supervisors.find(
+      (entry) => entry.supervisorId === a2aConfig.recipient
+    );
+    let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+    let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
+    const a2aV2Service = await createSupervisorA2AV2Service({
+      card: {
+        description:
+          "Authenticated Loop supervisor A2A V2 ingress. Provider acceptance is distinct from recipient consumption.",
+        supervisorId: a2aConfig.recipient,
+        url: `http://${input.config.hostname}:${input.config.port}${a2aConfig.routePath}`,
       },
-    },
-    now: () => new Date().toISOString(),
-    // Named in the quarantine commands a refused or quarantined recovery
-    // record prints, so the operator can run them as shown.
-    operatorConfigPath: input.configPath,
-    policy: a2aConfig.policy,
-    providerReadiness: new LoopCodexSessionV2ProviderReadiness({
-      directory: input.directory,
-    }),
-    rebindAuthority: configuredA2AV2RebindAuthority(
-      a2aConfig,
-      input.config.supervisors
+      databaseUrl,
+      peerRoutes: input.config.supervisors
         .filter(
           (entry) =>
-            entry.supervisorId === a2aConfig.recipient ||
-            (entry.seat &&
-              entry.manifestPath ===
-                input.config.supervisors.find(
-                  (recipient) => recipient.supervisorId === a2aConfig.recipient
-                )?.manifestPath)
+            entry.seat &&
+            entry.supervisorId !== a2aConfig.recipient &&
+            entry.manifestPath ===
+              input.config.supervisors.find(
+                (recipient) => recipient.supervisorId === a2aConfig.recipient
+              )?.manifestPath
         )
-        .map((entry) => entry.supervisorId)
-    ),
-    recipientRoute: {
-      authenticator: controlAuthenticator,
-      pathname: `${a2aConfig.routePath}/recipient`,
-      principalForRecipient: (recipient) =>
-        input.config.supervisors.find(
-          (entry) => entry.supervisorId === recipient
-        )?.principal,
-    },
-    route: {
-      authenticator: a2aAuthenticator(controlAuthenticator, a2aConfig),
-      pathname: a2aConfig.routePath,
-      tenant: a2aConfig.tenant,
-    },
-    supervisorId: a2aConfig.recipient,
-  }).catch((error: unknown) => {
-    // The factory reports a stage, not the cause. An enrollment refusal is
-    // the operator's to act on, so it keeps its own message, as before.
-    throw enrollmentFailure ? enrollmentFailure.error : error;
-  });
-  return {
-    a2aV2Enrollment,
-    a2aV2Service,
-    a2aV2StartOutcomes,
-    host: a2aV2Service.host,
-  };
+        .map((entry) => ({
+          pathname: `${a2aConfig.routePath}/seats/${entry.seat}`,
+          supervisorId: entry.supervisorId,
+        })),
+      assignmentRoute: {
+        pathname: `${a2aConfig.routePath}/assignment`,
+        principal: a2aConfig.principal,
+      },
+      resultGraphKey: resultGraphKeys.find((entry) => entry.role === "primary")
+        ?.key,
+      previousResultGraphKeys: resultGraphKeys
+        .filter((entry) => entry.role === "previous")
+        .map((entry) => entry.key),
+      resultGraphRoute: {
+        pathname: `${a2aConfig.routePath}/result-graph`,
+        principal: a2aConfig.principal,
+      },
+      // The same operator-configured entries name the graph tasks this host's
+      // tenant may bind results to.
+      resultGraphTasks: a2aConfig.resultArtifacts?.map((entry) => ({
+        graphWorkflowId: entry.graphWorkflowId,
+        graphTaskId: entry.graphTaskId,
+      })),
+      verifyResultArtifact: a2aConfig.resultArtifacts
+        ? createGitResultArtifactVerifier(a2aConfig.resultArtifacts)
+        : undefined,
+      delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
+      dispatchOwner: `v2-dispatcher:${a2aV2IdentityToken(input.config.identity)}`,
+      readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
+      workflowIdFormat: a2aConfig.workflowIdFormat,
+      notEnrolledBoundMs: a2aConfig.notEnrolledBoundMs,
+      // Read lazily: the enrollment exists once enrollSessions has run, which
+      // is before the host's first recovery sweep delivers anything.
+      recipientEnrollment: {
+        notEnrolled: () => a2aV2Enrollment?.notEnrolled() ?? [],
+        notEnrolledSince: (recipient) =>
+          a2aV2Enrollment?.notEnrolledSince(recipient),
+      },
+      // Enroll before the host's first recovery sweep checks readiness for
+      // pending deliveries: a descriptor that expired, or a seat that restarted,
+      // while the server was down is renewed or rebound first instead of
+      // refusing start on every restart. No seat's failure refuses start
+      // (fix8), the configured recipient's included: each failed seat is
+      // reported as not enrolled and retried by the sweep, which afterwards
+      // keeps every seat current.
+      enrollSessions: async (sessions) => {
+        a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
+          config: a2aConfig,
+          directory: input.directory,
+          now: () => new Date().toISOString(),
+          recipients: [
+            a2aConfig.recipient,
+            ...input.config.supervisors
+              .filter(
+                (peer) =>
+                  peer.seat &&
+                  peer.supervisorId !== a2aConfig.recipient &&
+                  peer.manifestPath === recipientBinding?.manifestPath
+              )
+              .map((peer) => peer.supervisorId),
+          ],
+          service: sessions,
+        });
+        // maintain() reports every seat's failure as an outcome; the sweep
+        // logs and retries it.
+        a2aV2StartOutcomes = await a2aV2Enrollment.maintain();
+      },
+      host: hostOptions,
+      messageAuthority: {
+        decide: (request) => {
+          const allowed =
+            request.claimant === request.to &&
+            input.config.grants.some(
+              (grant) =>
+                grant.principal === request.principal &&
+                grant.from === request.from &&
+                grant.to === request.to &&
+                grant.operations.includes(request.operation)
+            );
+          return {
+            allowed,
+            authorityRef: `authority:${a2aV2IdentityToken(input.config.identity)}:recipient-v2`,
+            reasonCode: allowed ? "configured-grant" : "grant-denied",
+          };
+        },
+      },
+      now: () => new Date().toISOString(),
+      // Named in the quarantine commands a refused or quarantined recovery
+      // record prints, so the operator can run them as shown.
+      operatorConfigPath: input.configPath,
+      policy: a2aConfig.policy,
+      providerReadiness: new LoopCodexSessionV2ProviderReadiness({
+        directory: input.directory,
+      }),
+      rebindAuthority: configuredA2AV2RebindAuthority(
+        a2aConfig,
+        input.config.supervisors
+          .filter(
+            (entry) =>
+              entry.supervisorId === a2aConfig.recipient ||
+              (entry.seat &&
+                entry.manifestPath ===
+                  input.config.supervisors.find(
+                    (recipient) =>
+                      recipient.supervisorId === a2aConfig.recipient
+                  )?.manifestPath)
+          )
+          .map((entry) => entry.supervisorId)
+      ),
+      recipientRoute: {
+        authenticator: controlAuthenticator,
+        pathname: `${a2aConfig.routePath}/recipient`,
+        principalForRecipient: (recipient) =>
+          input.config.supervisors.find(
+            (entry) => entry.supervisorId === recipient
+          )?.principal,
+      },
+      route: {
+        authenticator: a2aAuthenticator(controlAuthenticator, a2aConfig),
+        pathname: a2aConfig.routePath,
+        tenant: a2aConfig.tenant,
+      },
+      supervisorId: a2aConfig.recipient,
+    });
+    return {
+      a2aV2Enrollment,
+      a2aV2Service,
+      a2aV2StartOutcomes,
+      host: a2aV2Service.host,
+    };
+  } catch (error) {
+    // Stage and category, or an operator-actionable refusal (a workflow id
+    // format or recovery refusal naming its quarantine command); never a
+    // connection string.
+    return { ...(await v1Only()), a2aV2StartFailure: failureMessage(error) };
+  }
 };
 
 const validateConfiguredRuntimeEnvironment = (
@@ -1656,12 +1656,8 @@ const validateConfiguredRuntimeEnvironment = (
       );
     }
   }
-  // fix8: an unset database variable no longer refuses start; it disables V2
-  // (decideA2AV2Plane). A missing or short result graph key still refuses:
-  // that is a secret misconfiguration, not an outage.
-  if (config.a2aV2) {
-    resolveResultGraphKeys(config.a2aV2, env);
-  }
+  // fix8: nothing about A2A V2 refuses start here. Its database variable and
+  // result graph keys are decideA2AV2Plane's: a problem there disables V2.
 };
 
 /**
@@ -1679,39 +1675,122 @@ export const a2aV2IdentityToken = (identity: string): string =>
 export type A2AV2PlaneState = "disabled" | "off" | "ready";
 
 /**
- * fix8: V2 is on whenever the config has an a2aV2 section, and never at the
- * price of V1. No section: one line naming `a2a-v2 init`. A section whose
- * ledger database variable is unset, or whose database does not answer within
- * the probe bound: one line saying V2 is disabled, and the server starts V1
- * alone. Lines name variables and paths, never a URL.
+ * fix8: why a configured A2A V2 plane is disabled; /healthz `a2aV2Reason`
+ * and the one `A2A V2 disabled (<reason>): ...` line.
+ * - `config-invalid`: the a2aV2 section fails validation (V1's part is
+ *   valid; an invalid V1 part still refuses start).
+ * - `env-file-mode`: `a2a-v2.env` is group- or world-readable; not read.
+ * - `env-file-unreadable`: `a2a-v2.env` is a symlink, not a regular file,
+ *   not openable or malformed.
+ * - `result-graph-key`: a configured result graph key variable is unset,
+ *   shorter than 32 bytes, or holds the same key as another.
+ * - `database-unset`: the ledger database variable is unset.
+ * - `database-unreachable`: the ledger does not answer within the bound.
+ * - `start-failed`: the V2 service did not start (a store, migration,
+ *   recovery or workflow id format refusal); the line carries its message.
+ */
+export type A2AV2DisabledReason =
+  | "config-invalid"
+  | "database-unreachable"
+  | "database-unset"
+  | A2AV2EnvFileRefusalCode
+  | "result-graph-key"
+  | "start-failed";
+
+export interface A2AV2PlaneStatus {
+  reason?: A2AV2DisabledReason;
+  state: A2AV2PlaneState;
+}
+
+/** The one line a disabled V2 plane logs. Names, paths and codes only. */
+export const a2aV2DisabledLine = (
+  reason: A2AV2DisabledReason,
+  detail: string
+): string => `A2A V2 disabled (${reason}): ${detail}; V1 continues`;
+
+/**
+ * The serve-time parse: an invalid V1 part refuses start (it throws, as
+ * `parseLoopOrchestrationConfig` does), while an invalid a2aV2 section is
+ * returned as `sectionError` beside the V1-only config, for
+ * `decideA2AV2Plane` to disable V2 with. `a2a-v2 init` and the operator
+ * commands keep the strict parser.
+ */
+export const parseLoopOrchestrationServeConfig = (
+  value: unknown
+): { config: ServerConfig; sectionError?: string } => {
+  if (!isRecord(value) || value.a2aV2 === undefined) {
+    return { config: parseLoopOrchestrationConfig(value) };
+  }
+  const { a2aV2: _section, ...v1Value } = value;
+  const v1Config = parseLoopOrchestrationConfig(v1Value);
+  try {
+    return { config: parseLoopOrchestrationConfig(value) };
+  } catch (error) {
+    return { config: v1Config, sectionError: failureMessage(error) };
+  }
+};
+
+/**
+ * fix8: V2 is on whenever the config has a valid a2aV2 section, and never at
+ * the price of V1. No section: one line naming `a2a-v2 init`. Any problem
+ * with a section (see `A2AV2DisabledReason`): one `A2A V2 disabled
+ * (<reason>): ...` line, and the server starts V1 alone. Lines name
+ * variables, paths and fixes, never a URL or a secret.
  */
 export const decideA2AV2Plane = async (input: {
   config: ServerConfig;
   configPath: string;
   env: NodeJS.ProcessEnv;
+  /** Why `a2a-v2.env` was not read, when it was not (loadA2AV2EnvFile). */
+  envFileRefusal?: A2AV2EnvFileRefusal;
   log: (line: string) => void;
   probe?: (databaseUrl: string) => Promise<boolean>;
-}): Promise<{ config: ServerConfig; state: A2AV2PlaneState }> => {
+  /** The a2aV2 section's validation error (parseLoopOrchestrationServeConfig). */
+  sectionError?: string;
+}): Promise<{ config: ServerConfig } & A2AV2PlaneStatus> => {
+  const { a2aV2: _section, ...v1Only } = input.config;
+  const disabled = (reason: A2AV2DisabledReason, detail: string) => {
+    input.log(a2aV2DisabledLine(reason, detail));
+    return { config: v1Only, reason, state: "disabled" as const };
+  };
+  if (input.sectionError !== undefined) {
+    return disabled(
+      "config-invalid",
+      `the a2aV2 section of ${input.configPath} is invalid (${input.sectionError}). Fix or remove the section, then restart`
+    );
+  }
   const a2aConfig = input.config.a2aV2;
   if (!a2aConfig) {
     input.log(
-      `A2A V2 off: run loop orchestration a2a-v2 init ${input.configPath}`
+      `A2A V2 off: run loop orchestration a2a-v2 init ${input.configPath}${
+        input.envFileRefusal ? ` (note: ${input.envFileRefusal.reason})` : ""
+      }`
     );
     return { config: input.config, state: "off" };
   }
-  const { a2aV2: _section, ...v1Only } = input.config;
+  if (input.envFileRefusal) {
+    return disabled(input.envFileRefusal.code, input.envFileRefusal.reason);
+  }
+  try {
+    resolveResultGraphKeys(a2aConfig, input.env);
+  } catch (error) {
+    return disabled(
+      "result-graph-key",
+      `${failureMessage(error)}. Set it (in the environment or ${a2aV2EnvFilePath(input.configPath)}), then restart`
+    );
+  }
   const databaseUrl = input.env[a2aConfig.databaseUrlEnv];
   if (!databaseUrl) {
-    input.log(
-      `A2A V2 disabled: ledger database variable ${a2aConfig.databaseUrlEnv} is not set (neither in the environment nor in ${a2aV2EnvFilePath(input.configPath)}); V1 continues`
+    return disabled(
+      "database-unset",
+      `ledger database variable ${a2aConfig.databaseUrlEnv} is not set (neither in the environment nor in ${a2aV2EnvFilePath(input.configPath)})`
     );
-    return { config: v1Only, state: "disabled" };
   }
   if (!(await (input.probe ?? probeA2AV2Database)(databaseUrl))) {
-    input.log(
-      `A2A V2 disabled: the ledger database named by ${a2aConfig.databaseUrlEnv} is unreachable; V1 continues. Restart the service once it answers.`
+    return disabled(
+      "database-unreachable",
+      `the ledger database named by ${a2aConfig.databaseUrlEnv} is unreachable. Restart the service once it answers`
     );
-    return { config: v1Only, state: "disabled" };
   }
   return { config: input.config, state: "ready" };
 };
@@ -1870,29 +1949,55 @@ export const recoveryQuarantineForConfig = async (
   }
 };
 
+/**
+ * fix8: the start-time configuration. Only V1's part of it may refuse start
+ * (an invalid V1 config, a missing V1 token). Everything about A2A V2 (the
+ * env file, the section, its keys and ledger) decides the plane instead.
+ */
+const startConfiguration = async (
+  configPath: string,
+  inputEnv: NodeJS.ProcessEnv,
+  options: LoopOrchestrationServerOptions,
+  log: (line: string) => void
+): Promise<{
+  env: NodeJS.ProcessEnv;
+  plane: { config: ServerConfig } & A2AV2PlaneStatus;
+}> => {
+  // The secrets `a2a-v2 init` wrote next to the config, under whatever the
+  // process environment already sets. A refused file is not read.
+  const loaded = loadA2AV2EnvFile(configPath, inputEnv);
+  const { config: parsed, sectionError } = parseLoopOrchestrationServeConfig(
+    readConfigFile(configPath)
+  );
+  validateConfiguredRuntimeEnvironment(parsed, loaded.env, options);
+  if (options.a2aV2Service) {
+    return { env: loaded.env, plane: { config: parsed, state: "ready" } };
+  }
+  return {
+    env: loaded.env,
+    plane: await decideA2AV2Plane({
+      config: parsed,
+      configPath,
+      env: loaded.env,
+      ...(loaded.refusal ? { envFileRefusal: loaded.refusal } : {}),
+      log,
+      ...(options.probeA2AV2Database
+        ? { probe: options.probeA2AV2Database }
+        : {}),
+      ...(sectionError === undefined ? {} : { sectionError }),
+    }),
+  };
+};
+
 export const runLoopOrchestrationServer = async (
   configPath: string,
   inputEnv: NodeJS.ProcessEnv = process.env,
   options: LoopOrchestrationServerOptions = {}
 ): Promise<void> => {
   const log = (line: string) => console.error(line);
-  // fix8: the secrets `a2a-v2 init` wrote next to the config, under whatever
-  // the process environment already sets.
-  const env = withA2AV2EnvFile(configPath, inputEnv, log);
-  const parsed = parseLoopOrchestrationConfig(readConfigFile(configPath));
-  validateConfiguredRuntimeEnvironment(parsed, env, options);
-  const plane: { config: ServerConfig; state: A2AV2PlaneState } =
-    options.a2aV2Service
-      ? { config: parsed, state: "ready" }
-      : await decideA2AV2Plane({
-          config: parsed,
-          configPath,
-          env,
-          log,
-          ...(options.probeA2AV2Database
-            ? { probe: options.probeA2AV2Database }
-            : {}),
-        });
+  const start = await startConfiguration(configPath, inputEnv, options, log);
+  const env = start.env;
+  let plane = start.plane;
   const config = plane.config;
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
   const directory = new LoopSupervisorDirectory(config.supervisors);
@@ -1933,6 +2038,16 @@ export const runLoopOrchestrationServer = async (
       a2aV2StartOutcomes = created.a2aV2StartOutcomes;
       a2aV2Service = created.a2aV2Service;
       host = created.host;
+      if (created.a2aV2StartFailure !== undefined) {
+        log(
+          a2aV2DisabledLine(
+            "start-failed",
+            `${created.a2aV2StartFailure}. Fix the cause, then restart`
+          )
+        );
+        const { a2aV2: _section, ...v1Config } = plane.config;
+        plane = { config: v1Config, reason: "start-failed", state: "disabled" };
+      }
     }
     // Authority of record for a tick, keyed by the exact message pair.
     const tickPrincipals = new Map(
@@ -2051,7 +2166,10 @@ export const runLoopOrchestrationServer = async (
     }, 250);
     const handler = createLoopOrchestrationFetchHandler({
       a2aV2Service,
-      a2aV2State: () => plane.state,
+      a2aV2State: () => ({
+        state: plane.state,
+        ...(plane.reason ? { reason: plane.reason } : {}),
+      }),
       authenticator: authenticator(config, env),
       host,
       notEnrolledSeats: () => notEnrolled,

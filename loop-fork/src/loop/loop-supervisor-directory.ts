@@ -31,8 +31,22 @@ const exactManifest = (manifestPath: string): string => {
   return resolved;
 };
 
+const isMissing = (error: unknown): boolean => {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+};
+
 export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
   readonly #manifests = new Map<string, string>();
+  /**
+   * fix8: bindings whose manifest did not exist when the directory was built
+   * (a run directory removed, a run not started yet). Such a binding routes
+   * nowhere, as a stopped run does, until its manifest exists; it is then
+   * checked as at construction (regular, non-symlink, canonical). A missing
+   * manifest is runtime state, not a configuration error, so it never refuses
+   * a server start.
+   */
+  readonly #unverified = new Set<string>();
   readonly #seats = new Map<string, "claude" | "codex">();
 
   constructor(bindings: readonly LoopSupervisorBinding[]) {
@@ -54,10 +68,18 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
         this.#manifests.set(binding.supervisorId, "");
         continue;
       }
-      this.#manifests.set(
-        binding.supervisorId,
-        exactManifest(binding.manifestPath)
-      );
+      try {
+        this.#manifests.set(
+          binding.supervisorId,
+          exactManifest(binding.manifestPath)
+        );
+      } catch (error) {
+        if (!isMissing(error)) {
+          throw error;
+        }
+        this.#manifests.set(binding.supervisorId, binding.manifestPath);
+        this.#unverified.add(binding.supervisorId);
+      }
     }
     if (this.#manifests.size === 0) {
       throw new Error("at least one supervisor binding is required");
@@ -70,6 +92,17 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
     const manifestPath = this.#manifests.get(supervisorId);
     if (!manifestPath) {
       return undefined;
+    }
+    if (this.#unverified.has(supervisorId)) {
+      try {
+        exactManifest(manifestPath);
+      } catch (error) {
+        if (isMissing(error)) {
+          return undefined;
+        }
+        throw error;
+      }
+      this.#unverified.delete(supervisorId);
     }
     const manifest = readRunManifest(manifestPath);
     if (!(manifest && isActiveRunState(manifest.state))) {

@@ -48,15 +48,29 @@ export const formatA2AV2EnvFile = (values: ReadonlyMap<string, string>) =>
     .map(([name, value]) => `${name}=${value}`)
     .join("\n")}\n`;
 
+/**
+ * Why the env file was not used. `env-file-mode`: group- or world-readable,
+ * so not one byte of it was read. `env-file-unreadable`: a symlink, not a
+ * regular file, not openable, or malformed.
+ */
+export type A2AV2EnvFileRefusalCode = "env-file-mode" | "env-file-unreadable";
+
+export interface A2AV2EnvFileRefusal {
+  code: A2AV2EnvFileRefusalCode;
+  /** Path, cause and fix; never a value from the file. */
+  reason: string;
+}
+
 export type A2AV2EnvFileRead =
   | { kind: "absent" }
-  | { kind: "refused"; reason: string }
+  | ({ kind: "refused" } & A2AV2EnvFileRefusal)
   | { kind: "read"; values: Map<string, string> };
 
 /**
  * Reads the env file only when it is a regular, non-symlink file readable by
- * its owner alone. A group- or world-readable file is refused, not repaired:
- * its secrets may already have been read.
+ * its owner alone. A group- or world-readable file is refused, not repaired
+ * and not read: its mode is checked on the open descriptor before any byte
+ * is read, because its secrets may already have been read by others.
  */
 export const readA2AV2EnvFile = (path: string): A2AV2EnvFileRead => {
   let descriptor: number | undefined;
@@ -68,6 +82,7 @@ export const readA2AV2EnvFile = (path: string): A2AV2EnvFileRead => {
     return code === "ENOENT"
       ? { kind: "absent" }
       : {
+          code: "env-file-unreadable",
           kind: "refused",
           reason: `${path} cannot be opened (${String(code)})`,
         };
@@ -75,13 +90,20 @@ export const readA2AV2EnvFile = (path: string): A2AV2EnvFileRead => {
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isFile()) {
-      return { kind: "refused", reason: `${path} is not a regular file` };
+      return {
+        code: "env-file-unreadable",
+        kind: "refused",
+        reason: `${path} is not a regular file`,
+      };
     }
     // biome-ignore lint/suspicious/noBitwiseOperators: permission bits are a bit mask.
-    if ((stat.mode & OWNER_ONLY_MASK) !== 0) {
+    const permissions = stat.mode & 0o777;
+    // biome-ignore lint/suspicious/noBitwiseOperators: permission bits are a bit mask.
+    if ((permissions & OWNER_ONLY_MASK) !== 0) {
       return {
+        code: "env-file-mode",
         kind: "refused",
-        reason: `${path} is readable by group or others; chmod 600 it and rotate what it holds`,
+        reason: `${path} has mode ${permissions.toString(8).padStart(4, "0")} (readable by group or others) and was not read; fix: chmod 600 ${path}, rotate the secrets it holds, then restart`,
       };
     }
     try {
@@ -91,6 +113,7 @@ export const readA2AV2EnvFile = (path: string): A2AV2EnvFileRead => {
       };
     } catch (error) {
       return {
+        code: "env-file-unreadable",
         kind: "refused",
         reason: `${path}: ${error instanceof Error ? error.message : "unreadable"}`,
       };
@@ -102,21 +125,19 @@ export const readA2AV2EnvFile = (path: string): A2AV2EnvFileRead => {
 
 /**
  * The environment with the config's A2A V2 env file folded in underneath it:
- * a variable already set in `env` wins. Reports a refused file through `log`
- * (path and reason only) and returns `env` unchanged.
+ * a variable already set in `env` wins. A refused file contributes nothing
+ * and comes back as `refusal` (path, cause and fix; never a value).
  */
-export const withA2AV2EnvFile = (
+export const loadA2AV2EnvFile = (
   configPath: string,
-  env: NodeJS.ProcessEnv,
-  log: (line: string) => void = () => undefined
-): NodeJS.ProcessEnv => {
+  env: NodeJS.ProcessEnv
+): { env: NodeJS.ProcessEnv; refusal?: A2AV2EnvFileRefusal } => {
   const read = readA2AV2EnvFile(a2aV2EnvFilePath(configPath));
   if (read.kind === "refused") {
-    log(`A2A V2 env file ignored: ${read.reason}`);
-    return env;
+    return { env, refusal: { code: read.code, reason: read.reason } };
   }
   if (read.kind === "absent") {
-    return env;
+    return { env };
   }
   const merged: NodeJS.ProcessEnv = { ...env };
   for (const [name, value] of read.values) {
@@ -124,7 +145,23 @@ export const withA2AV2EnvFile = (
       merged[name] = value;
     }
   }
-  return merged;
+  return { env: merged };
+};
+
+/**
+ * `loadA2AV2EnvFile` for the operator commands: a refused file is reported
+ * through `log` (path and reason only) and `env` is returned unchanged.
+ */
+export const withA2AV2EnvFile = (
+  configPath: string,
+  env: NodeJS.ProcessEnv,
+  log: (line: string) => void = () => undefined
+): NodeJS.ProcessEnv => {
+  const loaded = loadA2AV2EnvFile(configPath, env);
+  if (loaded.refusal) {
+    log(`A2A V2 env file ignored: ${loaded.refusal.reason}`);
+  }
+  return loaded.env;
 };
 
 export const A2A_V2_DATABASE_PROBE_TIMEOUT_MS = 5000;

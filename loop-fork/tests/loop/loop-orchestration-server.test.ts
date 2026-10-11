@@ -12,12 +12,11 @@ import {
   configuredA2AV2RebindAuthority,
   createLoopOrchestrationFetchHandler,
   createOrchestrationSweep,
+  decideA2AV2Plane,
   enrollConfiguredA2AV2Session,
   parseLoopOrchestrationConfig,
-  requireA2AV2Enrollment,
   resultGraphKeyFingerprintsForConfig,
   resultGraphWorkflowIdForConfig,
-  runLoopOrchestrationServer,
 } from "../../src/loop/loop-orchestration-server";
 import {
   deriveSupervisorMessageV2ResultGraphWorkflowId,
@@ -270,32 +269,47 @@ test("result-graph-id computes the keyed id the server derives, from the configu
   }
 });
 
-test("the server refuses to start when the configured result graph key environment is absent or short, naming only the variable", async () => {
-  // A port nothing listens on: the refusal must come before any connection.
-  const file = configFile({ ...a2aV2([]), address: "127.0.0.1:9" });
-  const env = {
-    LOOP_A2A_V2_DATABASE_URL: "postgres://unused.invalid/none",
-    LOOP_HARNESS_ORCHESTRATION_TOKEN: randomBytes(16).toString("hex"),
-  };
-  try {
-    await expect(runLoopOrchestrationServer(file.path, env)).rejects.toThrow(
-      "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY"
-    );
-    const short = "short-throwaway-key";
-    const failure = await runLoopOrchestrationServer(file.path, {
-      ...env,
-      LOOP_A2A_V2_RESULT_GRAPH_KEY: short,
-    }).then(
-      () => "started",
-      (error: unknown) => String(error)
-    );
-    expect(failure).toContain(
-      "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY must hold at least 32 bytes"
-    );
-    expect(failure).not.toContain(short);
-  } finally {
-    file.remove();
-  }
+/**
+ * fix8: a result graph key problem is an A2A V2 problem: it disables V2 with
+ * reason `result-graph-key` and one line, and V1 starts. Returns that line.
+ */
+const keyRefusal = async (
+  value: unknown,
+  env: Record<string, string>
+): Promise<string> => {
+  const lines: string[] = [];
+  const decided = await decideA2AV2Plane({
+    config: parseLoopOrchestrationConfig(value),
+    configPath: "/etc/loop/config.json",
+    env,
+    log: (line) => lines.push(line),
+    probe: () => Promise.reject(new Error("a key refusal must not probe")),
+  });
+  expect(decided).toMatchObject({
+    reason: "result-graph-key",
+    state: "disabled",
+  });
+  expect(decided.config.a2aV2).toBeUndefined();
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toStartWith("A2A V2 disabled (result-graph-key): ");
+  expect(lines[0]).toEndWith("; V1 continues");
+  return lines[0] as string;
+};
+
+test("an absent or short result graph key disables V2 (not V1), naming only the variable", async () => {
+  const env = { LOOP_A2A_V2_DATABASE_URL: "postgres://unused.invalid/none" };
+  expect(await keyRefusal(a2aV2([]), env)).toContain(
+    "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY"
+  );
+  const short = "short-throwaway-key";
+  const failure = await keyRefusal(a2aV2([]), {
+    ...env,
+    LOOP_A2A_V2_RESULT_GRAPH_KEY: short,
+  });
+  expect(failure).toContain(
+    "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY must hold at least 32 bytes"
+  );
+  expect(failure).not.toContain(short);
 });
 
 test("orchestration config names previous result graph keys by environment variable only, and only beside a primary key", () => {
@@ -372,45 +386,36 @@ test("orchestration config holds at most eight previous result graph keys", () =
   ).toThrow("orchestration a2aV2 previousResultGraphKeyEnvs is invalid");
 });
 
-test("the server refuses to start when a previous result graph key is absent, short, or the same key as another, naming only variables and fingerprints", async () => {
+test("a previous result graph key that is absent, short, or the same key as another disables V2 (not V1), naming only variables and fingerprints", async () => {
   const value = a2aV2([], {
     resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
     previousResultGraphKeyEnvs: ["LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD"],
   });
-  const file = configFile({ ...value, address: "127.0.0.1:9" });
   const primary = randomBytes(32).toString("hex");
   const env = {
     LOOP_A2A_V2_DATABASE_URL: "postgres://unused.invalid/none",
-    LOOP_HARNESS_ORCHESTRATION_TOKEN: randomBytes(16).toString("hex"),
     LOOP_A2A_V2_RESULT_GRAPH_KEY: primary,
   };
   const failureOf = (extra: Record<string, string>) =>
-    runLoopOrchestrationServer(file.path, { ...env, ...extra }).then(
-      () => "started",
-      (error: unknown) => String(error)
-    );
-  try {
-    expect(await failureOf({})).toContain(
-      "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD"
-    );
-    const short = "short-throwaway-key";
-    const shortFailure = await failureOf({
-      LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: short,
-    });
-    expect(shortFailure).toContain(
-      "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD must hold at least 32 bytes"
-    );
-    expect(shortFailure).not.toContain(short);
-    const duplicate = await failureOf({
-      LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: primary,
-    });
-    expect(duplicate).toContain(
-      `orchestration A2A V2 result graph key environments LOOP_A2A_V2_RESULT_GRAPH_KEY and LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD hold the same key (${SupervisorResultGraphKey.fromSecret(primary).fingerprint})`
-    );
-    expect(duplicate).not.toContain(primary);
-  } finally {
-    file.remove();
-  }
+    keyRefusal(value, { ...env, ...extra });
+  expect(await failureOf({})).toContain(
+    "missing orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD"
+  );
+  const short = "short-throwaway-key";
+  const shortFailure = await failureOf({
+    LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: short,
+  });
+  expect(shortFailure).toContain(
+    "orchestration A2A V2 result graph key environment LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD must hold at least 32 bytes"
+  );
+  expect(shortFailure).not.toContain(short);
+  const duplicate = await failureOf({
+    LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD: primary,
+  });
+  expect(duplicate).toContain(
+    `orchestration A2A V2 result graph key environments LOOP_A2A_V2_RESULT_GRAPH_KEY and LOOP_A2A_V2_RESULT_GRAPH_KEY_OLD hold the same key (${SupervisorResultGraphKey.fromSecret(primary).fingerprint})`
+  );
+  expect(duplicate).not.toContain(primary);
 });
 
 test("result-graph-key-fingerprints names each configured key's fingerprint by variable and role, never the key", () => {
@@ -897,9 +902,6 @@ test("A2A V2 enrollment sweep reports an unavailable seat and retries it later",
   expect(failed?.state === "failed" && failureText(failed.error)).toBe(
     "configured A2A V2 recipient session is unavailable"
   );
-  expect(() =>
-    requireA2AV2Enrollment(failed ? [failed] : [], config.recipient)
-  ).toThrow("configured A2A V2 recipient session is unavailable");
   thread.id = "thread-a";
   clock.offsetMs = 1000;
   // Inside the retry delay the seat is not re-attempted, and says so.
@@ -1073,61 +1075,57 @@ test("orchestration sweep reports recovery only after a real enrollment, not whi
   ]);
 });
 
-test("start-time enrollment refuses the configured recipient's failure and degrades a peer's", () => {
+test("start-time enrollment failures are per recipient, whatever the seat and the cause: reported as not enrolled and retried, never thrown (fix8)", async () => {
   const recipient = "supervisor:harness";
   const peer = "supervisor:harness-peer";
-  const down = (seat: string): A2AV2EnrollmentOutcome => ({
-    error: new A2AV2SeatUnavailableError(`${seat} unavailable`),
-    recipient: seat,
-    state: "failed",
-  });
-  // A stopped peer does not refuse start: it is left to the sweep.
-  expect(() =>
-    requireA2AV2Enrollment(
-      [{ recipient, state: "enrolled" }, down(peer)],
-      recipient
-    )
-  ).not.toThrow();
-  // The configured recipient itself still refuses start, with its own cause.
-  expect(() =>
-    requireA2AV2Enrollment(
-      [down(recipient), { recipient: peer, state: "enrolled" }],
-      recipient
-    )
-  ).toThrow(`${recipient} unavailable`);
-});
-
-test("start-time enrollment degrades a peer only when its seat is not running; any other peer failure refuses start", () => {
-  const recipient = "supervisor:harness";
-  const peer = "supervisor:harness-peer";
-  const peerFails = (error: unknown) => () =>
-    requireA2AV2Enrollment(
+  const causes: unknown[] = [
+    new A2AV2SeatUnavailableError(
+      "configured A2A V2 recipient seat is not running"
+    ),
+    new Error("session rebind denied: no-configured-session-rebind"),
+    new Error("supervisor run manifest identity changed"),
+    new Error("session descriptor conflicts with the current registration"),
+    new Error("configured A2A V2 recipient has no supported provider route"),
+    new Error("connect ECONNREFUSED"),
+  ];
+  for (const cause of causes) {
+    const logs: string[] = [];
+    const states: string[][] = [];
+    const passes: A2AV2EnrollmentOutcome[][] = [
       [
         { recipient, state: "enrolled" },
-        { error, recipient: peer, state: "failed" },
+        { recipient: peer, state: "enrolled" },
       ],
-      recipient
-    );
-  expect(
-    peerFails(
-      new A2AV2SeatUnavailableError(
-        "configured A2A V2 recipient session is unavailable"
-      )
-    )
-  ).not.toThrow();
-  // An authority denial, an identity or registration conflict, a store
-  // failure, or anything unclassified is not a stopped seat: start refuses
-  // with the peer's own cause.
-  for (const message of [
-    "session rebind denied: no-configured-session-rebind",
-    "supervisor run manifest identity changed",
-    "session descriptor conflicts with the current registration",
-    "configured A2A V2 recipient has no supported provider route",
-    "connect ECONNREFUSED",
-  ]) {
-    expect(peerFails(new Error(message))).toThrow(message);
+    ];
+    // The configured recipient and a peer both failed the start-time pass.
+    const sweep = createOrchestrationSweep({
+      enrollment: {
+        maintain: () => Promise.resolve(passes.shift() ?? []),
+      },
+      log: (line) => logs.push(line),
+      reconcilers: [],
+      setHealthy: () => undefined,
+      setNotEnrolled: (seats) => states.push([...seats]),
+      startOutcomes: [
+        { error: cause, recipient, state: "failed" },
+        { error: cause, recipient: peer, state: "failed" },
+      ],
+    });
+    const message = cause instanceof Error ? cause.message : String(cause);
+    expect(states).toEqual([[recipient, peer].sort()]);
+    expect(logs).toEqual([
+      `orchestration A2A V2 session enrollment failed for ${recipient}: ${message}`,
+      `orchestration A2A V2 session enrollment failed for ${peer}: ${message}`,
+    ]);
+    // The existing sweep retries both and reports each recovery.
+    await sweep();
+    await yieldTurn();
+    expect(states.at(-1)).toEqual([]);
+    expect(logs.slice(2)).toEqual([
+      `orchestration A2A V2 session enrollment recovered for ${recipient}`,
+      `orchestration A2A V2 session enrollment recovered for ${peer}`,
+    ]);
   }
-  expect(peerFails("not an error")).toThrow();
 });
 
 test("A2A V2 enrollment classifies only a seat that is not running as unavailable", async () => {
