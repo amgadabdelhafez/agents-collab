@@ -507,9 +507,23 @@ const expectNoIds = (body: unknown, ids: readonly string[]) => {
   }
 };
 
+/**
+ * A client session's environment: the server's, less every other
+ * supervisor's token (one token per session; the client refuses more).
+ */
+const sessionEnv = (f: Fixture, supervisorId: string): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...f.env };
+  for (const [id, tokenEnv] of Object.entries(TOKEN_ENV_OF)) {
+    if (id !== supervisorId) {
+      delete env[tokenEnv];
+    }
+  }
+  return env;
+};
+
 const a2a = (f: Fixture, argv: string[], body?: string) =>
   runA2ACommand(["a2a", ...argv], {
-    env: f.env,
+    env: sessionEnv(f, argv[argv.indexOf("--as") + 1] ?? ""),
     ...(body === undefined ? {} : { readBody: () => body }),
     resolveRunStorage: (runId) => f.runStorage(runId),
   });
@@ -876,7 +890,9 @@ test("every configured supervisor is an A2A V2 recipient: six directed sends del
     expect(mailboxWorkflowIds(f.mailboxOf(CLAUDE_RUN))).toEqual([toMailbox]);
 
     // 4. A competing claim is fenced (the Codex thread).
-    const codexEndpoint = resolveA2AClientEndpoint(CODEX_RUN, { env: f.env });
+    const codexEndpoint = resolveA2AClientEndpoint(CODEX_RUN, {
+      env: sessionEnv(f, CODEX_RUN),
+    });
     const rival = {
       holderRef: "rival:codex-thread",
       locator: {

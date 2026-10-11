@@ -38,16 +38,20 @@ import {
  *   loop a2a ack     --as supervisor:x --workflow <workflow-id> [--workflow <id>...]
  *
  * The server and token come from the orchestration config and the
- * supervisor's tokenEnv, never from argv. `send` reports acceptance, `ack`
- * the recipient's read acknowledgement, `status` all three facts apart;
- * nothing here marks work complete.
+ * supervisor's tokenEnv, never from argv. `--as` is required and only that
+ * supervisor's tokenEnv is read; an environment that also holds another
+ * configured supervisor's token is refused unless `--allow-multi-token-env`
+ * is given (run each session with only its own token). `send` reports
+ * acceptance, `ack` the recipient's read acknowledgement, `status` all three
+ * facts apart; nothing here marks work complete.
  */
 export const A2A_COMMAND = "a2a";
 const ACTIONS = ["ack", "enroll", "release", "send", "status"] as const;
 type A2AAction = (typeof ACTIONS)[number];
+export const ALLOW_MULTI_TOKEN_ENV_FLAG = "--allow-multi-token-env";
 
 const USAGE = [
-  "Usage: loop a2a <enroll|release|send|status|ack> --as <supervisor:id> ...",
+  "Usage: loop a2a <enroll|release|send|status|ack> --as <supervisor:id> [--allow-multi-token-env] ...",
   "  enroll  --kind loop-run --run <run-id> [--seat claude|codex] | --kind codex-thread --run <run-id> | --kind claude-channel --session <id> [--provider-session <id>]; [--takeover] [--ttl-ms <ms>]",
   "  release --run <run-id> | --session <id>",
   "  send    --to <supervisor:id> --body-file <path> [--message-id <id>] [--context <id>]",
@@ -71,11 +75,11 @@ const VALUE_FLAGS: Record<A2AAction, readonly string[]> = {
   status: ["--as", "--message-id"],
 };
 const BOOLEAN_FLAGS: Record<A2AAction, readonly string[]> = {
-  ack: [],
-  enroll: ["--takeover"],
-  release: [],
-  send: [],
-  status: [],
+  ack: [ALLOW_MULTI_TOKEN_ENV_FLAG],
+  enroll: [ALLOW_MULTI_TOKEN_ENV_FLAG, "--takeover"],
+  release: [ALLOW_MULTI_TOKEN_ENV_FLAG],
+  send: [ALLOW_MULTI_TOKEN_ENV_FLAG],
+  status: [ALLOW_MULTI_TOKEN_ENV_FLAG],
 };
 const REPEATABLE = new Set(["--workflow"]);
 
@@ -260,7 +264,7 @@ const release = async (
 
 export const runA2ACommand = async (
   argv: readonly string[],
-  deps: A2ACommandDeps = {}
+  callerDeps: A2ACommandDeps = {}
 ): Promise<Record<string, unknown>> => {
   const [, requested, ...rest] = argv;
   const action = requested as A2AAction;
@@ -271,6 +275,11 @@ export const runA2ACommand = async (
   const supervisorId = requireSupervisorEndpointRecipient(
     required(flags, "--as")
   );
+  // Only the human flag opts in to a multi-token environment.
+  const deps: A2ACommandDeps = {
+    ...callerDeps,
+    allowMultiTokenEnv: flags.booleans.has(ALLOW_MULTI_TOKEN_ENV_FLAG),
+  };
   if (action === "enroll") {
     return await enroll(supervisorId, flags, deps);
   }
@@ -368,12 +377,19 @@ export const extractA2AAsFlag = (
  * `<home>/.loop/sessions/<slug>/<sessionId>` (no run manifest). The bridge
  * then also serves a2a_enroll, a2a_release, a2a_send and a2a_status, acting
  * as `supervisor:<slug>`.
+ *
+ * The acting supervisor is fixed when the bridge starts, from the session
+ * dir its start argv names (the dir `loop a2a enroll` printed), and never
+ * from tool input: no tool schema has an identity, token or takeover field,
+ * and a call that tries one is refused before anything is read or sent. A
+ * takeover is only the human CLI's `loop a2a enroll --takeover`; a
+ * multi-token environment is refused here with no override.
  * ------------------------------------------------------------------------- */
 
 export interface A2ABridgeSession {
-  sessionDir: string;
-  sessionId: string;
-  supervisorId: string;
+  readonly sessionDir: string;
+  readonly sessionId: string;
+  readonly supervisorId: string;
 }
 
 /** The session this bridge serves, or undefined outside session mode. */
@@ -407,11 +423,11 @@ export const a2aBridgeSession = (
   // derives the directory from.
   try {
     requireSupervisorEndpointSessionId(sessionId);
-    return {
+    return Object.freeze({
       sessionDir: dir,
       sessionId,
       supervisorId: requireSupervisorEndpointRecipient(`supervisor:${slug}`),
-    };
+    });
   } catch {
     return undefined;
   }
@@ -427,12 +443,11 @@ export const A2A_SESSION_TOOLS = [
   {
     annotations: MUTATING,
     description:
-      "Enroll this Claude Code session as its supervisor's A2A V2 endpoint (claims the session lease). Credentials stay in the protected environment.",
+      "Enroll this Claude Code session as its supervisor's A2A V2 endpoint (claims the session lease). The supervisor is fixed by this session; credentials stay in the protected environment.",
     inputSchema: {
       additionalProperties: false,
       properties: {
         provider_session: { type: "string" },
-        takeover: { type: "boolean" },
         ttl_ms: { type: "number" },
       },
       type: "object",
@@ -485,11 +500,25 @@ export const A2A_SESSION_TOOL_NAMES: ReadonlySet<string> = new Set(
   A2A_SESSION_TOOLS.map((tool) => tool.name)
 );
 
+/**
+ * Argument names that would let a tool caller pick who the bridge acts as,
+ * with whose token, or over whose lease. No schema has one; a call that
+ * sends one is refused by name.
+ */
+const IDENTITY_ARG_RE =
+  /^(?:acting[_-]?as|as|from|identity|impersonate|on[_-]?behalf[_-]?of|principal|sender|supervisor(?:[_-]?id)?|takeover|token(?:[_-]?env)?)$/i;
+
 const exactArgs = (
   args: Record<string, unknown>,
   allowed: readonly string[]
 ): void => {
-  if (Object.keys(args).some((key) => !allowed.includes(key))) {
+  const keys = Object.keys(args);
+  if (keys.some((key) => IDENTITY_ARG_RE.test(key))) {
+    throw new Error(
+      "the acting supervisor is fixed by this session; a tool call cannot choose an identity, token or takeover"
+    );
+  }
+  if (keys.some((key) => !allowed.includes(key))) {
     throw new Error("unexpected tool arguments");
   }
 };
@@ -511,10 +540,7 @@ type A2ASessionTool = (
 ) => Promise<Record<string, unknown>>;
 
 const enrollTool: A2ASessionTool = async (args, session, deps) => {
-  exactArgs(args, ["provider_session", "takeover", "ttl_ms"]);
-  if (args.takeover !== undefined && typeof args.takeover !== "boolean") {
-    throw new Error("takeover must be a boolean");
-  }
+  exactArgs(args, ["provider_session", "ttl_ms"]);
   const provider = optionalString(args.provider_session, "provider_session");
   const ttlMs =
     args.ttl_ms === undefined
@@ -528,7 +554,8 @@ const enrollTool: A2ASessionTool = async (args, session, deps) => {
       sessionId: session.sessionId,
       supervisorId: session.supervisorId,
     },
-    { ...deps, takeover: args.takeover === true, ttlMs }
+    // Never a takeover from a tool: only the human CLI flag asks for one.
+    { ...deps, takeover: false, ttlMs }
   );
   return { receipt: claimed.receipt };
 };
@@ -597,7 +624,9 @@ export const callA2ASessionTool = (
   const handler = Object.hasOwn(SESSION_TOOL_HANDLERS, name)
     ? SESSION_TOOL_HANDLERS[name]
     : undefined;
+  // A tool never acts from a multi-token environment: there is no human
+  // here to have opted in.
   return handler
-    ? handler(args, session, deps)
+    ? handler(args, session, { ...deps, allowMultiTokenEnv: false })
     : Promise.reject(new Error(`Unknown tool: ${name}`));
 };

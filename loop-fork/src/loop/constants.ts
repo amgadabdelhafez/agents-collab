@@ -64,8 +64,8 @@ Usage:
   loop orchestration serve <config>        Run the orchestration service (A2A V2 on when the config has an a2aV2 section)
   loop orchestration a2a-v2 init <config> [--control <supervisor-id>] [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]
                                            Provision the local A2A V2 ledger and add the a2aV2 section (backup + atomic replace); without --recipient every configured supervisor is a recipient
-  loop a2a <enroll|release|send|status|ack> --as <supervisor-id> ...
-                                           A supervisor's own A2A V2 client: enroll or release its endpoint, send, read status, acknowledge (never completion)
+  loop a2a <enroll|release|send|status|ack> --as <supervisor-id> [--allow-multi-token-env] ...
+                                           A supervisor's own A2A V2 client: enroll or release its endpoint, send, read status, acknowledge (never completion); reads only that supervisor's token and refuses an environment holding another's
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only

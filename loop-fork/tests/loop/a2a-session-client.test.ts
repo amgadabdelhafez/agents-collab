@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -7,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -174,14 +176,13 @@ const harness = (responder?: Responder) => {
       { principal: "principal:bob", supervisorId: BOB, tokenEnv: "BOB_TOKEN" },
     ],
   };
-  writeFileSync(configPath, JSON.stringify(config));
-  const env: NodeJS.ProcessEnv = {
-    ALICE_TOKEN,
-    BOB_TOKEN,
-    HOME: home,
-    LOOP_ORCHESTRATION_CONFIG: configPath,
-  };
-  return { config, configPath, env, home, server };
+  writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
+  // One token per session environment, as the runbook prescribes.
+  const base = { HOME: home, LOOP_ORCHESTRATION_CONFIG: configPath };
+  const env: NodeJS.ProcessEnv = { ...base, ALICE_TOKEN };
+  const bobEnv: NodeJS.ProcessEnv = { ...base, BOB_TOKEN };
+  const bothEnv: NodeJS.ProcessEnv = { ...base, ALICE_TOKEN, BOB_TOKEN };
+  return { bobEnv, bothEnv, config, configPath, env, home, server };
 };
 
 const writeRun = (
@@ -897,7 +898,7 @@ test("ack claims then acknowledges each V2 workflow on the recipient route and n
     }
     return undefined;
   });
-  const endpoint = resolveA2AClientEndpoint(BOB, { env: h.env });
+  const endpoint = resolveA2AClientEndpoint(BOB, { env: h.bobEnv });
   expect(
     await acknowledgeA2AWorkflows(endpoint, [V2_LEGACY, V2_DEPLOYMENT])
   ).toEqual({
@@ -957,13 +958,13 @@ test("ack claims then acknowledges each V2 workflow on the recipient route and n
   ).toEqual([]);
   await expect(
     runA2ACommand(["a2a", "ack", "--as", BOB, "--workflow", V2_LEGACY], {
-      env: h.env,
+      env: h.bobEnv,
     })
   ).rejects.toThrow(`ack refused for ${V2_LEGACY}`);
   refuseAcknowledge = "";
   expect(
     await runA2ACommand(["a2a", "ack", "--as", BOB, "--workflow", V2_LEGACY], {
-      env: h.env,
+      env: h.bobEnv,
     })
   ).toEqual({
     acknowledged: [{ phase: "acknowledged", workflowId: V2_LEGACY }],
@@ -1192,7 +1193,7 @@ test("loop a2a parses strictly and acts only as the configured supervisor", asyn
   const sent = h.server.seen.length;
   await expect(
     runA2ACommand(["a2a", "release", "--as", BOB, "--run", RUN], {
-      env: h.env,
+      env: h.bobEnv,
       resolveRunStorage: (runId) => ({
         manifestPath: run.manifestPath,
         repoId: REPO,
@@ -1230,7 +1231,7 @@ test("loop a2a parses strictly and acts only as the configured supervisor", asyn
   // Bob cannot release Alice's session lease through his own id.
   await expect(
     runA2ACommand(["a2a", "release", "--as", BOB, "--session", "s1"], {
-      env: h.env,
+      env: h.bobEnv,
     })
   ).rejects.toThrow("no A2A lease");
   expect(
@@ -1295,7 +1296,7 @@ test("bridge session mode is a claude bridge in <home>/.loop/sessions/<slug>/<id
     callA2ASessionTool("a2a_enroll", { takeover: "yes" }, session, {
       env: h.env,
     })
-  ).rejects.toThrow("takeover");
+  ).rejects.toThrow("fixed by this session");
   expect(h.server.seen).toEqual([]);
   const enrolled = await callA2ASessionTool(
     "a2a_enroll",
@@ -1325,4 +1326,210 @@ test("bridge session mode is a claude bridge in <home>/.loop/sessions/<slug>/<id
   await expect(
     callA2ASessionTool("a2a_shell", {}, session, { env: h.env })
   ).rejects.toThrow("Unknown tool");
+});
+
+/* ---------------------------------------------------------------------------
+ * fix9 client identity: one fixed identity per session, one token per
+ * environment, a trusted config, and a token that never leaves its origin.
+ * ------------------------------------------------------------------------- */
+
+const IDENTITY_FIELD_RE =
+  /^(?:acting[_-]?as|as|from|identity|impersonate|on[_-]?behalf[_-]?of|principal|sender|supervisor(?:[_-]?id)?|takeover|token(?:[_-]?env)?)$/i;
+
+const aliceSession = (h: ReturnType<typeof harness>) => {
+  const sessionDir = join(h.home, ".loop", "sessions", "alice", "desk-1");
+  mkdirSync(sessionDir, { recursive: true });
+  const session = a2aBridgeSession(sessionDir, "claude", h.env);
+  if (!session) {
+    throw new Error("expected session mode");
+  }
+  return session;
+};
+
+test("an MCP tool call cannot choose another identity, a token or a takeover", async () => {
+  const h = harness();
+  // No tool schema offers an identity, token or takeover field.
+  for (const tool of A2A_SESSION_TOOLS) {
+    expect(tool.inputSchema.additionalProperties).toBe(false);
+    for (const field of Object.keys(tool.inputSchema.properties)) {
+      expect(IDENTITY_FIELD_RE.test(field)).toBe(false);
+    }
+  }
+  const session = aliceSession(h);
+  // The session's identity is fixed once it is resolved.
+  expect(Object.isFrozen(session)).toBe(true);
+  expect(() => {
+    (session as { supervisorId: string }).supervisorId = BOB;
+  }).toThrow();
+  expect(session.supervisorId).toBe(ALICE);
+  const attempts: [string, Record<string, unknown>][] = [
+    ["a2a_enroll", { takeover: true }],
+    ["a2a_enroll", { supervisor_id: BOB }],
+    ["a2a_enroll", { as: BOB, ttl_ms: 60_000 }],
+    ["a2a_release", { supervisorId: BOB }],
+    ["a2a_send", { from: BOB, message: "hi", to: BOB }],
+    ["a2a_send", { message: "hi", on_behalf_of: BOB, to: BOB }],
+    ["a2a_send", { message: "hi", to: BOB, token_env: "BOB_TOKEN" }],
+    ["a2a_status", { identity: BOB, message_id: "m1" }],
+  ];
+  for (const [name, args] of attempts) {
+    await expect(
+      callA2ASessionTool(name, args, session, { env: h.env })
+    ).rejects.toThrow("fixed by this session");
+  }
+  expect(h.server.seen).toEqual([]);
+  // The enroll a model can make never asks for a takeover.
+  await callA2ASessionTool("a2a_enroll", {}, session, { env: h.env });
+  expect(h.server.seen[0]?.body).toMatchObject({ supervisorId: ALICE });
+  expect(h.server.seen[0]?.body).not.toHaveProperty("takeover");
+  // A send goes out as the fixed identity, with its own token only (the fake
+  // server has no ingress, so the send itself is refused afterwards).
+  await expect(
+    callA2ASessionTool(
+      "a2a_send",
+      { message: "hi", message_id: "m-fixed", to: BOB },
+      session,
+      { env: h.env }
+    )
+  ).rejects.toThrow("nothing is claimed delivered");
+  const sent = h.server.seen.find((entry) =>
+    entry.path.endsWith("/supervisors/bob")
+  );
+  expect(sent?.authorization).toBe(`Bearer ${ALICE_TOKEN}`);
+  expect(JSON.stringify(sent?.body)).toContain(
+    `"${FROM_METADATA_KEY}":"${ALICE}"`
+  );
+});
+
+test("a multi-token environment is refused unless --allow-multi-token-env, naming variables only", async () => {
+  const h = harness();
+  let refusal = "";
+  try {
+    resolveA2AClientEndpoint(ALICE, { env: h.bothEnv });
+  } catch (error) {
+    refusal = (error as Error).message;
+  }
+  expect(refusal).toContain("BOB_TOKEN");
+  expect(refusal).toContain("--allow-multi-token-env");
+  expect(refusal).not.toContain(BOB_TOKEN);
+  expect(refusal).not.toContain(ALICE_TOKEN);
+  // An empty variable exposes no token.
+  expect(
+    resolveA2AClientEndpoint(ALICE, { env: { ...h.bothEnv, BOB_TOKEN: "" } })
+      .supervisorId
+  ).toBe(ALICE);
+  expect(
+    resolveA2AClientEndpoint(ALICE, {
+      allowMultiTokenEnv: true,
+      env: h.bothEnv,
+    }).authorization()
+  ).toBe(`Bearer ${ALICE_TOKEN}`);
+  // CLI: refused before any request; only the human flag opts in, and then
+  // only --as's own token is sent.
+  const status = ["a2a", "status", "--as", ALICE, "--message-id", "m1"];
+  await expect(runA2ACommand(status, { env: h.bothEnv })).rejects.toThrow(
+    "BOB_TOKEN"
+  );
+  await expect(
+    runA2ACommand(status, { allowMultiTokenEnv: true, env: h.bothEnv })
+  ).rejects.toThrow("BOB_TOKEN");
+  expect(h.server.seen).toEqual([]);
+  await expect(
+    runA2ACommand([...status, "--allow-multi-token-env"], { env: h.bothEnv })
+  ).rejects.toThrow("not-found");
+  expect(h.server.seen.map((entry) => entry.authorization)).toEqual([
+    `Bearer ${ALICE_TOKEN}`,
+  ]);
+  // A bridge tool never acts from a multi-token environment.
+  await expect(
+    callA2ASessionTool("a2a_status", { message_id: "m1" }, aliceSession(h), {
+      allowMultiTokenEnv: true,
+      env: h.bothEnv,
+    })
+  ).rejects.toThrow("BOB_TOKEN");
+  expect(h.server.seen.length).toBe(1);
+});
+
+test("a hostile LOOP_ORCHESTRATION_CONFIG is refused before any token is read", () => {
+  const h = harness();
+  const resolveWith = (path: string, uid?: () => number) => () =>
+    resolveA2AClientEndpoint(ALICE, {
+      env: { ...h.env, LOOP_ORCHESTRATION_CONFIG: path },
+      ...(uid ? { uid } : {}),
+    });
+  expect(resolveWith(h.configPath)().supervisorId).toBe(ALICE);
+  for (const mode of [0o666, 0o646, 0o620, 0o602]) {
+    chmodSync(h.configPath, mode);
+    expect(resolveWith(h.configPath)).toThrow("group- or world-writable");
+  }
+  chmodSync(h.configPath, 0o644);
+  expect(resolveWith(h.configPath)().supervisorId).toBe(ALICE);
+  const myUid = process.getuid?.() ?? 0;
+  expect(resolveWith(h.configPath, () => myUid + 1)).toThrow(
+    "not owned by the current user"
+  );
+  // A symlink is judged by the file it names.
+  const link = join(h.home, "link.json");
+  symlinkSync(h.configPath, link);
+  expect(resolveWith(link)().supervisorId).toBe(ALICE);
+  chmodSync(h.configPath, 0o666);
+  expect(resolveWith(link)).toThrow("group- or world-writable");
+  chmodSync(h.configPath, 0o600);
+  expect(resolveWith(h.home)).toThrow("not a regular file");
+  expect(resolveWith(join(h.home, "absent.json"))).toThrow("unavailable");
+  expect(h.server.seen).toEqual([]);
+});
+
+test("the token never leaves the configured origin", async () => {
+  const h = harness();
+  const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
+  expect(endpoint.url(`${ROUTE}/x`)).toBe(
+    `http://127.0.0.1:${h.server.port}${ROUTE}/x`
+  );
+  for (const path of [
+    "//evil.example/a2a",
+    "@evil.example/a2a",
+    "evil.example/a2a",
+    "/\\evil.example/a2a",
+    "/a2a\n/x",
+    "/a2a x",
+    "",
+  ]) {
+    expect(() => endpoint.url(path)).toThrow("not on the configured server");
+  }
+  // Ids from input stay ids: a recipient or message id that names a host is
+  // refused before any request.
+  for (const to of ["supervisor:bob@evil.example", "http://evil.example"]) {
+    await expect(
+      sendA2AMessage(endpoint, { body: "hi", messageId: "m-1", to })
+    ).rejects.toThrow();
+  }
+  await expect(
+    a2aMessageStatus(endpoint, "//evil.example/x")
+  ).rejects.toThrow();
+  expect(h.server.seen).toEqual([]);
+});
+
+test("a run enrolled as another supervisor is renamed only by an explicit takeover", async () => {
+  const h = harness();
+  const run = writeRun(h.home, { a2aSupervisorId: BOB });
+  const input = {
+    manifestPath: run.manifestPath,
+    runDir: run.runDir,
+    supervisorId: ALICE,
+  };
+  await expect(claimRunA2AEndpoint(input, { env: h.env })).rejects.toThrow(
+    `enrolled as ${BOB}`
+  );
+  expect(readRunManifest(run.manifestPath)?.a2aSupervisorId).toBe(BOB);
+  expect(h.server.seen).toEqual([]);
+  // An explicit takeover renames; the same supervisor then re-enrolls freely.
+  const claimed = await claimRunA2AEndpoint(input, {
+    env: h.env,
+    takeover: true,
+  });
+  expect(claimed.record.supervisorId).toBe(ALICE);
+  expect(readRunManifest(run.manifestPath)?.a2aSupervisorId).toBe(ALICE);
+  await claimRunA2AEndpoint(input, { env: h.env });
+  expect(h.server.seen.length).toBe(2);
 });
