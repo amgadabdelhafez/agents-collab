@@ -69,6 +69,8 @@ Usage:
                                            Provision the local A2A V2 ledger and add the a2aV2 section (backup + atomic replace); without --recipient every configured supervisor is a recipient
   loop a2a <enroll|release|send|status|ack> --as <supervisor-id> [--allow-multi-token-env] ...
                                            A supervisor's own A2A V2 client: enroll or release its endpoint, send, read status, acknowledge (never completion); reads only that supervisor's token and refuses an environment holding another's
+  loop connect --as <supervisor-id> --deliver <claude|codex|seat> ...
+                                           MCP server (stdio) holding that supervisor's outbound inbox stream (no inbound port): delivers to the Claude channel, a Codex thread or a run seat; inbox_ack is the read ACK, never completion
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only

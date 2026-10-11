@@ -33,6 +33,7 @@ export const SUPERVISOR_ENDPOINT_KINDS = [
   "loop-run",
   "claude-channel",
   "codex-thread",
+  "inbox-stream",
 ] as const;
 export type SupervisorEndpointKind = (typeof SUPERVISOR_ENDPOINT_KINDS)[number];
 
@@ -79,9 +80,25 @@ export interface SupervisorEndpointCodexThreadLocator
   threadId: string;
 }
 
+/**
+ * ra1: a session that holds its own outbound stream
+ * (`GET {routePath}/sessions/<slug>/inbox`, `loop connect`), behind NAT or on
+ * another device. The server derives no path or URL from it: delivery
+ * appends to the durable inbox, and the holder's stream carries it. `agent`
+ * is the provider that will read the messages; `sessionId` is that
+ * provider's session (a Claude session id or a Codex thread id), and the
+ * claim's sessionRef must be `session:<sessionId>`.
+ */
+export interface SupervisorEndpointInboxStreamLocator {
+  agent: "claude" | "codex";
+  kind: "inbox-stream";
+  sessionId: string;
+}
+
 export type SupervisorEndpointLocator =
   | SupervisorEndpointClaudeChannelLocator
   | SupervisorEndpointCodexThreadLocator
+  | SupervisorEndpointInboxStreamLocator
   | SupervisorEndpointLoopRunLocator;
 
 /** The pair every renew and release must present. */
@@ -388,6 +405,22 @@ export const parseSupervisorEndpointLocator = (
       sessionId: requireSupervisorEndpointSessionId(value.sessionId),
     };
   }
+  if (value.kind === "inbox-stream") {
+    if (
+      !(
+        exactKeys(value, ["agent", "kind", "sessionId"]) &&
+        (value.agent === "claude" || value.agent === "codex")
+      )
+    ) {
+      throw new SupervisorEndpointLeaseError("inbox-stream locator is invalid");
+    }
+    return {
+      agent: value.agent,
+      kind: "inbox-stream",
+      // A provider session or Codex thread id; no path is ever derived from it.
+      sessionId: requireSupervisorEndpointThreadId(value.sessionId),
+    };
+  }
   if (!exactKeys(value, ["kind", "repoId", "runId", "threadId"])) {
     throw new SupervisorEndpointLeaseError("codex-thread locator is invalid");
   }
@@ -605,6 +638,8 @@ export type ResolvedSupervisorEndpoint =
       seat: "claude" | "codex";
     }
   | { kind: "claude-channel"; sessionDir: string }
+  /** ra1: ids only. The durable inbox is keyed by the lease's recipient. */
+  | { agent: "claude" | "codex"; kind: "inbox-stream"; sessionId: string }
   | {
       kind: "codex-thread";
       remoteUrl: string;
@@ -647,6 +682,14 @@ export const resolveSupervisorEndpointLocator = (
         context.roots.sessionsRoot,
         [slug, locator.sessionId]
       ),
+    };
+  }
+  if (locator.kind === "inbox-stream") {
+    // Nothing on the server's filesystem: the holder's stream is the endpoint.
+    return {
+      agent: locator.agent,
+      kind: "inbox-stream",
+      sessionId: locator.sessionId,
     };
   }
   const run = resolveSupervisorEndpointRun(
@@ -730,6 +773,9 @@ export const supervisorEndpointProvider = (
   if (locator.kind === "loop-run") {
     return locator.seat === "claude" ? "claude-code" : "codex-app-server";
   }
+  if (locator.kind === "inbox-stream") {
+    return locator.agent === "claude" ? "claude-code" : "codex-app-server";
+  }
   return locator.kind === "claude-channel" ? "claude-code" : "codex-app-server";
 };
 
@@ -753,6 +799,15 @@ export const supervisorEndpointDescriptorIdentity = (
   ) {
     throw new SupervisorEndpointLeaseError(
       "sessionRef does not name the Codex thread"
+    );
+  }
+  // ra1: one stream, one fixed provider session.
+  if (
+    locator.kind === "inbox-stream" &&
+    sessionRef !== `session:${locator.sessionId}`
+  ) {
+    throw new SupervisorEndpointLeaseError(
+      "sessionRef does not name the inbox-stream session"
     );
   }
   return {

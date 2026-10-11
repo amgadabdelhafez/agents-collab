@@ -1661,26 +1661,49 @@ export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
   return true;
 };
 
+/**
+ * One `notifications/claude/channel` JSON-RPC notification: the bridge's own
+ * shape, shared with `loop connect` (ra1), which pushes inbox-stream
+ * messages through the same channel. The sender fields default to the
+ * bridge's Codex peer.
+ */
+export const claudeChannelNotification = (input: {
+  at: number | string;
+  chatId: string;
+  content: string;
+  messageId: string;
+  sourceType?: string;
+  user?: string;
+  userId?: string;
+}): Record<string, unknown> => ({
+  jsonrpc: "2.0",
+  method: CLAUDE_CHANNEL_METHOD,
+  params: {
+    content: input.content,
+    meta: {
+      chat_id: input.chatId,
+      message_id: input.messageId,
+      source_type: input.sourceType ?? CLAUDE_CHANNEL_SOURCE_TYPE,
+      ts: new Date(input.at).toISOString(),
+      user: input.user ?? CLAUDE_CHANNEL_USER,
+      user_id: input.userId ?? CLAUDE_CHANNEL_USER_ID,
+    },
+  },
+});
+
 const writeChannelNotification = (
   runDir: string,
   message: BridgeMessage,
   writeJsonRpc: (payload: unknown) => void
 ): void => {
-  writeJsonRpc({
-    jsonrpc: "2.0",
-    method: CLAUDE_CHANNEL_METHOD,
-    params: {
+  writeJsonRpc(
+    claudeChannelNotification({
+      at: message.at,
+      chatId: bridgeChatId(runDir),
       content: message.message,
-      meta: {
-        chat_id: bridgeChatId(runDir),
-        message_id: message.id,
-        source_type: CLAUDE_CHANNEL_SOURCE_TYPE,
-        ts: new Date(message.at).toISOString(),
-        user: CLAUDE_CHANNEL_USER,
-        user_id: CLAUDE_CHANNEL_USER_ID,
-      },
-    },
-  });
+      messageId: message.id,
+    })
+  );
 };
 
 export const flushClaudeChannelMessages = (

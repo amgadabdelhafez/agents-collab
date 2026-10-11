@@ -25,6 +25,7 @@ import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
+import { CONNECT_COMMAND, runConnectCommand } from "./loop/connect-command";
 import { RECONCILE_USAGE } from "./loop/constants";
 import { cliDeps } from "./loop/deps";
 import {
@@ -487,10 +488,26 @@ const runProjectCliCommand = (argv: string[]): boolean => {
   return true;
 };
 
+/**
+ * `loop connect`: an MCP server on stdio (stdout is the protocol channel, so
+ * nothing else is printed there). A fenced or refused stream exits non-zero.
+ */
+const runConnectCliCommand = async (argv: string[]): Promise<boolean> => {
+  if (argv[0] !== CONNECT_COMMAND) {
+    return false;
+  }
+  const { end } = await runConnectCommand(argv);
+  if (end.reason === "fenced" || end.reason === "refused") {
+    throw new Error(`loop connect: inbox stream ${end.reason} (${end.detail})`);
+  }
+  return true;
+};
+
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   runProjectCliCommand(argv) ||
   (await runMailboxCliCommand(argv)) ||
   (await runA2ACliCommand(argv)) ||
+  (await runConnectCliCommand(argv)) ||
   (await runOrchestrationCommand(argv)) ||
   (await runStoppedRunReconcileCommand(argv)) ||
   (await runStopCommand(argv)) ||

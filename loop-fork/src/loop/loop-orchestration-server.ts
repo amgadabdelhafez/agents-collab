@@ -76,6 +76,7 @@ import {
   supervisorEndpointRef,
   supervisorEndpointRoots,
 } from "./supervisor-endpoint-lease";
+import { SupervisorInboxStreamHub } from "./supervisor-inbox-stream";
 import { SupervisorMailboxConsumptionReconciler } from "./supervisor-mailbox-consumption";
 import {
   FirstAvailableDeliveryPort,
@@ -1793,10 +1794,12 @@ export const createSupervisorEndpointLeaseObserver =
     } catch {
       return "unavailable";
     }
+    // A run-backed kind ends with its run; a channel session or an inbox
+    // stream has no run to read.
     const run =
-      resolved.kind === "claude-channel"
-        ? undefined
-        : runObservation(resolved.runDir, deps.readManifest ?? readRunManifest);
+      "runDir" in resolved
+        ? runObservation(resolved.runDir, deps.readManifest ?? readRunManifest)
+        : undefined;
     if (run) {
       return run;
     }
@@ -1807,7 +1810,7 @@ export const createSupervisorEndpointLeaseObserver =
         return "unavailable";
       }
     }
-    return resolved.kind === "claude-channel" ? "unobserved" : "live";
+    return "runDir" in resolved ? "live" : "unobserved";
   };
 
 // A lease pass lists the store at most this often (and at most every quarter
@@ -2312,8 +2315,12 @@ const createDefaultRuntimeHost = async (input: {
     // needs it, so a lease-backed descriptor's readiness reads it late. Before
     // it is open (or without one) such a descriptor is not ready.
     let endpointLeaseReader: SupervisorEndpointLeaseReader | undefined;
+    // ra1: one hub for the inbox-stream adapter (append, presence) and the
+    // stream route (read, wakeups); the service attaches its inbox store.
+    const inboxStream = new SupervisorInboxStreamHub();
     const endpointAdapters =
-      factories.adapters?.() ?? createSupervisorEndpointKindAdapters();
+      factories.adapters?.() ??
+      createSupervisorEndpointKindAdapters({ inboxStream });
     const endpointDescriptorReadiness = {
       ready: (descriptor: SupervisorSessionDescriptorV2) => {
         if (!endpointLeaseReader) {
@@ -2350,6 +2357,7 @@ const createDefaultRuntimeHost = async (input: {
             }
           : {}),
         hasMailbox: (id) => input.mailboxes.has(id),
+        inboxStream,
         legacySeats,
         log: (line) => console.error(line),
         mayReceive: (request) =>
