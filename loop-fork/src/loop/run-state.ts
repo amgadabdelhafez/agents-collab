@@ -779,7 +779,15 @@ export const resolveRunId = (
   return String(next + 1);
 };
 
-export const resolveRepoId = (
+/**
+ * The checkout id: a hash of this clone's git common dir (so every worktree of
+ * one clone shares it, and two clones at different paths do not), falling
+ * back to the top level and then to cwd outside git. It names run storage
+ * (`~/.loop/runs/<checkoutId>`) and is what manifests, endpoint run refs and
+ * the panel call `repoId`. It is a local cache key only: the repository's
+ * identity is the location-independent repoKey (`project-identity.ts`).
+ */
+export const resolveCheckoutId = (
   cwd = process.cwd(),
   deps?: Partial<RepoIdDeps>
 ): string => {
@@ -803,6 +811,9 @@ export const resolveRepoId = (
 
   return buildRepoId(basename(cwd) || "loop", cwd);
 };
+
+/** Historical name of `resolveCheckoutId`; the value is unchanged. */
+export const resolveRepoId = resolveCheckoutId;
 
 export const buildRunDir = (
   storageRoot: string,
