@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { safeErrorCause } from "./a2a-error-cause";
 
 const reference = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
 export interface RecipientApiCommand {
@@ -106,7 +107,7 @@ export const callRecipientRoute = async (input: {
       body: JSON.stringify(command),
     });
     if (!response.ok) {
-      throw new Error("refused");
+      throw new Error(`refused (${response.status})`);
     }
     const value = (await response.json()) as Record<string, unknown>;
     if (
@@ -144,9 +145,12 @@ export const callRecipientRoute = async (input: {
       phase: value.phase,
       workResultCompleted: false,
     };
-  } catch {
+  } catch (error) {
+    // The cause is reduced to what is safe to print: the token redacted, no
+    // headers (`safeErrorCause`).
     throw new Error(
-      "Recipient API refused or is unavailable; no completion is claimed"
+      "Recipient API refused or is unavailable; no completion is claimed",
+      { cause: safeErrorCause(error, [input.token]) }
     );
   }
 };

@@ -3,6 +3,7 @@ import { spawn as spawnChild } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import {
+  describeA2AClientFailure,
   describeA2ALeaseRelease,
   releaseRecordedA2ALease,
 } from "./loop/a2a-session-client";
@@ -472,7 +473,14 @@ const runA2ACliCommand = async (argv: string[]): Promise<boolean> => {
   if (argv[0] !== A2A_COMMAND) {
     return false;
   }
-  const result = await runA2ACommand(argv);
+  let result: Record<string, unknown>;
+  try {
+    result = await runA2ACommand(argv);
+  } catch (error) {
+    // A client refusal's safe underlying cause (no token, no headers), so a
+    // refused send is diagnosable from the CLI alone.
+    throw new Error(describeA2AClientFailure(error));
+  }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   return true;
 };

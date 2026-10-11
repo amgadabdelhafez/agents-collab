@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { relative, resolve, sep } from "node:path";
+import { describeErrorCause } from "./a2a-error-cause";
 import {
   A2A_LEASE_RECORD_FILE,
   type A2AClientDeps,
@@ -325,8 +326,15 @@ export const runA2ACommand = async (
     deps.fetchImpl
   );
   if (result.refused.length > 0) {
+    // Each refusal's safe cause (no token, no headers), so a refusal is
+    // diagnosable from the CLI.
+    const causes = result.refused.flatMap((entry) =>
+      entry.cause
+        ? [`${entry.workflowId}: ${describeErrorCause(entry.cause)}`]
+        : []
+    );
     throw new Error(
-      `ack refused for ${result.refused.map((entry) => entry.workflowId).join(", ")}${result.acknowledged.length > 0 ? `; acknowledged ${result.acknowledged.map((entry) => entry.workflowId).join(", ")}` : ""}`
+      `ack refused for ${result.refused.map((entry) => entry.workflowId).join(", ")}${result.acknowledged.length > 0 ? `; acknowledged ${result.acknowledged.map((entry) => entry.workflowId).join(", ")}` : ""}${causes.length > 0 ? ` (cause: ${causes.join("; ")})` : ""}`
     );
   }
   return { action: "ack", ...result };

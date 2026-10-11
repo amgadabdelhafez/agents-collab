@@ -1,5 +1,6 @@
 import { mkdirSync, watch } from "node:fs";
 import { basename } from "node:path";
+import { describeA2AClientFailure } from "./a2a-session-client";
 import {
   A2A_SESSION_TOOL_NAMES,
   A2A_SESSION_TOOLS,
@@ -497,10 +498,13 @@ const handleA2ASessionTool = async (
       result: toolContent(JSON.stringify(result, null, 2)),
     });
   } catch (error) {
+    // A client refusal carries its safe cause (no token, no headers).
     writeError(
       id,
       MCP_INVALID_PARAMS,
-      error instanceof Error ? error.message : `${name} failed`
+      error instanceof Error
+        ? describeA2AClientFailure(error)
+        : `${name} failed`
     );
   }
 };

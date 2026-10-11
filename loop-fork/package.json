@@ -14,6 +14,7 @@
     "install:global": "bun run build && bun run src/install.ts",
     "orchestration:serve": "bun run src/orchestration-cli.ts",
     "test:file": "LOOP_TEST_CERTIFICATION_MODE=single-file sh scripts/test-hermetic.sh bun test",
+    "test:compiled-a2a": "sh scripts/test-compiled-a2a.sh",
     "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file sh scripts/test-hermetic.sh bun test \"$file\" || exit 1; done",
     "release:patch": "npm version patch && git push --follow-tags",
     "check": "ultracite check",

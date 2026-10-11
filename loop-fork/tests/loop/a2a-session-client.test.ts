@@ -17,13 +17,16 @@ import { inspect } from "node:util";
 import { TaskState } from "@a2a-js/sdk";
 import { InMemoryTaskStore } from "@a2a-js/sdk/server";
 import { serve } from "bun";
+import { safeErrorCause } from "../../src/loop/a2a-error-cause";
 import {
+  A2A_SEND_TIMEOUT_MS,
   A2AClientError,
   a2aIngressFetch,
   a2aMessageStatus,
   acknowledgeA2AWorkflows,
   claimChannelA2AEndpoint,
   claimRunA2AEndpoint,
+  describeA2AClientFailure,
   readA2ALeaseRecord,
   releaseRecordedA2ALease,
   renewA2ASession,
@@ -1532,4 +1535,162 @@ test("a run enrolled as another supervisor is renamed only by an explicit takeov
   expect(readRunManifest(run.manifestPath)?.a2aSupervisorId).toBe(ALICE);
   await claimRunA2AEndpoint(input, { env: h.env });
   expect(h.server.seen.length).toBe(2);
+});
+
+test("a transport or SDK failure keeps its underlying error's name, message and code, safe to print: no token, no headers", async () => {
+  const h = harness();
+  const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
+  const failing = (() => {
+    const error = new TypeError(
+      `fetch failed\nauthorization: Bearer ${ALICE_TOKEN}; raw ${ALICE_TOKEN}`
+    );
+    (error as TypeError & { code: string }).code = "ConnectionRefused";
+    return Promise.reject(error);
+  }) as unknown as typeof fetch;
+  const expected = {
+    code: "ConnectionRefused",
+    message: "fetch failed authorization: Bearer [redacted]; raw [redacted]",
+    name: "TypeError",
+  };
+  const sent = await sendA2AMessage(
+    endpoint,
+    { body: "hi", messageId: "msg-cause", to: BOB },
+    failing
+  ).catch((error: unknown) => error);
+  const status = await a2aMessageStatus(endpoint, V2_LEGACY, failing).catch(
+    (error: unknown) => error
+  );
+  expect((sent as A2AClientError).detail).toEqual({
+    cause: expected,
+    messageId: "msg-cause",
+  });
+  expect((status as A2AClientError).detail).toEqual({ cause: expected });
+  expect(describeA2AClientFailure(sent)).toContain(
+    "(message id: msg-cause; cause: TypeError: "
+  );
+  for (const error of [sent, status]) {
+    expect(error).toBeInstanceOf(A2AClientError);
+    expect((error as A2AClientError).code).toBe("unavailable");
+    const printed = describeA2AClientFailure(error);
+    expect(printed).toContain(
+      "cause: TypeError: fetch failed authorization: Bearer [redacted]; raw [redacted] [ConnectionRefused])"
+    );
+    for (const rendered of [
+      printed,
+      JSON.stringify(error),
+      inspect(error, { depth: 8 }),
+    ]) {
+      expect(rendered).not.toContain(ALICE_TOKEN);
+    }
+  }
+  expect((sent as Error).message).toBe(
+    "send refused or the server is unavailable; nothing is claimed delivered"
+  );
+  // The SDK's own refusal (the HTTP error it raises) is kept the same way.
+  const missing = (await sendA2AMessage(endpoint, {
+    body: "hi",
+    messageId: "msg-missing",
+    to: "supervisor:carol",
+  }).catch((error: unknown) => error)) as A2AClientError;
+  const missingCause = missing.detail?.cause as { message: string };
+  expect(missingCause).toMatchObject({ name: "Error" });
+  expect(missingCause.message).toContain("404");
+  // ack: each refusal keeps its cause, and the CLI's error names it.
+  const acked = await acknowledgeA2AWorkflows(endpoint, [V2_LEGACY], failing);
+  expect(acked.refused).toEqual([
+    {
+      cause: expected,
+      reason:
+        "Recipient API refused or is unavailable; no completion is claimed",
+      workflowId: V2_LEGACY,
+    },
+  ]);
+  const cli = await runA2ACommand(
+    ["a2a", "ack", "--as", ALICE, "--workflow", V2_LEGACY],
+    { env: h.env, fetchImpl: failing }
+  ).catch((error: unknown) => error as Error);
+  expect(cli.message).toContain(`ack refused for ${V2_LEGACY}`);
+  expect(cli.message).toContain("(cause: ");
+  expect(cli.message).toContain("TypeError: fetch failed");
+  expect(cli.message).not.toContain(ALICE_TOKEN);
+  // A refusal the route answered keeps its status.
+  const routeRefused = await callRecipientRoute({
+    command: {
+      operation: "acknowledge",
+      requestId: "r-1",
+      workflowId: V2_LEGACY,
+    },
+    fetchImpl: (() =>
+      Promise.resolve(
+        Response.json({ code: "refused" }, { status: 409 })
+      )) as unknown as typeof fetch,
+    token: ALICE_TOKEN,
+    url: `http://127.0.0.1:${h.server.port}${ROUTE}/recipient`,
+  }).catch((error: unknown) => error as Error);
+  expect(routeRefused.cause).toEqual({
+    message: "refused (409)",
+    name: "Error",
+  });
+});
+
+test("a send the server has not answered within its budget is not a refusal: it names the message id to re-send", async () => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = harness((seen) =>
+    seen.path === `${ROUTE}/supervisors/bob`
+      ? held.then(() => new Response("{}"))
+      : undefined
+  );
+  const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
+  const started = Date.now();
+  const error = (await sendA2AMessage(
+    endpoint,
+    { body: "hi", messageId: "msg-slow", to: BOB },
+    fetch,
+    { timeoutMs: 300 }
+  ).catch((caught: unknown) => caught)) as A2AClientError;
+  release();
+  expect(Date.now() - started).toBeLessThan(5000);
+  expect(error).toBeInstanceOf(A2AClientError);
+  expect(error.code).toBe("unavailable");
+  expect(error.message).toBe(
+    "send: the server did not answer within 0.3s; it may have accepted the message, so nothing is claimed either way; re-send with --message-id msg-slow (the server deduplicates it) to learn the outcome"
+  );
+  expect(error.message).not.toContain("refused");
+  expect(error.detail).toEqual({
+    cause: expect.objectContaining({ name: "TimeoutError" }),
+    messageId: "msg-slow",
+  });
+  // The server did receive it: only its answer was late.
+  expect(h.server.seen.map((entry) => entry.path)).toEqual([
+    `${ROUTE}/supervisors/bob`,
+  ]);
+  // The default budget covers the live server's slow sends (up to ~15 s).
+  expect(A2A_SEND_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+});
+
+test("safeErrorCause keeps only a capped name, message and code", () => {
+  expect(safeErrorCause(`plain ${ALICE_TOKEN}`, [ALICE_TOKEN])).toEqual({
+    message: "plain [redacted]",
+    name: "string",
+  });
+  // A "secret" too short to be a token would only mangle the text.
+  expect(safeErrorCause(new Error("timed out"), ["t"]).message).toBe(
+    "timed out"
+  );
+  const cause = safeErrorCause(new RangeError(`x${"y".repeat(1000)}\u0000z`));
+  expect(cause.name).toBe("RangeError");
+  expect(cause.message.length).toBeLessThanOrEqual(403);
+  expect(cause.message).not.toContain("\u0000");
+  const odd = Object.assign(new Error("m"), {
+    code: { nested: true },
+    headers: { authorization: `Bearer ${ALICE_TOKEN}` },
+    request: { headers: { authorization: ALICE_TOKEN } },
+  });
+  expect(safeErrorCause(odd)).toEqual({ message: "m", name: "Error" });
+  expect(
+    safeErrorCause(Object.assign(new Error("n"), { code: -32_001 }))
+  ).toEqual({ code: "-32001", message: "n", name: "Error" });
 });

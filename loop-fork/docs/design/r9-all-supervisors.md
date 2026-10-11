@@ -226,3 +226,21 @@ T1 to T4 merged with `--no-ff` onto `claude/fix9-contracts` without textual conf
 - **`maxDeliveryAttempts` above 20 is accepted by the config parser (up to 100), but the message workflow refuses it.** Every V2 send then fails. This predates r9.
 - **A recipient can see a message before its delivery is recorded.** A Claude target's first attempt only queues the entry (no provider acceptance), so the delivery is recorded by a later attempt, which the V2 recovery sweep drives every 30 seconds (the ingress default; no config key sets it). A Claude session sees the pushed entry, and a mailbox reader its envelope, before that. An acknowledgement in that window is refused and must be retried. This predates r9 for an r8 Claude seat; r9 makes every Claude session and channel a target.
 - **`loop a2a status --message-id` takes the workflow id** that send prints, not the A2A message id; see the route table.
+
+## Slow send reported as refused (claude/fix-a2a-send-compiled, 2026-10-11)
+
+On the live host, the installed r9b binary (`c3d670c1`) printed "send refused or the server is unavailable; nothing is claimed delivered" for `loop a2a send --as supervisor:harness-desktop --to supervisor:portfolio-coordinator`. It was the first V2 send after the service restarted. Sends run from source afterwards succeeded, so the failure was first taken to be specific to the compiled binary. It was not.
+
+- **The server had accepted it.** The recipient's mailbox holds `live-a2a-v2-smoke-20261011`, written at 06:35:14Z, six seconds after the client gave up.
+- **The server answers a send only after its synchronous work.** That work is the ledger intent, the Temporal start and queries, and the first delivery attempt (the mailbox write). On the live host, with remote Temporal, the time from the task's arrival to its mailbox write was about 3 s for one source-run send and about 15 s for another. The second one succeeded only because it used the SDK's fetch, which has no timeout.
+- **The client gave a send 10 s** (`AbortSignal.timeout`). The catch-all around the SDK call discarded the `TimeoutError` and reported a refusal.
+- **The binary is not the cause.** The same `c3d670c1` bytes, and binaries rebuilt from `dca155ba`, send, report status and acknowledge correctly against a throwaway server (local Temporal, Docker PostgreSQL). That holds in a minimal configuration and in one shaped like the live config (per-supervisor principals, the pre-06:34Z grants). A loopback proxy that holds the send's answer for 12 s reproduces the live error exactly with the r9b-equivalent binary. The underlying cause it shows is `TimeoutError: The operation timed out.`
+
+What changed:
+
+- **A send has its own 60 s budget** (`A2A_SEND_TIMEOUT_MS`). The other requests keep 10 s.
+- **A timeout is no longer reported as a refusal.** The error says the server may have accepted the message and names the `--message-id` to re-send. The server deduplicates by message id, so a re-send is safe: it returns the same workflow id and writes no second mailbox entry.
+- **Every client catch keeps its underlying error.** `safeErrorCause` keeps the error's name, message and code in `detail.cause` (or `cause`), with the token and any `Bearer` value redacted and no headers. This covers the send, the JSON routes, the recipient route and ack refusals. The CLI and the bridge's tools print it.
+- **`bun run test:compiled-a2a`** builds the binary into a scratch directory, nothing installed. It then runs `tests/loop/compiled-binary-a2a.test.ts`, which tests send, status and ack through the built binary for both the server and the client, including the 12 s slow-answer case. The file is skipped unless `LOOP_COMPILED_BINARY` is set.
+
+Not changed: why the live service's send path takes up to about 15 s (Temporal queries and the delivery attempt run inside the request). The 10 s budget on `status` and on the recipient route (`ack`) is also unchanged, and either can hit the same limit on a slow host.

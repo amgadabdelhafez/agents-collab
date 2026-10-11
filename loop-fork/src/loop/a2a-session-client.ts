@@ -15,6 +15,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Message, Role, type Task } from "@a2a-js/sdk";
 import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
+import {
+  type A2AErrorCause,
+  describeErrorCause,
+  isTimeoutCause,
+  safeErrorCause,
+} from "./a2a-error-cause";
 import { agentCardFor, FROM_METADATA_KEY } from "./a2a-supervisor-adapter";
 import {
   TASK_STATE_METADATA_KEY,
@@ -88,6 +94,16 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
 export const A2A_LEASE_RECORD_FILE = "a2a-lease.json";
 export const A2A_LEASE_RECORD_SCHEMA = "loop-a2a-lease-record.v1" as const;
 const REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * A send's budget, longer than the other requests'. The server answers a send
+ * only after its synchronous work: the ledger's start intent, the Temporal
+ * start and queries, and the first delivery attempt (a mailbox write or a
+ * session hand-off). On the live host (remote Temporal) that took about 3 s
+ * to about 15 s from the task's arrival to its mailbox write (2026-10-11);
+ * with the 10 s budget the client reported a message the server had accepted
+ * and delivered as refused.
+ */
+export const A2A_SEND_TIMEOUT_MS = 60_000;
 const ROUTE_PATH_RE = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,255}$/;
 const TOKEN_ENV_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const LOOPBACK_HOSTS: Readonly<Record<string, string>> = {
@@ -114,7 +130,12 @@ const isSafePositive = (value: unknown): value is number =>
 const isNullableString = (value: unknown): value is null | string =>
   value === null || typeof value === "string";
 
-/** A fixed, token-free failure. `code` is a route error code or a client one. */
+/**
+ * A fixed, token-free failure. `code` is a route error code or a client one.
+ * A transport or SDK failure keeps its underlying error, reduced by
+ * `safeErrorCause` (name, message, code; the token redacted; no headers), in
+ * `detail.cause`.
+ */
 export class A2AClientError extends Error {
   readonly code: A2AV2RouteErrorCode | "invalid-response" | "unavailable";
   readonly detail?: Record<string, unknown>;
@@ -181,6 +202,38 @@ export class A2AClientEndpoint {
     return url;
   }
 }
+
+/** The safe cause of a client failure, never carrying `endpoint`'s token. */
+const causeOf = (
+  endpoint: A2AClientEndpoint,
+  error: unknown
+): { cause: A2AErrorCause } => ({
+  cause: safeErrorCause(error, [endpoint.token()]),
+});
+
+/**
+ * One line for an error: its message, and for a client failure the message
+ * id it concerned and the safe underlying cause. What the CLI and the
+ * bridge's tools print.
+ */
+export const describeA2AClientFailure = (error: unknown): string => {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const detail = error instanceof A2AClientError ? error.detail : undefined;
+  const parts = [
+    ...(typeof detail?.messageId === "string" &&
+    !error.message.includes(detail.messageId)
+      ? [`message id: ${detail.messageId}`]
+      : []),
+    ...(detail?.cause && typeof detail.cause === "object"
+      ? [`cause: ${describeErrorCause(detail.cause as A2AErrorCause)}`]
+      : []),
+  ];
+  return parts.length > 0
+    ? `${error.message} (${parts.join("; ")})`
+    : error.message;
+};
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: refused on purpose
 const UNSAFE_PATH_RE = /[\\\s\u0000-\u001f\u007f]/;
@@ -383,10 +436,11 @@ const requestJson = async (
       redirect: "error",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
     throw new A2AClientError(
       `${what}: the server is unavailable`,
-      "unavailable"
+      "unavailable",
+      causeOf(endpoint, error)
     );
   }
   let value: unknown;
@@ -641,12 +695,14 @@ export interface A2ASendReceipt {
 
 /**
  * The fetch the SDK client gets: the one ingress URL only, the bearer token
- * added here (never in the card or the request body), redirects refused.
+ * added here (never in the card or the request body), redirects refused, and
+ * a send's own budget (`A2A_SEND_TIMEOUT_MS`).
  */
 export const a2aIngressFetch = (
   endpoint: A2AClientEndpoint,
   url: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs: number = A2A_SEND_TIMEOUT_MS
 ): typeof fetch =>
   Object.assign(
     (
@@ -665,7 +721,7 @@ export const a2aIngressFetch = (
         new Request(request, {
           headers,
           redirect: "error",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          signal: AbortSignal.timeout(timeoutMs),
         })
       );
     },
@@ -681,7 +737,9 @@ export const a2aIngressFetch = (
 export const sendA2AMessage = async (
   endpoint: A2AClientEndpoint,
   input: A2ASendInput,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  /** `timeoutMs` (default `A2A_SEND_TIMEOUT_MS`) is for tests. */
+  options: { timeoutMs?: number } = {}
 ): Promise<A2ASendReceipt> => {
   const to = requireSupervisorEndpointRecipient(input.to);
   if (!MESSAGE_ID_RE.test(input.messageId)) {
@@ -697,7 +755,8 @@ export const sendA2AMessage = async (
     throw new Error("message body must be non-empty and at most 64 KiB");
   }
   const url = endpoint.url(a2aV2SupervisorIngressPath(endpoint.routePath, to));
-  const authenticated = a2aIngressFetch(endpoint, url, fetchImpl);
+  const timeoutMs = options.timeoutMs ?? A2A_SEND_TIMEOUT_MS;
+  const authenticated = a2aIngressFetch(endpoint, url, fetchImpl, timeoutMs);
   const message: Message = {
     contextId: input.contextId ?? input.messageId,
     extensions: [],
@@ -733,10 +792,24 @@ export const sendA2AMessage = async (
       metadata: undefined,
       tenant: "",
     });
-  } catch {
+  } catch (error) {
+    const { cause } = causeOf(endpoint, error);
+    // The message id goes with every failure: the server deduplicates a send
+    // by it, so re-sending with the same id is safe and tells the outcome.
+    const detail = { cause, messageId: input.messageId };
+    if (isTimeoutCause(cause)) {
+      // No answer is not a refusal: the server may have accepted the message
+      // and be delivering it (the live 2026-10-11 send was delivered).
+      throw new A2AClientError(
+        `send: the server did not answer within ${timeoutMs / 1000}s; it may have accepted the message, so nothing is claimed either way; re-send with --message-id ${input.messageId} (the server deduplicates it) to learn the outcome`,
+        "unavailable",
+        detail
+      );
+    }
     throw new A2AClientError(
       "send refused or the server is unavailable; nothing is claimed delivered",
-      "unavailable"
+      "unavailable",
+      detail
     );
   }
   if (!("status" in result && typeof result.id === "string" && result.id)) {
@@ -772,6 +845,14 @@ export const sendA2AMessage = async (
   };
 };
 
+/** One workflow the recipient route did not acknowledge, and why. */
+export interface A2AAckRefusal {
+  /** The underlying failure, safe to print (no token, no headers). */
+  cause?: A2AErrorCause;
+  reason: string;
+  workflowId: string;
+}
+
 /** The recipient's delivery/read ACK of V2 workflows; never completion. */
 export const acknowledgeA2AWorkflows = async (
   endpoint: A2AClientEndpoint,
@@ -779,11 +860,11 @@ export const acknowledgeA2AWorkflows = async (
   fetchImpl?: typeof fetch
 ): Promise<{
   acknowledged: { phase: string; workflowId: string }[];
-  refused: { reason: string; workflowId: string }[];
+  refused: A2AAckRefusal[];
   workResultCompleted: false;
 }> => {
   const acknowledged: { phase: string; workflowId: string }[] = [];
-  const refused: { reason: string; workflowId: string }[] = [];
+  const refused: A2AAckRefusal[] = [];
   for (const workflowId of workflowIds) {
     try {
       const receipt = await acknowledgeRecipientWorkflow({
@@ -794,7 +875,12 @@ export const acknowledgeA2AWorkflows = async (
       });
       acknowledged.push({ phase: receipt.phase, workflowId });
     } catch (error) {
+      const cause =
+        error instanceof Error && error.cause !== undefined
+          ? safeErrorCause(error.cause, [endpoint.token()])
+          : undefined;
       refused.push({
+        ...(cause ? { cause } : {}),
         reason: error instanceof Error ? error.message : "refused",
         workflowId,
       });
