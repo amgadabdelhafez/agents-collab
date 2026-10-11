@@ -20,11 +20,18 @@
 //    (`<config>.bak-<UTC stamp>`, 0600) and the copy atomically renamed over
 //    it, after checking the original did not change meanwhile.
 //
-// The V2 recipient must be a Loop binding: a supervisor with a manifestPath
-// (the run manifest of a Loop pane the server can enrol). A supervisor that is
-// mailbox-only cannot be a V2 recipient. Init never invents one; with none
-// resolvable it provisions the ledger and the env file, writes no section and
-// says what is missing (--recipient/--manifest).
+// r8 (--manifest or --recipient): the one V2 recipient must be a Loop
+// binding: a supervisor with a manifestPath (the run manifest of a Loop pane
+// the server can enrol). Init never invents one; with none resolvable it
+// provisions the ledger and the env file, writes no section and says what is
+// missing.
+//
+// r9 (neither flag): every configured supervisor is a recipient, through its
+// own ingress and session lease, so the section names no recipient. Its
+// principal is the control principal: --control <supervisor-id>'s, or the
+// first supervisor's (printed). Each sender/recipient pair needs a grant
+// (receive, claim, acknowledge, under the sender's principal); init lists the
+// missing ones and never invents them.
 
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -83,6 +90,11 @@ export interface A2AV2InitOptions {
   configPath: string;
   /** Docker container (and, with `-data`, volume) name. */
   containerName?: string;
+  /**
+   * r9 (no --manifest, no --recipient): the supervisor whose principal is
+   * the section's control principal; default: the first supervisor.
+   */
+  controlSupervisor?: string;
   /** An already-set variable holding a database URL: no ledger is provisioned. */
   databaseUrlEnv?: string;
   /** Host port on 127.0.0.1 the ledger is published on. */
@@ -91,6 +103,15 @@ export interface A2AV2InitOptions {
   manifests?: Readonly<Record<string, string>>;
   /** The V2 recipient; default: the first supervisor with a manifestPath. */
   recipient?: string;
+}
+
+/** One sender/recipient pair whose grant lacks operations V2 needs. */
+export interface A2AV2MissingGrant {
+  from: string;
+  /** The operations no configured grant of this pair holds, sorted. */
+  operations: string[];
+  principal: string;
+  to: string;
 }
 
 export interface DockerResult {
@@ -139,10 +160,14 @@ export const defaultA2AV2InitDeps = (): A2AV2InitDeps => ({
 export interface A2AV2InitResult {
   backupPath?: string;
   configWritten: boolean;
+  /** r9: the supervisor whose principal is the control principal. */
+  controlSupervisor?: string;
   envFile: string;
   ledger: "existing-config" | "external" | "provisioned" | "reused";
   /** Set when no section was written: what the operator must supply. */
   missing?: string;
+  /** r9: the sender/recipient pairs the grants do not cover yet. */
+  missingGrants?: A2AV2MissingGrant[];
   recipient?: string;
 }
 
@@ -713,6 +738,94 @@ const a2aV2SectionFor = (input: {
   };
 };
 
+/** The operations every sender/recipient pair needs under V2. */
+const PAIR_OPERATIONS = ["acknowledge", "claim", "receive"] as const;
+
+/**
+ * Every ordered pair of distinct configured supervisors whose grants (under
+ * the sender's principal) lack an operation V2 needs: `receive` to send,
+ * `claim` and `acknowledge` for the recipient to act on it. Reported only;
+ * init never writes a grant.
+ */
+export const missingA2AV2GrantPairs = (
+  supervisors: readonly Record<string, unknown>[],
+  grants: unknown
+): A2AV2MissingGrant[] => {
+  const held = Array.isArray(grants)
+    ? (grants as Record<string, unknown>[])
+    : [];
+  const missing: A2AV2MissingGrant[] = [];
+  for (const sender of supervisors) {
+    for (const recipient of supervisors) {
+      const from = String(sender.supervisorId);
+      const to = String(recipient.supervisorId);
+      if (from === to) {
+        continue;
+      }
+      const principal = String(sender.principal);
+      const granted = new Set(
+        held
+          .filter(
+            (grant) =>
+              grant.from === from &&
+              grant.to === to &&
+              grant.principal === principal &&
+              Array.isArray(grant.operations)
+          )
+          .flatMap((grant) => grant.operations as unknown[])
+      );
+      const operations = PAIR_OPERATIONS.filter(
+        (operation) => !granted.has(operation)
+      );
+      if (operations.length > 0) {
+        missing.push({ from, operations: [...operations], principal, to });
+      }
+    }
+  }
+  return missing;
+};
+
+/** r9: the control supervisor, or what is missing for one. */
+const chooseControl = (
+  supervisors: readonly Record<string, unknown>[],
+  requested: string | undefined
+): { entry: Record<string, unknown> } | { missing: string } => {
+  const entry = requested
+    ? supervisors.find((one) => one.supervisorId === requested)
+    : supervisors[0];
+  if (!entry) {
+    return {
+      missing: `--control ${String(requested)} is not a configured supervisor`,
+    };
+  }
+  if (!PRINCIPAL_RE.test(String(entry.principal))) {
+    return {
+      missing: `the control principal ${String(entry.principal)} (${String(entry.supervisorId)}) is not of the form principal:<name>; pass --control <supervisor-id> naming one that is`,
+    };
+  }
+  return { entry };
+};
+
+/** r9: no recipient; every configured supervisor is one. */
+const a2aV2AllSupervisorsSectionFor = (input: {
+  control: Record<string, unknown>;
+  databaseUrlEnv: string;
+  identity: string;
+}) => ({
+  databaseUrlEnv: input.databaseUrlEnv,
+  // Required by the parser; unused without an r8 recipient (a lease-backed
+  // descriptor's endpointRef is endpoint:<kind>).
+  endpointRef: "endpoint:loop-run",
+  policy: { ...DEFAULT_POLICY },
+  principal: String(input.control.principal),
+  resultGraphKeyEnv: A2A_V2_RESULT_GRAPH_KEY_ENV,
+  routePath: "/a2a/v2",
+  sessionTtlMs: 3_600_000,
+  tenant: tenantFor(input.identity),
+  // Owner decision (fix8): keep the legacy id format.
+  workflowIdFormat: "legacy",
+});
+
 /** Step 3: back up the original, then rename a validated 0600 copy over it. */
 const replaceConfig = (
   configPath: string,
@@ -791,6 +904,27 @@ export const runA2AV2Init = async (
     `env file ${envFile} (0600): ${[...envValues.keys()].sort().join(", ")}`
   );
   const supervisors = bindManifests(raw, options.manifests ?? {});
+  const r8 =
+    options.recipient !== undefined ||
+    Object.keys(options.manifests ?? {}).length > 0;
+  if (!r8) {
+    return await writeAllSupervisorsSection({
+      configPath: options.configPath,
+      controlSupervisor: options.controlSupervisor,
+      databaseUrlEnv,
+      deps,
+      envFile,
+      identity: current.identity,
+      ledger,
+      raw,
+      supervisors,
+    });
+  }
+  if (options.controlSupervisor !== undefined) {
+    throw new Error(
+      "--control applies only without --manifest and --recipient (the r8 section's principal is its recipient's)"
+    );
+  }
   const chosen = chooseRecipient(supervisors, options.recipient);
   if ("missing" in chosen) {
     throw new A2AV2InitIncompleteError(
@@ -817,5 +951,77 @@ export const runA2AV2Init = async (
     envFile,
     ledger,
     recipient: a2aV2.recipient,
+  };
+};
+
+/**
+ * r9 step 2: the section with no recipient, under the control principal,
+ * written as r8's is (validated, backed up, renamed over). The missing grant
+ * pairs are reported, one line each, and returned; none is written.
+ */
+const writeAllSupervisorsSection = (input: {
+  configPath: string;
+  controlSupervisor: string | undefined;
+  databaseUrlEnv: string;
+  deps: A2AV2InitDeps;
+  envFile: string;
+  identity: string;
+  ledger: A2AV2InitResult["ledger"];
+  raw: RawConfig;
+  supervisors: Record<string, unknown>[];
+}): A2AV2InitResult => {
+  const control = chooseControl(input.supervisors, input.controlSupervisor);
+  if ("missing" in control) {
+    throw new A2AV2InitIncompleteError(
+      `a2aV2 not written: ${control.missing}. The ledger and ${input.envFile} are ready; rerun init with what is missing.`,
+      {
+        configWritten: false,
+        envFile: input.envFile,
+        ledger: input.ledger,
+        missing: control.missing,
+      }
+    );
+  }
+  const a2aV2 = a2aV2AllSupervisorsSectionFor({
+    control: control.entry,
+    databaseUrlEnv: input.databaseUrlEnv,
+    identity: input.identity,
+  });
+  const next = { ...input.raw.value, a2aV2, supervisors: input.supervisors };
+  // Validated by the server's own parser before anything is replaced.
+  parseLoopOrchestrationConfig(next);
+  const backupPath = replaceConfig(
+    input.configPath,
+    input.raw,
+    next,
+    input.deps.now()
+  );
+  const controlSupervisor = String(control.entry.supervisorId);
+  input.deps.log(`backup ${backupPath}`);
+  input.deps.log(
+    `a2aV2 written to ${input.configPath}: every configured supervisor is a recipient (no r8 recipient), control principal ${a2aV2.principal} (${controlSupervisor}${input.controlSupervisor ? "" : ", the first supervisor; change with --control <supervisor-id>"}), workflowIdFormat legacy`
+  );
+  const missingGrants = missingA2AV2GrantPairs(
+    input.supervisors,
+    input.raw.value.grants
+  );
+  const pairs = input.supervisors.length * (input.supervisors.length - 1);
+  input.deps.log(
+    missingGrants.length === 0
+      ? `grants: every sender/recipient pair holds ${PAIR_OPERATIONS.join(", ")}`
+      : `grants: ${missingGrants.length} of ${pairs} sender/recipient pairs lack operations V2 needs; init never writes a grant, add each to "grants" (principal is the sender's):`
+  );
+  for (const entry of missingGrants) {
+    input.deps.log(
+      `missing grant: from ${entry.from} to ${entry.to} principal ${entry.principal} operations ${entry.operations.join(", ")}`
+    );
+  }
+  return {
+    backupPath,
+    configWritten: true,
+    controlSupervisor,
+    envFile: input.envFile,
+    ledger: input.ledger,
+    missingGrants,
   };
 };

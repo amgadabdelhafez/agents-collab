@@ -6,7 +6,9 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
@@ -19,6 +21,7 @@ import {
   probeA2AV2Database,
   withA2AV2EnvFile,
 } from "./a2a-v2-env";
+import { matchA2AV2Route } from "./a2a-v2-routes-contract";
 import { readBridgeStatus } from "./bridge-store";
 import {
   BridgeSupervisorMessageDeliveryPort,
@@ -32,12 +35,29 @@ import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "./governess-beat-workflow";
 import { HeadlessClaudeWakePort } from "./headless-claude-wake-port";
 import { spawnHeadless } from "./headless-runner";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
+import { isActiveRunState, readRunManifest } from "./run-state";
 import {
   createSupervisorA2AV2Service,
+  defaultSupervisorA2AV2ServiceDependencies,
   type SupervisorA2AV2Service,
+  type SupervisorA2AV2ServiceDependencies,
 } from "./supervisor-a2a-v2-service";
 import { SupervisorBridgeConsumptionReconciler } from "./supervisor-bridge-consumption";
 import { SupervisorDeadlineDriver } from "./supervisor-deadline-driver";
+import {
+  createSupervisorEndpointLocatorResolver,
+  SUPERVISOR_ENDPOINT_KINDS,
+  SUPERVISOR_ENDPOINT_MANIFEST_FILE,
+  type SupervisorEndpointFs,
+  type SupervisorEndpointLeaseReader,
+  type SupervisorEndpointLeaseStore,
+  type SupervisorEndpointLeaseV2,
+  type SupervisorEndpointLocatorResolver,
+  type SupervisorEndpointRoots,
+  supervisorEndpointLeaseState,
+  supervisorEndpointRef,
+  supervisorEndpointRoots,
+} from "./supervisor-endpoint-lease";
 import { SupervisorMailboxConsumptionReconciler } from "./supervisor-mailbox-consumption";
 import {
   FirstAvailableDeliveryPort,
@@ -62,6 +82,10 @@ import {
   type SupervisorMessageV2WorkflowIdFormat,
   SupervisorMessageV2WorkflowIdFormatError,
 } from "./supervisor-message-v2-delivery-ledger";
+import {
+  SUPERVISOR_ENDPOINT_REASONS,
+  type SupervisorEndpointDeliveryPort,
+} from "./supervisor-message-v2-endpoint-contract";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
   SupervisorControlSurfaceAuthenticator,
@@ -173,7 +197,12 @@ export interface A2AV2Config {
    * retryable attempt. Omitted, the runtime default of 15 minutes.
    */
   readinessOutageBoundMs?: number;
-  recipient: string;
+  /**
+   * r8's single manifest-bound recipient (its bare route, /seats/ peers and
+   * enrollment). r9: optional. With or without it, every configured
+   * supervisor is a recipient through its own ingress and session lease.
+   */
+  recipient?: string;
   resultArtifacts?: GitResultArtifactBinding[];
   /**
    * Name of the environment variable holding the host secret that keys
@@ -239,7 +268,37 @@ interface ServerConfig {
  * route without starting a second Temporal host or publishing a second Bun
  * listener.
  */
+/**
+ * r9: the endpoint lease store (T1) and the per-kind endpoint delivery (T2)
+ * the server composes. Each is optional: without a lease store the session
+ * routes answer 503 `v2-unavailable`; without endpoint delivery a
+ * lease-backed recipient is unready while mailbox-held ones are delivered.
+ */
+export interface A2AV2EndpointFactories {
+  connectLeases?: SupervisorA2AV2ServiceDependencies["connectLeases"];
+  endpointDelivery?(input: {
+    leases: SupervisorEndpointLeaseReader;
+    mailboxes: ReadonlyMap<string, string>;
+    principalForRecipient(recipient: string): string | undefined;
+    /** The server's own resolver: every probe and delivery re-resolves. */
+    resolveLocator: SupervisorEndpointLocatorResolver;
+    sessions: {
+      current(
+        scope: { principal: string; tenantId: string },
+        recipient: string
+      ): Promise<SupervisorSessionDescriptorV2 | undefined>;
+    };
+  }): SupervisorEndpointDeliveryPort;
+}
+
+/** The factories a production server uses; T1 and T2 register here. */
+export const defaultA2AV2EndpointFactories: A2AV2EndpointFactories = {};
+
 export interface LoopOrchestrationServerOptions {
+  /** Test seam: the server's own endpoint roots (default: its home's). */
+  a2aV2EndpointRoots?: SupervisorEndpointRoots;
+  /** r9: replaces `defaultA2AV2EndpointFactories` (a test seam). */
+  a2aV2Endpoints?: A2AV2EndpointFactories;
   a2aV2Service?: SupervisorA2AV2Service;
   /** Test seam: the start-time ledger database probe (decideA2AV2Plane). */
   probeA2AV2Database?: (databaseUrl: string) => Promise<boolean>;
@@ -251,8 +310,15 @@ export interface LoopOrchestrationServerOptions {
 }
 
 export interface LoopOrchestrationFetchHandlerOptions {
+  /**
+   * r9: the configured a2aV2.routePath while V2 is configured but not
+   * mounted (disabled by a fault): its routes answer 503 `v2-unavailable`
+   * instead of reaching V1. V1 is unaffected.
+   */
+  a2aV2DisabledRoutePath?: () => string | undefined;
   a2aV2Service?: Pick<
     SupervisorA2AV2Service,
+    | "allSupervisorsRoute"
     | "httpHandler"
     | "notEnrolledDeferral"
     | "pathname"
@@ -324,6 +390,37 @@ const orchestrationHealth = (
   });
 
 /**
+ * r9: a request for one of the all-supervisor routes, when V2 serves them;
+ * 503 `v2-unavailable` for anything under a configured routePath while V2 is
+ * disabled (V1 unaffected); otherwise undefined.
+ */
+const allSupervisorsResponse = (
+  options: LoopOrchestrationFetchHandlerOptions,
+  request: Request,
+  pathname: string
+): Promise<Response> | undefined => {
+  const route = options.a2aV2Service?.allSupervisorsRoute;
+  if (route && matchA2AV2Route(route.routePath, pathname)) {
+    return route.httpHandler(request);
+  }
+  const disabled = options.a2aV2Service
+    ? undefined
+    : options.a2aV2DisabledRoutePath?.();
+  if (
+    disabled &&
+    (pathname === disabled || pathname.startsWith(`${disabled}/`))
+  ) {
+    return Promise.resolve(
+      Response.json(
+        { error: { code: "v2-unavailable" } },
+        { headers: { "cache-control": "no-store" }, status: 503 }
+      )
+    );
+  }
+  return undefined;
+};
+
+/**
  * The one HTTP mount point for the existing V1 control surface and an
  * explicitly supplied V2 A2A service. It does not construct either host and
  * therefore cannot create a competing worker, listener, or recovery owner.
@@ -340,6 +437,10 @@ export const createLoopOrchestrationFetchHandler = (
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
       return Promise.resolve(orchestrationHealth(options));
+    }
+    const r9 = allSupervisorsResponse(options, request, url.pathname);
+    if (r9) {
+      return r9;
     }
     if (
       options.a2aV2Service &&
@@ -477,6 +578,35 @@ const parsePreviousResultGraphKeyEnvs = (
   return [...(value as string[])];
 };
 
+/**
+ * The control principal must be a configured supervisor's. r9: the recipient
+ * is optional; named, it is r8's manifest-bound seat and must be a Loop
+ * binding, exactly as before.
+ */
+const parseA2AV2Recipient = (
+  value: unknown,
+  principal: string,
+  supervisors: readonly SupervisorConfig[]
+): string | undefined => {
+  const recipient =
+    value === undefined
+      ? undefined
+      : required(value, SUPERVISOR_RE, "orchestration a2aV2 recipient");
+  if (!supervisors.some((supervisor) => supervisor.principal === principal)) {
+    throw new Error("orchestration a2aV2 principal is not configured");
+  }
+  if (recipient === undefined) {
+    return undefined;
+  }
+  if (
+    !supervisors.find((supervisor) => supervisor.supervisorId === recipient)
+      ?.manifestPath
+  ) {
+    throw new Error("orchestration a2aV2 recipient is not a Loop binding");
+  }
+  return recipient;
+};
+
 const parseA2AV2 = (
   value: unknown,
   supervisors: readonly SupervisorConfig[]
@@ -494,7 +624,7 @@ const parseA2AV2 = (
       "endpointRef",
       "policy",
       "principal",
-      "recipient",
+      ...(value.recipient === undefined ? [] : ["recipient"]),
       "routePath",
       "sessionTtlMs",
       "tenant",
@@ -571,20 +701,11 @@ const parseA2AV2 = (
     V2_PRINCIPAL_RE,
     "orchestration a2aV2 principal"
   );
-  const recipient = required(
+  const recipient = parseA2AV2Recipient(
     value.recipient,
-    SUPERVISOR_RE,
-    "orchestration a2aV2 recipient"
+    principal,
+    supervisors
   );
-  const recipientBinding = supervisors.find(
-    (supervisor) => supervisor.supervisorId === recipient
-  );
-  if (!supervisors.some((supervisor) => supervisor.principal === principal)) {
-    throw new Error("orchestration a2aV2 principal is not configured");
-  }
-  if (!recipientBinding?.manifestPath) {
-    throw new Error("orchestration a2aV2 recipient is not a Loop binding");
-  }
   const resultGraphKeyEnv =
     value.resultGraphKeyEnv === undefined
       ? undefined
@@ -651,7 +772,7 @@ const parseA2AV2 = (
             "orchestration a2aV2 readinessOutageBoundMs"
           ),
         }),
-    recipient,
+    ...(recipient === undefined ? {} : { recipient }),
     routePath: requireRoutePath(
       value.routePath,
       "orchestration a2aV2 routePath"
@@ -1019,9 +1140,17 @@ const a2aAuthenticator = (
   },
 });
 
+/** A config naming the one seat an r8 enrollment acts on. */
+type A2AV2SeatConfig = A2AV2Config & { recipient: string };
+
 interface A2AV2EnrollmentInput {
-  config: A2AV2Config;
+  config: A2AV2SeatConfig;
   directory: SupervisorBridgeDirectory;
+  /**
+   * r9: whether the seat has an endpoint lease row. Such a seat is routed by
+   * its lease, so r8's enrollment leaves its descriptor alone.
+   */
+  leaseHeld?(recipient: string): Promise<boolean>;
   now: () => string;
   service: Pick<
     SupervisorA2AV2Service,
@@ -1179,7 +1308,12 @@ export const enrollConfiguredA2AV2Session = async (
  * - `failed`: the attempt failed; the seat is retried after the delay.
  */
 export type A2AV2EnrollmentOutcome =
-  | { recipient: string; state: "deferred" | "enrolled" | "unchanged" }
+  | {
+      recipient: string;
+      /** r9 only: the server released a lease whose run ended, or the lease
+       * row the sweep tracked is gone or released. */
+      state: "deferred" | "enrolled" | "leased" | "released" | "unchanged";
+    }
   | { error: unknown; recipient: string; state: "failed" };
 
 /**
@@ -1210,9 +1344,17 @@ export class ConfiguredA2AV2SessionEnrollment {
   readonly #recipients: readonly string[];
   readonly #retryAt = new Map<string, number>();
 
-  constructor(input: A2AV2EnrollmentInput & { recipients: readonly string[] }) {
+  constructor(
+    input: Omit<A2AV2EnrollmentInput, "config"> & {
+      config: A2AV2Config;
+      recipients: readonly string[];
+    }
+  ) {
     const { recipients, ...enrollment } = input;
-    this.#input = enrollment;
+    this.#input = {
+      ...enrollment,
+      config: { ...enrollment.config, recipient: recipients[0] ?? "" },
+    };
     this.#recipients = recipients;
   }
 
@@ -1242,6 +1384,16 @@ export class ConfiguredA2AV2SessionEnrollment {
     const now = this.#input.now();
     if (Date.parse(now) < (this.#retryAt.get(recipient) ?? 0)) {
       return { recipient, state: "deferred" };
+    }
+    try {
+      if (await this.#input.leaseHeld?.(recipient)) {
+        this.#enrolled.delete(recipient);
+        this.#retryAt.delete(recipient);
+        this.#notEnrolledSince.delete(recipient);
+        return { recipient, state: "leased" };
+      }
+    } catch {
+      // The lease store cannot answer: keep r8's enrollment of the seat.
     }
     const input = {
       ...this.#input,
@@ -1281,23 +1433,342 @@ export class ConfiguredA2AV2SessionEnrollment {
   }
 }
 
+/**
+ * What one sweep pass found about a lease's session.
+ * - `live`: the session is there (its run active, its probe ready).
+ * - `terminal`: the lease's run ended (completed, failed or stopped).
+ * - `unavailable`: the locator no longer resolves, the run's manifest is
+ *   unreadable, or the probe failed. Nothing is renewed: the TTL lapses.
+ * - `unobserved`: the server has no way to observe this kind (no probe is
+ *   wired); it neither renews nor reports it, and the holder renews itself.
+ */
+export type SupervisorEndpointLeaseObservation =
+  | "live"
+  | "terminal"
+  | "unavailable"
+  | "unobserved";
+
+/** A resolved run's manifest: unreadable, ended, or (undefined) active. */
+const runObservation = (
+  runDir: string,
+  readManifest: (
+    path: string
+  ) => { state: Parameters<typeof isActiveRunState>[0] } | undefined
+): "terminal" | "unavailable" | undefined => {
+  const manifest = readManifest(
+    join(runDir, SUPERVISOR_ENDPOINT_MANIFEST_FILE)
+  );
+  if (!manifest) {
+    return "unavailable";
+  }
+  return isActiveRunState(manifest.state) ? undefined : "terminal";
+};
+
+/**
+ * The server's observation of a lease. SECURITY: the stored locator is
+ * untrusted ids, so it is re-resolved here on every pass with the server's
+ * own resolver (realpath containment, manifest binding, loopback-only Codex
+ * URL); a refusal is `unavailable`. The run's state is read from the manifest
+ * the resolver checked; the kind's readiness probe (T2), when wired, decides
+ * liveness.
+ */
+export const createSupervisorEndpointLeaseObserver =
+  (deps: {
+    probe?(lease: SupervisorEndpointLeaseV2): Promise<boolean>;
+    readManifest?(
+      path: string
+    ): { state: Parameters<typeof isActiveRunState>[0] } | undefined;
+    resolveLocator: SupervisorEndpointLocatorResolver;
+  }) =>
+  async (
+    lease: SupervisorEndpointLeaseV2
+  ): Promise<SupervisorEndpointLeaseObservation> => {
+    let resolved: ReturnType<SupervisorEndpointLocatorResolver>;
+    try {
+      resolved = deps.resolveLocator(lease.locator, lease.recipient);
+    } catch {
+      return "unavailable";
+    }
+    const run =
+      resolved.kind === "claude-channel"
+        ? undefined
+        : runObservation(resolved.runDir, deps.readManifest ?? readRunManifest);
+    if (run) {
+      return run;
+    }
+    if (deps.probe) {
+      try {
+        return (await deps.probe(lease)) ? "live" : "unavailable";
+      } catch {
+        return "unavailable";
+      }
+    }
+    return resolved.kind === "claude-channel" ? "unobserved" : "live";
+  };
+
+// A lease pass lists the store at most this often (and at most every quarter
+// TTL), riding the existing reconciliation sweep: no scheduler of its own.
+const LEASE_PASS_MS = 5000;
+
+export interface SupervisorEndpointLeaseEnrollmentInput {
+  leases: Pick<SupervisorEndpointLeaseStore, "list" | "release" | "renew">;
+  log: (line: string) => void;
+  now: () => string;
+  observe(
+    lease: SupervisorEndpointLeaseV2
+  ): Promise<SupervisorEndpointLeaseObservation>;
+  principalForRecipient(recipient: string): string | undefined;
+  sessionTtlMs: number;
+  tenant: string;
+}
+
+/**
+ * r9: the enrollment sweep generalized from r8's configured seats to every
+ * live endpoint lease of this tenant. It owns no timer; the existing
+ * reconciliation sweep calls `maintain()`. For each unreleased lease of a
+ * configured supervisor, in that seat's scope:
+ * - the run ended: the server releases the lease with its stored fence;
+ * - the session is live: the lease is renewed (same fence) once less than
+ *   half of `sessionTtlMs` remains; expiry alone never fences, so an expired
+ *   lease whose session is back is renewed too;
+ * - otherwise nothing is renewed and the TTL lapses; the seat is reported not
+ *   enrolled (since the failure, or since its expiry), so deliveries defer
+ *   within the not-enrolled bound.
+ * A fenced renew or release (a newer claim) is left to the next pass. A row
+ * of an unconfigured supervisor, another tenant or a foreign principal is
+ * never acted on.
+ */
+export class SupervisorEndpointLeaseEnrollment {
+  readonly #input: SupervisorEndpointLeaseEnrollmentInput;
+  readonly #notEnrolledSince = new Map<string, number>();
+  #listFailure: string | undefined;
+  #nextPassAt = 0;
+
+  constructor(input: SupervisorEndpointLeaseEnrollmentInput) {
+    this.#input = input;
+  }
+
+  async maintain(): Promise<A2AV2EnrollmentOutcome[]> {
+    const now = Date.parse(this.#input.now());
+    if (now < this.#nextPassAt) {
+      return [];
+    }
+    this.#nextPassAt =
+      now + Math.min(LEASE_PASS_MS, Math.floor(this.#input.sessionTtlMs / 4));
+    let leases: readonly SupervisorEndpointLeaseV2[];
+    try {
+      leases = await this.#input.leases.list(this.#input.tenant);
+      this.#listFailure = undefined;
+    } catch (error) {
+      const message = failureMessage(error);
+      if (message !== this.#listFailure) {
+        this.#listFailure = message;
+        this.#input.log(
+          `orchestration A2A V2 endpoint lease sweep failed: ${message}`
+        );
+      }
+      return [];
+    }
+    const outcomes: A2AV2EnrollmentOutcome[] = [];
+    const seen = new Set<string>();
+    for (const lease of leases) {
+      const principal = this.#input.principalForRecipient(lease.recipient);
+      if (
+        lease.releasedAt !== null ||
+        lease.tenantId !== this.#input.tenant ||
+        principal === undefined ||
+        lease.principal !== principal ||
+        seen.has(lease.recipient)
+      ) {
+        continue;
+      }
+      seen.add(lease.recipient);
+      outcomes.push(
+        await this.#maintainOne(
+          lease,
+          { principal, tenantId: lease.tenantId },
+          now
+        )
+      );
+    }
+    for (const recipient of [...this.#notEnrolledSince.keys()]) {
+      if (!seen.has(recipient)) {
+        // Its row is gone or released: nothing of this sweep's to report.
+        this.#notEnrolledSince.delete(recipient);
+        outcomes.push({ recipient, state: "released" });
+      }
+    }
+    return outcomes;
+  }
+
+  notEnrolled(): string[] {
+    return [...this.#notEnrolledSince.keys()].sort();
+  }
+
+  notEnrolledSince(recipient: string): number | undefined {
+    return this.#notEnrolledSince.get(recipient);
+  }
+
+  async #maintainOne(
+    lease: SupervisorEndpointLeaseV2,
+    scope: { principal: string; tenantId: string },
+    now: number
+  ): Promise<A2AV2EnrollmentOutcome> {
+    const recipient = lease.recipient;
+    const fence = { epoch: lease.epoch, holderRef: lease.holderRef };
+    let observation: SupervisorEndpointLeaseObservation;
+    try {
+      observation = await this.#input.observe(lease);
+    } catch {
+      observation = "unavailable";
+    }
+    try {
+      if (observation === "terminal") {
+        const released = await this.#input.leases.release({
+          fence,
+          recipient,
+          scope,
+        });
+        if (released.status === "fenced") {
+          return { recipient, state: "deferred" };
+        }
+        this.#notEnrolledSince.delete(recipient);
+        return { recipient, state: "released" };
+      }
+      if (observation === "unobserved") {
+        return supervisorEndpointLeaseState(lease, new Date(now)) === "live"
+          ? { recipient, state: "unchanged" }
+          : this.#failed(lease, now, SUPERVISOR_ENDPOINT_REASONS.leaseExpired);
+      }
+      if (observation === "unavailable") {
+        return this.#failed(
+          lease,
+          now,
+          SUPERVISOR_ENDPOINT_REASONS.probeFailed
+        );
+      }
+      const wasFailing = this.#notEnrolledSince.has(recipient);
+      if (
+        Date.parse(lease.expiresAt) - now >
+        Math.floor(this.#input.sessionTtlMs / 2)
+      ) {
+        this.#notEnrolledSince.delete(recipient);
+        return { recipient, state: wasFailing ? "enrolled" : "unchanged" };
+      }
+      const renewed = await this.#input.leases.renew({
+        fence,
+        recipient,
+        scope,
+        ttlMs: this.#input.sessionTtlMs,
+      });
+      if (renewed.status === "fenced") {
+        return { recipient, state: "deferred" };
+      }
+      if (renewed.status === "locator-refused") {
+        return this.#failed(
+          lease,
+          now,
+          SUPERVISOR_ENDPOINT_REASONS.locatorRefused
+        );
+      }
+      this.#notEnrolledSince.delete(recipient);
+      return { recipient, state: "enrolled" };
+    } catch (error) {
+      return this.#failed(lease, now, failureMessage(error));
+    }
+  }
+
+  #failed(
+    lease: SupervisorEndpointLeaseV2,
+    now: number,
+    reason: string
+  ): A2AV2EnrollmentOutcome {
+    if (!this.#notEnrolledSince.has(lease.recipient)) {
+      const expiresAt = Date.parse(lease.expiresAt);
+      this.#notEnrolledSince.set(
+        lease.recipient,
+        expiresAt <= now ? expiresAt : now
+      );
+    }
+    return {
+      error: new Error(reason),
+      recipient: lease.recipient,
+      state: "failed",
+    };
+  }
+}
+
+const SERVER_JSON_MAX_BYTES = 1024 * 1024;
+
+/**
+ * The filesystem the server's locator resolver touches: realpath, and JSON
+ * read from a regular file only (no symlink, no FIFO or device: opened
+ * non-blocking and checked before any read), bounded in size.
+ */
+export const serverSupervisorEndpointFs: SupervisorEndpointFs = {
+  readJson(path) {
+    const descriptor = openSync(
+      path,
+      // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags require bitwise composition.
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
+    try {
+      const stat = fstatSync(descriptor);
+      if (!stat.isFile() || stat.size > SERVER_JSON_MAX_BYTES) {
+        throw new Error("endpoint file is not a regular file");
+      }
+      return JSON.parse(readFileSync(descriptor, "utf8"));
+    } finally {
+      closeSync(descriptor);
+    }
+  },
+  realpath: (path) => realpathSync(path),
+};
+
+const LEASE_ENDPOINT_REFS: readonly string[] = SUPERVISOR_ENDPOINT_KINDS.map(
+  (kind) => supervisorEndpointRef(kind)
+);
+
+/**
+ * The rebind rule. r8: a configured seat's descriptor in the control
+ * principal's scope, same provider, the configured endpointRef. r9 (with
+ * `principalForRecipient`): a lease-backed descriptor in the SEAT's own scope
+ * {tenant, principalFor(recipient)}, from one `endpoint:<kind>` to another;
+ * the provider may change with the kind (a claim's lease moves the seat).
+ */
 export const configuredA2AV2RebindAuthority = (
   config: A2AV2Config,
-  recipients: readonly string[] = [config.recipient]
+  recipients: readonly string[] = config.recipient ? [config.recipient] : [],
+  principalForRecipient?: (recipient: string) => string | undefined
 ) => ({
   decide(input: {
     current: SupervisorSessionDescriptorV2;
     next: SupervisorSessionDescriptorV2;
     trustedScope: { principal: string; tenantId: string };
   }) {
-    const allowed =
-      input.trustedScope.principal === config.principal &&
+    const sameDescriptor =
       input.trustedScope.tenantId === config.tenant &&
-      recipients.includes(input.current.recipient) &&
       input.next.recipient === input.current.recipient &&
-      input.current.descriptorId === input.next.descriptorId &&
-      input.next.provider === input.current.provider &&
-      input.next.endpointRef === config.endpointRef;
+      input.current.descriptorId === input.next.descriptorId;
+    const seatPrincipal = principalForRecipient?.(input.current.recipient);
+    const allowed =
+      sameDescriptor &&
+      ((input.trustedScope.principal === config.principal &&
+        recipients.includes(input.current.recipient) &&
+        // A lease-backed descriptor is never rebound back to r8's endpoint.
+        !LEASE_ENDPOINT_REFS.includes(input.current.endpointRef) &&
+        input.next.provider === input.current.provider &&
+        input.next.endpointRef === config.endpointRef) ||
+        (seatPrincipal !== undefined &&
+          input.trustedScope.principal === seatPrincipal &&
+          // Defense in depth: the store reads `current` by trustedScope, so
+          // this holds in practice; a foreign or corrupt row is still refused.
+          input.current.principal === seatPrincipal &&
+          input.next.principal === seatPrincipal &&
+          // A claim may take over r8's descriptor of the same seat scope.
+          (LEASE_ENDPOINT_REFS.includes(input.current.endpointRef) ||
+            input.current.endpointRef === config.endpointRef) &&
+          LEASE_ENDPOINT_REFS.includes(input.next.endpointRef)));
     return {
       allowed,
       authorityRef: allowed
@@ -1356,6 +1827,15 @@ export const createOrchestrationSweep = (input: {
         reportedFailures.delete(outcome.recipient);
         input.log(
           `orchestration A2A V2 session enrollment recovered for ${outcome.recipient}`
+        );
+      } else if (outcome.state === "leased") {
+        // r8's enrollment handed the seat to its lease; the lease sweep
+        // reports it from now on.
+        reportedFailures.delete(outcome.recipient);
+      } else if (outcome.state === "released") {
+        reportedFailures.delete(outcome.recipient);
+        input.log(
+          `orchestration A2A V2 endpoint lease released for ${outcome.recipient}`
         );
       }
     }
@@ -1418,11 +1898,13 @@ const createDefaultRuntimeHost = async (input: {
   configPath: string;
   connection: Connection;
   directory: LoopSupervisorDirectory;
+  endpointRoots: SupervisorEndpointRoots;
+  endpoints: A2AV2EndpointFactories;
   env: NodeJS.ProcessEnv;
   mailboxes: ReadonlyMap<string, string>;
   nativeConnection: NativeConnection;
 }): Promise<{
-  a2aV2Enrollment?: ConfiguredA2AV2SessionEnrollment;
+  a2aV2Enrollment?: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">;
   a2aV2Service: SupervisorA2AV2Service | undefined;
   /** Why a configured V2 plane did not start; V1 runs alone. */
   a2aV2StartFailure?: string;
@@ -1480,33 +1962,97 @@ const createDefaultRuntimeHost = async (input: {
     }
     const controlAuthenticator = authenticator(input.config, input.env);
     const resultGraphKeys = resolveResultGraphKeys(a2aConfig, input.env);
-    const recipientBinding = input.config.supervisors.find(
-      (entry) => entry.supervisorId === a2aConfig.recipient
-    );
-    let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+    const supervisors = input.config.supervisors;
+    const principalForRecipient = (recipient: string) =>
+      supervisors.find((entry) => entry.supervisorId === recipient)?.principal;
+    // r8: the one manifest-bound recipient and the seats sharing its run.
+    const recipient = a2aConfig.recipient;
+    const recipientBinding = recipient
+      ? supervisors.find((entry) => entry.supervisorId === recipient)
+      : undefined;
+    const legacyPeers = recipient
+      ? supervisors.filter(
+          (entry) =>
+            entry.seat &&
+            entry.supervisorId !== recipient &&
+            entry.manifestPath === recipientBinding?.manifestPath
+        )
+      : [];
+    const legacySeats = recipient
+      ? [recipient, ...legacyPeers.map((entry) => entry.supervisorId)]
+      : [];
+    // Without an r8 recipient the primary ingress (recovery only) is the
+    // control principal's supervisor; its bare route is not served.
+    const primarySupervisorId =
+      recipient ??
+      (
+        supervisors.find((entry) => entry.principal === a2aConfig.principal) ??
+        supervisors[0]
+      )?.supervisorId ??
+      "";
+    // r9: the server's own roots and filesystem. A locator is untrusted ids
+    // and never names a path or URL; this resolver derives them.
+    const resolveLocator = createSupervisorEndpointLocatorResolver({
+      fs: serverSupervisorEndpointFs,
+      roots: input.endpointRoots,
+    });
+    const factories = input.endpoints;
+    const connectLeases = factories.connectLeases;
+    const endpointDelivery = factories.endpointDelivery;
+    let r8Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+    let leaseEnrollment: SupervisorEndpointLeaseEnrollment | undefined;
     let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
     const a2aV2Service = await createSupervisorA2AV2Service({
+      allSupervisors: {
+        authenticator: controlAuthenticator,
+        ...(endpointDelivery
+          ? {
+              endpointDelivery: ({ leases, sessions }) =>
+                endpointDelivery({
+                  leases,
+                  mailboxes: input.mailboxes,
+                  principalForRecipient,
+                  resolveLocator,
+                  sessions,
+                }),
+            }
+          : {}),
+        hasMailbox: (id) => input.mailboxes.has(id),
+        legacySeats,
+        log: (line) => console.error(line),
+        mayReceive: (request) =>
+          input.config.grants.some(
+            (grant) =>
+              grant.principal === request.principal &&
+              grant.from === request.from &&
+              grant.to === request.to &&
+              grant.operations.includes("receive")
+          ),
+        principalForRecipient,
+        resolveLocator,
+        routePath: a2aConfig.routePath,
+        sessionTtlMs: a2aConfig.sessionTtlMs,
+        supervisorIds: supervisors.map((entry) => entry.supervisorId),
+      },
       card: {
         description:
           "Authenticated Loop supervisor A2A V2 ingress. Provider acceptance is distinct from recipient consumption.",
-        supervisorId: a2aConfig.recipient,
+        supervisorId: primarySupervisorId,
         url: `http://${input.config.hostname}:${input.config.port}${a2aConfig.routePath}`,
       },
       databaseUrl,
-      peerRoutes: input.config.supervisors
-        .filter(
-          (entry) =>
-            entry.seat &&
-            entry.supervisorId !== a2aConfig.recipient &&
-            entry.manifestPath ===
-              input.config.supervisors.find(
-                (recipient) => recipient.supervisorId === a2aConfig.recipient
-              )?.manifestPath
-        )
-        .map((entry) => ({
-          pathname: `${a2aConfig.routePath}/seats/${entry.seat}`,
-          supervisorId: entry.supervisorId,
-        })),
+      ...(connectLeases
+        ? {
+            dependencies: {
+              ...defaultSupervisorA2AV2ServiceDependencies,
+              connectLeases,
+            },
+          }
+        : {}),
+      peerRoutes: legacyPeers.map((entry) => ({
+        pathname: `${a2aConfig.routePath}/seats/${entry.seat}`,
+        supervisorId: entry.supervisorId,
+      })),
       assignmentRoute: {
         pathname: `${a2aConfig.routePath}/assignment`,
         principal: a2aConfig.principal,
@@ -1534,12 +2080,19 @@ const createDefaultRuntimeHost = async (input: {
       readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
       workflowIdFormat: a2aConfig.workflowIdFormat,
       notEnrolledBoundMs: a2aConfig.notEnrolledBoundMs,
-      // Read lazily: the enrollment exists once enrollSessions has run, which
+      // Read lazily: the enrollments exist once enrollSessions has run, which
       // is before the host's first recovery sweep delivers anything.
       recipientEnrollment: {
-        notEnrolled: () => a2aV2Enrollment?.notEnrolled() ?? [],
-        notEnrolledSince: (recipient) =>
-          a2aV2Enrollment?.notEnrolledSince(recipient),
+        notEnrolled: () =>
+          [
+            ...new Set([
+              ...(r8Enrollment?.notEnrolled() ?? []),
+              ...(leaseEnrollment?.notEnrolled() ?? []),
+            ]),
+          ].sort(),
+        notEnrolledSince: (id) =>
+          r8Enrollment?.notEnrolledSince(id) ??
+          leaseEnrollment?.notEnrolledSince(id),
       },
       // Enroll before the host's first recovery sweep checks readiness for
       // pending deliveries: a descriptor that expired, or a seat that restarted,
@@ -1547,28 +2100,60 @@ const createDefaultRuntimeHost = async (input: {
       // refusing start on every restart. No seat's failure refuses start
       // (fix8), the configured recipient's included: each failed seat is
       // reported as not enrolled and retried by the sweep, which afterwards
-      // keeps every seat current.
+      // keeps every seat current. r9: the same pass, and the same sweep, keep
+      // every live endpoint lease current.
       enrollSessions: async (sessions) => {
-        a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
-          config: a2aConfig,
-          directory: input.directory,
-          now: () => new Date().toISOString(),
-          recipients: [
-            a2aConfig.recipient,
-            ...input.config.supervisors
-              .filter(
-                (peer) =>
-                  peer.seat &&
-                  peer.supervisorId !== a2aConfig.recipient &&
-                  peer.manifestPath === recipientBinding?.manifestPath
-              )
-              .map((peer) => peer.supervisorId),
-          ],
-          service: sessions,
-        });
+        const leases = sessions.endpointLeases;
+        if (recipient) {
+          r8Enrollment = new ConfiguredA2AV2SessionEnrollment({
+            config: a2aConfig,
+            directory: input.directory,
+            ...(leases
+              ? {
+                  leaseHeld: async (id: string) =>
+                    (await leases.resolve(a2aConfig.tenant, id)).state !==
+                    "none",
+                }
+              : {}),
+            now: () => new Date().toISOString(),
+            recipients: legacySeats,
+            service: sessions,
+          });
+        }
+        if (leases) {
+          const readiness = sessions.endpointReadiness;
+          leaseEnrollment = new SupervisorEndpointLeaseEnrollment({
+            leases,
+            log: (line) => console.error(line),
+            now: () => new Date().toISOString(),
+            observe: createSupervisorEndpointLeaseObserver({
+              ...(readiness
+                ? {
+                    probe: async (lease: SupervisorEndpointLeaseV2) =>
+                      (
+                        await readiness.readiness(
+                          {
+                            principal: lease.principal,
+                            tenantId: lease.tenantId,
+                          },
+                          lease.recipient
+                        )
+                      ).state === "endpoint-ready",
+                  }
+                : {}),
+              resolveLocator,
+            }),
+            principalForRecipient,
+            sessionTtlMs: a2aConfig.sessionTtlMs,
+            tenant: a2aConfig.tenant,
+          });
+        }
         // maintain() reports every seat's failure as an outcome; the sweep
         // logs and retries it.
-        a2aV2StartOutcomes = await a2aV2Enrollment.maintain();
+        a2aV2StartOutcomes = [
+          ...((await r8Enrollment?.maintain()) ?? []),
+          ...((await leaseEnrollment?.maintain()) ?? []),
+        ];
       },
       host: hostOptions,
       messageAuthority: {
@@ -1599,36 +2184,39 @@ const createDefaultRuntimeHost = async (input: {
       }),
       rebindAuthority: configuredA2AV2RebindAuthority(
         a2aConfig,
-        input.config.supervisors
-          .filter(
-            (entry) =>
-              entry.supervisorId === a2aConfig.recipient ||
-              (entry.seat &&
-                entry.manifestPath ===
-                  input.config.supervisors.find(
-                    (recipient) =>
-                      recipient.supervisorId === a2aConfig.recipient
-                  )?.manifestPath)
-          )
-          .map((entry) => entry.supervisorId)
+        legacySeats,
+        principalForRecipient
       ),
       recipientRoute: {
         authenticator: controlAuthenticator,
         pathname: `${a2aConfig.routePath}/recipient`,
-        principalForRecipient: (recipient) =>
-          input.config.supervisors.find(
-            (entry) => entry.supervisorId === recipient
-          )?.principal,
+        principalForRecipient,
       },
       route: {
         authenticator: a2aAuthenticator(controlAuthenticator, a2aConfig),
+        mounted: recipient !== undefined,
         pathname: a2aConfig.routePath,
         tenant: a2aConfig.tenant,
       },
-      supervisorId: a2aConfig.recipient,
+      supervisorId: primarySupervisorId,
     });
+    const enrollments = [r8Enrollment, leaseEnrollment].filter(
+      (entry) => entry !== undefined
+    );
     return {
-      a2aV2Enrollment,
+      ...(enrollments.length > 0
+        ? {
+            a2aV2Enrollment: {
+              maintain: async () => {
+                const outcomes: A2AV2EnrollmentOutcome[] = [];
+                for (const enrollment of enrollments) {
+                  outcomes.push(...(await enrollment.maintain()));
+                }
+                return outcomes;
+              },
+            },
+          }
+        : {}),
       a2aV2Service,
       a2aV2StartOutcomes,
       host: a2aV2Service.host,
@@ -1962,6 +2550,8 @@ const startConfiguration = async (
 ): Promise<{
   env: NodeJS.ProcessEnv;
   plane: { config: ServerConfig } & A2AV2PlaneStatus;
+  /** The configured a2aV2.routePath, when the section parsed. */
+  routePath?: string;
 }> => {
   // The secrets `a2a-v2 init` wrote next to the config, under whatever the
   // process environment already sets. A refused file is not read.
@@ -1975,6 +2565,7 @@ const startConfiguration = async (
   }
   return {
     env: loaded.env,
+    ...(parsed.a2aV2 ? { routePath: parsed.a2aV2.routePath } : {}),
     plane: await decideA2AV2Plane({
       config: parsed,
       configPath,
@@ -2012,7 +2603,9 @@ export const runLoopOrchestrationServer = async (
   let deadlineTimer: ReturnType<typeof setInterval> | undefined;
   let wakeTimer: ReturnType<typeof setInterval> | undefined;
   let a2aV2Service = options.a2aV2Service;
-  let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+  let a2aV2Enrollment:
+    | Pick<ConfiguredA2AV2SessionEnrollment, "maintain">
+    | undefined;
   let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let reconciliationHealthy = false;
@@ -2030,6 +2623,9 @@ export const runLoopOrchestrationServer = async (
         configPath,
         connection,
         directory,
+        endpointRoots:
+          options.a2aV2EndpointRoots ?? supervisorEndpointRoots(homedir()),
+        endpoints: options.a2aV2Endpoints ?? defaultA2AV2EndpointFactories,
         env,
         mailboxes,
         nativeConnection,
@@ -2165,6 +2761,9 @@ export const runLoopOrchestrationServer = async (
       });
     }, 250);
     const handler = createLoopOrchestrationFetchHandler({
+      // A configured plane that is disabled answers 503 on its own routes.
+      a2aV2DisabledRoutePath: () =>
+        plane.state === "disabled" ? start.routePath : undefined,
       a2aV2Service,
       a2aV2State: () => ({
         state: plane.state,

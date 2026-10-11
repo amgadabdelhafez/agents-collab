@@ -22,6 +22,7 @@ import {
   type A2AV2InitDeps,
   A2AV2InitIncompleteError,
   backupStamp,
+  missingA2AV2GrantPairs,
   runA2AV2Init,
 } from "../../src/loop/a2a-v2-init";
 import { parseLoopOrchestrationConfig } from "../../src/loop/loop-orchestration-server";
@@ -178,12 +179,12 @@ const noSecretIn = (text: string) => {
 };
 
 describe("a2a-v2 init", () => {
-  test("live-shaped config with no Loop binding: provisions the ledger and the 0600 env file, writes no section, and says what is missing", async () => {
+  test("r8 (--recipient) with no Loop binding: provisions the ledger and the 0600 env file, writes no section, and says what is missing", async () => {
     const f = fixture();
     const { calls, deps, logs } = fakeDeps();
     try {
       const failure = await runA2AV2Init(
-        { configPath: f.configPath },
+        { configPath: f.configPath, recipient: "supervisor:harness" },
         deps
       ).then(
         () => undefined,
@@ -191,7 +192,7 @@ describe("a2a-v2 init", () => {
       );
       expect(failure).toBeInstanceOf(A2AV2InitIncompleteError);
       expect(String(failure)).toContain(
-        "no configured supervisor has one; pass --manifest <supervisor-id>="
+        "supervisor:harness has none; pass --manifest <supervisor-id>="
       );
       expect(String(failure)).toContain(
         "mailbox-only: supervisor:harness, supervisor:harvto, supervisor:ai-cur"
@@ -253,6 +254,239 @@ describe("a2a-v2 init", () => {
     } finally {
       f.remove();
     }
+  });
+
+  test("r9, no --manifest and no --recipient: writes a section with no recipient under the first supervisor's principal, and lists every missing grant pair without writing one", async () => {
+    const f = fixture();
+    const { calls, deps, logs } = fakeDeps();
+    try {
+      const result = await runA2AV2Init({ configPath: f.configPath }, deps);
+      const backupPath = `${f.configPath}.bak-${backupStamp(NOW)}`;
+      // The one grant (harness -> harvto: receive, cancel) covers receive
+      // only; every other ordered pair lacks all three operations.
+      const all = ["acknowledge", "claim", "receive"];
+      const missingGrants = [
+        { from: "harness", operations: ["acknowledge", "claim"], to: "harvto" },
+        { from: "harness", operations: all, to: "ai-cur" },
+        { from: "harvto", operations: all, to: "harness" },
+        { from: "harvto", operations: all, to: "ai-cur" },
+        { from: "ai-cur", operations: all, to: "harness" },
+        { from: "ai-cur", operations: all, to: "harvto" },
+      ].map((pair) => ({
+        from: `supervisor:${pair.from}`,
+        operations: pair.operations,
+        principal: `principal:${pair.from}`,
+        to: `supervisor:${pair.to}`,
+      }));
+      expect(result).toEqual({
+        backupPath,
+        configWritten: true,
+        controlSupervisor: "supervisor:harness",
+        envFile: f.envFile,
+        ledger: "provisioned",
+        missingGrants,
+      });
+      expect(calls.some((call) => call.args[0] === "run")).toBe(true);
+      expect(readFileSync(backupPath, "utf8")).toBe(f.original);
+      expect(mode(f.configPath)).toBe(0o600);
+      const written = readFileSync(f.configPath, "utf8");
+      noSecretIn(written);
+      noSecretIn(logs.join("\n"));
+      const parsed = parseLoopOrchestrationConfig(JSON.parse(written));
+      expect(parsed.a2aV2).toEqual({
+        databaseUrlEnv: "LOOP_A2A_V2_DATABASE_URL",
+        endpointRef: "endpoint:loop-run",
+        policy: {
+          claimTimeoutMs: 300_000,
+          escalationTimeoutMs: 900_000,
+          maxDeliveryAttempts: 5,
+          retryDelayMs: 30_000,
+        },
+        principal: "principal:harness",
+        resultArtifacts: undefined,
+        resultGraphKeyEnv: "LOOP_A2A_V2_RESULT_GRAPH_KEY",
+        routePath: "/a2a/v2",
+        sessionTtlMs: 3_600_000,
+        tenant: "tenant:loop-orchestration-sweetmac14",
+        workflowIdFormat: "legacy",
+      });
+      expect(JSON.parse(written).a2aV2).not.toHaveProperty("recipient");
+      // Grants and supervisors are exactly as they were: nothing invented.
+      const before = JSON.parse(f.original);
+      const after = JSON.parse(written);
+      expect(after.grants).toEqual(before.grants);
+      expect(after.supervisors).toEqual(before.supervisors);
+      expect(logs).toContain(
+        `a2aV2 written to ${f.configPath}: every configured supervisor is a recipient (no r8 recipient), control principal principal:harness (supervisor:harness, the first supervisor; change with --control <supervisor-id>), workflowIdFormat legacy`
+      );
+      expect(logs).toContain(
+        'grants: 6 of 6 sender/recipient pairs lack operations V2 needs; init never writes a grant, add each to "grants" (principal is the sender\'s):'
+      );
+      expect(logs).toContain(
+        "missing grant: from supervisor:harness to supervisor:harvto principal principal:harness operations acknowledge, claim"
+      );
+      expect(
+        logs.filter((line) => line.startsWith("missing grant: "))
+      ).toHaveLength(6);
+      // A second run is idempotent: the section is the operator's now.
+      const again = await runA2AV2Init(
+        { configPath: f.configPath },
+        fakeDeps({ container: { label: "1", running: true }, volume: true })
+          .deps
+      );
+      expect(again.ledger).toBe("existing-config");
+      expect(readFileSync(f.configPath, "utf8")).toBe(written);
+    } finally {
+      f.remove();
+    }
+  });
+
+  test("r9 --control names the control principal; an unknown one, or one with no principal:<name>, writes nothing; --control beside --manifest is refused", async () => {
+    const chosen = fixture();
+    try {
+      const { deps, logs } = fakeDeps();
+      const result = await runA2AV2Init(
+        {
+          configPath: chosen.configPath,
+          controlSupervisor: "supervisor:harvto",
+        },
+        deps
+      );
+      expect(result.controlSupervisor).toBe("supervisor:harvto");
+      const parsed = parseLoopOrchestrationConfig(
+        JSON.parse(readFileSync(chosen.configPath, "utf8"))
+      );
+      expect(parsed.a2aV2?.principal).toBe("principal:harvto");
+      expect(parsed.a2aV2?.recipient).toBeUndefined();
+      expect(logs).toContain(
+        `a2aV2 written to ${chosen.configPath}: every configured supervisor is a recipient (no r8 recipient), control principal principal:harvto (supervisor:harvto), workflowIdFormat legacy`
+      );
+    } finally {
+      chosen.remove();
+    }
+    const unknown = fixture();
+    try {
+      const failure = await runA2AV2Init(
+        {
+          configPath: unknown.configPath,
+          controlSupervisor: "supervisor:nobody",
+        },
+        fakeDeps().deps
+      ).then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect(failure).toBeInstanceOf(A2AV2InitIncompleteError);
+      expect(String(failure)).toContain(
+        "--control supervisor:nobody is not a configured supervisor"
+      );
+      expect(readFileSync(unknown.configPath, "utf8")).toBe(unknown.original);
+      expect(backups(unknown.root)).toEqual([]);
+    } finally {
+      unknown.remove();
+    }
+    const unshaped = fixture();
+    try {
+      const value = JSON.parse(unshaped.original);
+      value.supervisors[0].principal = "harness-legacy";
+      const original = `${JSON.stringify(value, null, 2)}\n`;
+      writeFileSync(unshaped.configPath, original, { mode: 0o600 });
+      const failure = await runA2AV2Init(
+        { configPath: unshaped.configPath },
+        fakeDeps().deps
+      ).then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect(failure).toBeInstanceOf(A2AV2InitIncompleteError);
+      expect(String(failure)).toContain(
+        "the control principal harness-legacy (supervisor:harness) is not of the form principal:<name>"
+      );
+      expect(readFileSync(unshaped.configPath, "utf8")).toBe(original);
+    } finally {
+      unshaped.remove();
+    }
+    const mixed = fixture();
+    try {
+      await expect(
+        runA2AV2Init(
+          {
+            configPath: mixed.configPath,
+            controlSupervisor: "supervisor:harvto",
+            manifests: { "supervisor:harness": mixed.manifestPath },
+          },
+          fakeDeps().deps
+        )
+      ).rejects.toThrow(
+        "--control applies only without --manifest and --recipient"
+      );
+      expect(readFileSync(mixed.configPath, "utf8")).toBe(mixed.original);
+    } finally {
+      mixed.remove();
+    }
+  });
+
+  test("missing grant pairs count only a grant of the exact pair under the sender's principal", () => {
+    const supervisors = [
+      { principal: "principal:a", supervisorId: "supervisor:a" },
+      { principal: "principal:b", supervisorId: "supervisor:b" },
+    ];
+    const full = (from: string, to: string, principal: string) => ({
+      from,
+      operations: ["acknowledge", "claim", "receive"],
+      principal,
+      to,
+    });
+    expect(
+      missingA2AV2GrantPairs(supervisors, [
+        full("supervisor:a", "supervisor:b", "principal:a"),
+        full("supervisor:b", "supervisor:a", "principal:b"),
+      ])
+    ).toEqual([]);
+    // The recipient's principal, a reversed pair, or a self-grant covers nothing.
+    expect(
+      missingA2AV2GrantPairs(supervisors, [
+        full("supervisor:a", "supervisor:b", "principal:b"),
+        full("supervisor:b", "supervisor:a", "principal:a"),
+        full("supervisor:a", "supervisor:a", "principal:a"),
+      ])
+    ).toEqual([
+      {
+        from: "supervisor:a",
+        operations: ["acknowledge", "claim", "receive"],
+        principal: "principal:a",
+        to: "supervisor:b",
+      },
+      {
+        from: "supervisor:b",
+        operations: ["acknowledge", "claim", "receive"],
+        principal: "principal:b",
+        to: "supervisor:a",
+      },
+    ]);
+    // Operations are pooled across the pair's grants.
+    expect(
+      missingA2AV2GrantPairs(
+        supervisors.slice(0, 1).concat(supervisors[1] ?? []),
+        [
+          {
+            ...full("supervisor:a", "supervisor:b", "principal:a"),
+            operations: ["receive"],
+          },
+          {
+            ...full("supervisor:a", "supervisor:b", "principal:a"),
+            operations: ["claim", "acknowledge"],
+          },
+        ]
+      )
+    ).toEqual([
+      {
+        from: "supervisor:b",
+        operations: ["acknowledge", "claim", "receive"],
+        principal: "principal:b",
+        to: "supervisor:a",
+      },
+    ]);
   });
 
   test("with a Loop binding: backs up the original (0600), atomically replaces it with a validated config holding a legacy-format a2aV2 section, and never writes a secret into it", async () => {
@@ -359,9 +593,10 @@ describe("a2a-v2 init", () => {
     const f = fixture();
     const first = fakeDeps();
     try {
-      await runA2AV2Init({ configPath: f.configPath }, first.deps).catch(
-        () => undefined
-      );
+      await runA2AV2Init(
+        { configPath: f.configPath, recipient: "supervisor:harness" },
+        first.deps
+      ).catch(() => undefined);
       const env = parseA2AV2EnvFile(readFileSync(f.envFile, "utf8"));
       first.state.container = { label: "1", running: false };
       // The stopped container's bind mount needs its secret file back.
@@ -409,7 +644,7 @@ describe("a2a-v2 init", () => {
     });
     try {
       const failure = await runA2AV2Init(
-        { configPath: f.configPath },
+        { configPath: f.configPath, recipient: "supervisor:harness" },
         deps
       ).then(
         () => undefined,
@@ -600,6 +835,8 @@ describe("a2a-v2 init", () => {
           "supervisor:b=/runs/2/manifest.json",
           "--recipient",
           "supervisor:a",
+          "--control",
+          "supervisor:b",
           "--ledger-name",
           "ledger-x",
           "--ledger-port",
@@ -611,6 +848,7 @@ describe("a2a-v2 init", () => {
       command: "a2a-v2-init",
       configPath: "/cwd/config.json",
       containerName: "ledger-x",
+      controlSupervisor: "supervisor:b",
       ledgerPort: 55_433,
       manifests: {
         "supervisor:a": "/runs/1/manifest.json",
@@ -622,6 +860,17 @@ describe("a2a-v2 init", () => {
       ["orchestration", "a2a-v2", "init"],
       ["orchestration", "a2a-v2", "setup", "c.json"],
       ["orchestration", "a2a-v2", "init", "c.json", "--recipient"],
+      ["orchestration", "a2a-v2", "init", "c.json", "--control"],
+      [
+        "orchestration",
+        "a2a-v2",
+        "init",
+        "c.json",
+        "--control",
+        "a",
+        "--control",
+        "b",
+      ],
       ["orchestration", "a2a-v2", "init", "c.json", "--bogus", "x"],
       ["orchestration", "a2a-v2", "init", "c.json", "--manifest", "noequals"],
       [

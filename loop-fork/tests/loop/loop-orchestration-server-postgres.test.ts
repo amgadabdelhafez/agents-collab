@@ -51,7 +51,13 @@ afterAll(async () => {
 const START = Date.parse("2026-10-05T00:00:00.000Z");
 const at = (offsetMs: number) => () => new Date(START + offsetMs).toISOString();
 
-const a2aConfig = (tenant: string): A2AV2Config => ({
+/**
+ * r9 made `A2AV2Config.recipient` optional (every configured supervisor is a
+ * recipient). These tests drive one seat, so their config always names it.
+ */
+type A2AV2SeatTestConfig = A2AV2Config & { recipient: string };
+
+const a2aConfig = (tenant: string): A2AV2SeatTestConfig => ({
   databaseUrlEnv: "LOOP_TEST_A2A_DATABASE_URL",
   endpointRef: "endpoint:codex-app-server",
   policy: {
@@ -527,7 +533,7 @@ const compositionFixture = (input: {
 };
 
 const sessionDescriptor = (
-  config: A2AV2Config,
+  config: A2AV2SeatTestConfig,
   input: { expiresAt: string; issuedAt: string; thread: string }
 ): SupervisorSessionDescriptorV2 => ({
   descriptorId: deriveSupervisorSessionDescriptorV2Id(

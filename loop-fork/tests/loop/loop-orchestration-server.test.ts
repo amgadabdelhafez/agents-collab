@@ -621,7 +621,7 @@ test("unauthenticated /healthz names no seat or recipient while seats are not en
   });
 });
 
-const a2aConfig = (): A2AV2Config => ({
+const a2aConfig = (): A2AV2Config & { recipient: string } => ({
   databaseUrlEnv: "LOOP_A2A_DATABASE_URL",
   endpointRef: "endpoint:codex-app-server",
   policy: {

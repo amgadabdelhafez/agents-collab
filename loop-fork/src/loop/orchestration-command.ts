@@ -10,7 +10,7 @@ const RELEASE_COMMAND = "v2-quarantine-release";
 const LIST_COMMAND = "v2-quarantine-list";
 const A2A_V2_COMMAND = "a2a-v2";
 const A2A_V2_INIT_USAGE =
-  "loop orchestration a2a-v2 init <config-path> [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]... [--ledger-name <name>] [--ledger-port <port>] [--database-url-env <NAME>]";
+  "loop orchestration a2a-v2 init <config-path> [--control <supervisor-id>] [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]... [--ledger-name <name>] [--ledger-port <port>] [--database-url-env <NAME>]";
 const USAGE = [
   "Usage: loop orchestration serve <config-path>",
   A2A_V2_INIT_USAGE,
@@ -42,6 +42,8 @@ export type OrchestrationCommandRequest =
       command: "a2a-v2-init";
       configPath: string;
       containerName?: string;
+      /** r9 (no --manifest, no --recipient): the control principal's supervisor. */
+      controlSupervisor?: string;
       databaseUrlEnv?: string;
       ledgerPort?: number;
       manifests: Record<string, string>;
@@ -49,6 +51,7 @@ export type OrchestrationCommandRequest =
     };
 
 const INIT_VALUE_FLAGS = new Set([
+  "--control",
   "--database-url-env",
   "--ledger-name",
   "--ledger-port",
@@ -101,6 +104,7 @@ const initRequest = (
     command: "a2a-v2-init",
     configPath,
     ...named("--ledger-name", "containerName"),
+    ...named("--control", "controlSupervisor"),
     ...named("--database-url-env", "databaseUrlEnv"),
     ...(port === undefined ? {} : { ledgerPort: Number(port) }),
     manifests,
