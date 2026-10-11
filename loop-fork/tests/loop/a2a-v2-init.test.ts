@@ -104,7 +104,7 @@ interface DockerCall {
 /** A Docker that remembers one container and volume. */
 const fakeDeps = (
   state: {
-    container?: { label: string; running: boolean };
+    container?: { label: string; passwordInEnv?: boolean; running: boolean };
     volume?: boolean;
     probeOk?: boolean;
   } = {}
@@ -117,12 +117,13 @@ const fakeDeps = (
       calls.push({ args: [...args], ...(env ? { env } : {}) });
       const [command] = args;
       if (command === "container") {
+        // The real template prints running|label|password-in-env marks.
         return Promise.resolve(
           state.container
             ? {
                 code: 0,
                 stderr: "",
-                stdout: `${state.container.running} ${state.container.label}`,
+                stdout: `${state.container.running}|${state.container.label}|${state.container.passwordInEnv ? "password-in-env" : ""}`,
               }
             : { code: 1, stderr: "No such container", stdout: "" }
         );
@@ -215,21 +216,28 @@ describe("a2a-v2 init", () => {
         "unless-stopped",
         "--volume",
         "loop-a2a-ledger-data:/var/lib/postgresql/data",
+        "--mount",
+        `type=bind,source=${f.root}/loop-a2a-ledger.password,target=/run/secrets/loop-a2a-ledger-password,readonly`,
         "--publish",
         "127.0.0.1:55432:5432",
         "--env",
-        "POSTGRES_PASSWORD",
+        "POSTGRES_PASSWORD_FILE=/run/secrets/loop-a2a-ledger-password",
         "--env",
         "POSTGRES_USER=loop",
         "--env",
         "POSTGRES_DB=loop_a2a",
         expect.stringMatching(/^postgres:17-alpine@sha256:/),
       ]);
-      // The password reaches Docker only through the child environment.
-      expect(run?.env).toEqual({ POSTGRES_PASSWORD: PASSWORD });
+      // The password reaches the container only through the read-only
+      // secret file: never argv, never an environment (Docker's or the
+      // container's), so `docker inspect` cannot show it.
       for (const call of calls) {
+        expect(call.env).toBeUndefined();
         noSecretIn(call.args.join(" "));
       }
+      const passwordFile = join(f.root, "loop-a2a-ledger.password");
+      expect(mode(passwordFile)).toBe(0o600);
+      expect(readFileSync(passwordFile, "utf8")).toBe(PASSWORD);
       // The env file: 0600, both secrets, nowhere else.
       expect(mode(f.envFile)).toBe(0o600);
       const values = parseA2AV2EnvFile(readFileSync(f.envFile, "utf8"));
@@ -356,6 +364,8 @@ describe("a2a-v2 init", () => {
       );
       const env = parseA2AV2EnvFile(readFileSync(f.envFile, "utf8"));
       first.state.container = { label: "1", running: false };
+      // The stopped container's bind mount needs its secret file back.
+      rmSync(join(f.root, "loop-a2a-ledger.password"));
       const second = fakeDeps(first.state);
       // A fresh secret would differ; the stored one must be reused.
       second.deps.secret = () => "a-different-secret-that-must-not-be-used";
@@ -374,8 +384,127 @@ describe("a2a-v2 init", () => {
       ]);
       expect(parseA2AV2EnvFile(readFileSync(f.envFile, "utf8"))).toEqual(env);
       expect(mode(f.envFile)).toBe(0o600);
+      const passwordFile = join(f.root, "loop-a2a-ledger.password");
+      expect(readFileSync(passwordFile, "utf8")).toBe(PASSWORD);
+      expect(mode(passwordFile)).toBe(0o600);
     } finally {
       f.remove();
+    }
+  });
+
+  /** An env file as init writes it, for a ledger on `port`. */
+  const writeEnvFile = (f: ReturnType<typeof fixture>, port = 55_432) =>
+    writeFileSync(
+      f.envFile,
+      `LOOP_A2A_V2_DATABASE_URL=postgres://loop:${PASSWORD}@127.0.0.1:${port}/loop_a2a\nLOOP_A2A_V2_RESULT_GRAPH_KEY=${KEY}\n`,
+      { mode: 0o600 }
+    );
+
+  test("a ledger created before the secret file (password in its container environment) is reused as it is, with one line naming the recreate command", async () => {
+    const f = fixture();
+    writeEnvFile(f);
+    const { calls, deps, logs } = fakeDeps({
+      container: { label: "1", passwordInEnv: true, running: false },
+      volume: true,
+    });
+    try {
+      const failure = await runA2AV2Init(
+        { configPath: f.configPath },
+        deps
+      ).then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect((failure as A2AV2InitIncompleteError).result.ledger).toBe(
+        "reused"
+      );
+      expect(calls.map((call) => call.args[0])).toEqual([
+        "container",
+        "start",
+        "port",
+      ]);
+      expect(logs).toContain(
+        `ledger loop-a2a-ledger was created with POSTGRES_PASSWORD in its container environment (fix8 before the secret file): \`docker inspect loop-a2a-ledger\` shows the password to anyone who can reach the Docker daemon. Reused as it is. To recreate it with the 0600 secret file (the volume loop-a2a-ledger-data, its data and the password are kept): docker rm -f loop-a2a-ledger && loop orchestration a2a-v2 init ${f.configPath}`
+      );
+      // Its own environment holds the password; no second copy is written.
+      expect(existsSync(join(f.root, "loop-a2a-ledger.password"))).toBe(false);
+      noSecretIn(logs.join("\n"));
+    } finally {
+      f.remove();
+    }
+  });
+
+  test("with a section written, init recreates a removed ledger from its kept volume with the secret file, on the env file's port; a present one is only kept running", async () => {
+    const f = fixture();
+    try {
+      await runA2AV2Init(
+        {
+          configPath: f.configPath,
+          manifests: { "supervisor:harness": f.manifestPath },
+        },
+        fakeDeps().deps
+      );
+      // The ledger was provisioned on another port; the operator removed the
+      // container (the documented recreate command), the volume stays.
+      writeEnvFile(f, 55_499);
+      rmSync(join(f.root, "loop-a2a-ledger.password"));
+      const removed = fakeDeps({ volume: true });
+      const result = await runA2AV2Init(
+        { configPath: f.configPath },
+        removed.deps
+      );
+      expect(result.ledger).toBe("existing-config");
+      const run = removed.calls.find((call) => call.args[0] === "run");
+      expect(run?.args).toContain("127.0.0.1:55499:5432");
+      expect(run?.args).toContain(
+        "POSTGRES_PASSWORD_FILE=/run/secrets/loop-a2a-ledger-password"
+      );
+      expect(run?.env).toBeUndefined();
+      expect(
+        readFileSync(join(f.root, "loop-a2a-ledger.password"), "utf8")
+      ).toBe(PASSWORD);
+      expect(removed.logs[0]).toStartWith(
+        "ledger recreated with its secret file: container loop-a2a-ledger"
+      );
+      // Present and running: nothing but the inspect.
+      const present = fakeDeps({
+        container: { label: "1", running: true },
+        volume: true,
+      });
+      await runA2AV2Init({ configPath: f.configPath }, present.deps);
+      expect(present.calls.map((call) => call.args[0])).toEqual([
+        "container",
+        "port",
+      ]);
+      // No volume left: nothing is recreated (that would be a new, empty
+      // ledger the operator did not ask for).
+      const gone = fakeDeps();
+      await runA2AV2Init({ configPath: f.configPath }, gone.deps);
+      expect(gone.calls.map((call) => call.args[0])).toEqual([
+        "container",
+        "volume",
+      ]);
+    } finally {
+      f.remove();
+    }
+  });
+
+  test("a config directory docker --mount cannot carry is refused before any container is created", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "fix8-init-")));
+    const odd = join(base, "with,comma");
+    mkdirSync(odd);
+    const configPath = join(odd, "config.json");
+    writeFileSync(configPath, JSON.stringify(liveShapedConfig(odd)), {
+      mode: 0o600,
+    });
+    const { calls, deps } = fakeDeps();
+    try {
+      await expect(runA2AV2Init({ configPath }, deps)).rejects.toThrow(
+        "which docker --mount cannot carry"
+      );
+      expect(calls.some((call) => call.args[0] === "run")).toBe(false);
+    } finally {
+      rmSync(base, { force: true, recursive: true });
     }
   });
 

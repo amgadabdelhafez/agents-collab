@@ -5,10 +5,15 @@
 //    names an existing database variable (--database-url-env), it provisions a
 //    local PostgreSQL ledger: one named container (default loop-a2a-ledger)
 //    with a named volume, published on 127.0.0.1 only, restarted with the
-//    Docker daemon. The password is generated here, handed to Docker through
-//    the child environment (never argv) and written only to the 0600 env file
-//    next to the config. Re-running reuses the container, the volume and the
-//    password in the env file.
+//    Docker daemon. The password is generated here and written to the 0600 env
+//    file (inside the ledger URL) and to a 0600 secret file next to the config
+//    (`<config-dir>/<container>.password`), which the container mounts
+//    read-only and reads through POSTGRES_PASSWORD_FILE. The password is never
+//    in argv and never in the container's environment, so `docker inspect`
+//    does not show it. Re-running reuses the container, the volume and the
+//    password in the env file. A ledger created by the first fix8 build
+//    (POSTGRES_PASSWORD in its container environment) is reused as it is, with
+//    one line naming the command that recreates it with the secret file.
 // 2. Config. The a2aV2 section (legacy workflow id format, a generated result
 //    graph key in the env file) is written into a COPY of the config, the copy
 //    is validated with the server's own parser, the original is backed up
@@ -56,8 +61,14 @@ export const A2A_V2_LEDGER_LABEL = "dev.loop.a2a-ledger";
 // The image the repo's own disposable-Postgres tests run, by digest.
 export const A2A_V2_LEDGER_IMAGE =
   "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73";
+/** Where the ledger container sees its password file (read-only mount). */
+export const A2A_V2_LEDGER_PASSWORD_TARGET =
+  "/run/secrets/loop-a2a-ledger-password";
 const LEDGER_USER = "loop";
 const LEDGER_DB = "loop_a2a";
+// `--mount` is a CSV list: a source path with either character would be
+// misparsed, so such a config directory is refused instead.
+const MOUNT_UNSAFE_RE = /[,"\n]/;
 const DOCKER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/;
 const TOKEN_ENV_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const SUPERVISOR_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
@@ -212,6 +223,49 @@ const replacePrivateFile = (path: string, text: string): void => {
   }
 };
 
+/** `<config-dir>/<container>.password`: the ledger's secret file. */
+export const ledgerPasswordFilePath = (
+  configPath: string,
+  containerName: string
+): string => join(dirname(configPath), `${containerName}.password`);
+
+const holdsExactly = (path: string, password: string): boolean => {
+  let descriptor: number | undefined;
+  try {
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags require bitwise composition.
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(descriptor);
+    return (
+      stat.isFile() &&
+      // biome-ignore lint/suspicious/noBitwiseOperators: permission bits are a bit mask.
+      (stat.mode & 0o777) === 0o600 &&
+      readFileSync(descriptor, "utf8") === password
+    );
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+};
+
+/**
+ * The ledger's password file: 0600, the password alone (no newline). Left
+ * as it is when it already holds exactly that at 0600 (a running
+ * container's bind mount keeps its inode), else replaced atomically.
+ */
+const ensurePasswordFile = (path: string, password: string): void => {
+  if (MOUNT_UNSAFE_RE.test(path)) {
+    throw new Error(
+      `the ledger password file ${JSON.stringify(path)} contains a comma, a quote or a newline, which docker --mount cannot carry; move the orchestration config to a plainer directory`
+    );
+  }
+  if (!holdsExactly(path, password)) {
+    replacePrivateFile(path, password);
+  }
+};
+
 const canonicalManifest = (supervisorId: string, path: string): string => {
   if (!isAbsolute(path)) {
     throw new Error(`--manifest ${supervisorId}: the path must be absolute`);
@@ -243,8 +297,8 @@ const tenantFor = (identity: string): string => {
 };
 
 const describeDocker = (result: DockerResult): string =>
-  // Docker's own error text names images, containers and ports, never the
-  // password, which only ever travels in the child environment.
+  // Docker's own error text names images, containers, mounts and ports, never
+  // the password, which only ever travels in the 0600 password file.
   (result.stderr || result.stdout).split("\n")[0] ?? `exit ${result.code}`;
 
 interface LedgerState {
@@ -253,23 +307,45 @@ interface LedgerState {
   reused: boolean;
 }
 
+interface LedgerContainer {
+  label: string;
+  /**
+   * Created by the first fix8 build: POSTGRES_PASSWORD is in the container's
+   * environment, so `docker inspect` shows it until it is recreated.
+   */
+  passwordInEnv: boolean;
+  running: boolean;
+}
+
+const PASSWORD_IN_ENV_MARK = "password-in-env";
+
 const inspectContainer = async (
   deps: A2AV2InitDeps,
   name: string
-): Promise<{ label: string; running: boolean } | undefined> => {
+): Promise<LedgerContainer | undefined> => {
+  // The template only reports whether a POSTGRES_PASSWORD entry exists: the
+  // value never leaves the daemon.
   const result = await deps.docker([
     "container",
     "inspect",
     "--format",
-    `{{.State.Running}} {{index .Config.Labels "${A2A_V2_LEDGER_LABEL}"}}`,
+    `{{.State.Running}}|{{index .Config.Labels "${A2A_V2_LEDGER_LABEL}"}}|{{range .Config.Env}}{{if eq (index (split . "=") 0) "POSTGRES_PASSWORD"}}${PASSWORD_IN_ENV_MARK}{{end}}{{end}}`,
     name,
   ]);
   if (result.code !== 0) {
     return undefined;
   }
-  const [running, label = ""] = result.stdout.split(" ");
-  return { label, running: running === "true" };
+  const [running, label = "", marks = ""] = result.stdout.split("|");
+  return {
+    label,
+    passwordInEnv: marks.includes(PASSWORD_IN_ENV_MARK),
+    running: running === "true",
+  };
 };
+
+/** The one line a reused pre-secret-file ledger gets. Names only. */
+export const legacyLedgerLine = (name: string, configPath: string): string =>
+  `ledger ${name} was created with POSTGRES_PASSWORD in its container environment (fix8 before the secret file): \`docker inspect ${name}\` shows the password to anyone who can reach the Docker daemon. Reused as it is. To recreate it with the 0600 secret file (the volume ${name}-data, its data and the password are kept): docker rm -f ${name} && loop orchestration a2a-v2 init ${configPath}`;
 
 const volumeExists = async (
   deps: A2AV2InitDeps,
@@ -302,67 +378,89 @@ const publishedPort = async (
   return port;
 };
 
+interface LedgerInput {
+  configPath: string;
+  name: string;
+  password: string;
+  /** The password file next to the config (ledgerPasswordFilePath). */
+  passwordFile: string;
+  passwordKnown: boolean;
+  port: number;
+}
+
+/** Reuses (and starts) an existing labelled ledger container. */
+const reuseLedger = async (
+  deps: A2AV2InitDeps,
+  input: LedgerInput,
+  existing: LedgerContainer
+): Promise<LedgerState> => {
+  if (existing.label !== "1") {
+    throw new Error(
+      `a container named ${input.name} exists but was not created by a2a-v2 init (no ${A2A_V2_LEDGER_LABEL} label); choose another --ledger-name`
+    );
+  }
+  if (!input.passwordKnown) {
+    throw new Error(
+      `ledger container ${input.name} exists but its password is not in the env file; restore the env file or remove the container and its volume ${input.name}-data`
+    );
+  }
+  if (existing.passwordInEnv) {
+    deps.log(legacyLedgerLine(input.name, input.configPath));
+  } else {
+    // Its bind mount needs the file to exist when it starts.
+    ensurePasswordFile(input.passwordFile, input.password);
+  }
+  if (!existing.running) {
+    const started = await deps.docker(["start", input.name]);
+    if (started.code !== 0) {
+      throw new Error(
+        `cannot start ledger container ${input.name}: ${describeDocker(started)}`
+      );
+    }
+  }
+  return { port: await publishedPort(deps, input.name), reused: true };
+};
+
 const ensureLedger = async (
   deps: A2AV2InitDeps,
-  input: {
-    name: string;
-    password: string;
-    port: number;
-    passwordKnown: boolean;
-  }
+  input: LedgerInput
 ): Promise<LedgerState> => {
   const volume = `${input.name}-data`;
   const existing = await inspectContainer(deps, input.name);
   if (existing) {
-    if (existing.label !== "1") {
-      throw new Error(
-        `a container named ${input.name} exists but was not created by a2a-v2 init (no ${A2A_V2_LEDGER_LABEL} label); choose another --ledger-name`
-      );
-    }
-    if (!input.passwordKnown) {
-      throw new Error(
-        `ledger container ${input.name} exists but its password is not in the env file; restore the env file or remove the container and its volume ${volume}`
-      );
-    }
-    if (!existing.running) {
-      const started = await deps.docker(["start", input.name]);
-      if (started.code !== 0) {
-        throw new Error(
-          `cannot start ledger container ${input.name}: ${describeDocker(started)}`
-        );
-      }
-    }
-    return { port: await publishedPort(deps, input.name), reused: true };
+    return await reuseLedger(deps, input, existing);
   }
   if (!input.passwordKnown && (await volumeExists(deps, volume))) {
     throw new Error(
       `ledger volume ${volume} exists but its password is not in the env file; restore the env file or remove the volume`
     );
   }
-  const created = await deps.docker(
-    [
-      "run",
-      "--detach",
-      "--name",
-      input.name,
-      "--label",
-      `${A2A_V2_LEDGER_LABEL}=1`,
-      "--restart",
-      "unless-stopped",
-      "--volume",
-      `${volume}:/var/lib/postgresql/data`,
-      "--publish",
-      `127.0.0.1:${input.port}:5432`,
-      "--env",
-      "POSTGRES_PASSWORD",
-      "--env",
-      `POSTGRES_USER=${LEDGER_USER}`,
-      "--env",
-      `POSTGRES_DB=${LEDGER_DB}`,
-      A2A_V2_LEDGER_IMAGE,
-    ],
-    { POSTGRES_PASSWORD: input.password }
-  );
+  // The password reaches the container only as a read-only file: never
+  // argv, never the container's environment (`docker inspect` shows that).
+  ensurePasswordFile(input.passwordFile, input.password);
+  const created = await deps.docker([
+    "run",
+    "--detach",
+    "--name",
+    input.name,
+    "--label",
+    `${A2A_V2_LEDGER_LABEL}=1`,
+    "--restart",
+    "unless-stopped",
+    "--volume",
+    `${volume}:/var/lib/postgresql/data`,
+    "--mount",
+    `type=bind,source=${input.passwordFile},target=${A2A_V2_LEDGER_PASSWORD_TARGET},readonly`,
+    "--publish",
+    `127.0.0.1:${input.port}:5432`,
+    "--env",
+    `POSTGRES_PASSWORD_FILE=${A2A_V2_LEDGER_PASSWORD_TARGET}`,
+    "--env",
+    `POSTGRES_USER=${LEDGER_USER}`,
+    "--env",
+    `POSTGRES_DB=${LEDGER_DB}`,
+    A2A_V2_LEDGER_IMAGE,
+  ]);
   if (created.code !== 0) {
     throw new Error(
       `cannot create ledger container ${input.name}: ${describeDocker(created)}`
@@ -434,6 +532,7 @@ const validateInitOptions = (
 const prepareLedger = async (
   deps: A2AV2InitDeps,
   input: {
+    configPath: string;
     containerName: string;
     databaseUrlEnv?: string;
     envValues: Map<string, string>;
@@ -462,8 +561,10 @@ const prepareLedger = async (
   );
   const password = knownPassword ?? deps.secret(24);
   const state = await ensureLedger(deps, {
+    configPath: input.configPath,
     name: input.containerName,
     password,
+    passwordFile: ledgerPasswordFilePath(input.configPath, input.containerName),
     passwordKnown: knownPassword !== undefined,
     port: input.ledgerPort,
   });
@@ -477,6 +578,56 @@ const prepareLedger = async (
     databaseUrlEnv: A2A_V2_DATABASE_URL_ENV,
     ledger: state.reused ? "reused" : "provisioned",
   };
+};
+
+/**
+ * With an a2aV2 section already written: the ledger init provisioned (its
+ * URL, with a password, in the env file under LOOP_A2A_V2_DATABASE_URL) is
+ * kept running. A labelled container is reused (started when stopped; a
+ * pre-secret-file one gets its one line). A removed container whose volume
+ * is still there is recreated with the secret file, on the port the env
+ * file's URL names, so the documented recreate command
+ * (`docker rm -f <name> && loop orchestration a2a-v2 init <config>`) keeps
+ * the data, the password and the URL. Anything else is left alone.
+ */
+const keepConfiguredLedger = async (
+  deps: A2AV2InitDeps,
+  input: {
+    configPath: string;
+    containerName: string;
+    databaseUrlEnv: string;
+    envValues: ReadonlyMap<string, string>;
+  }
+): Promise<void> => {
+  const url =
+    input.databaseUrlEnv === A2A_V2_DATABASE_URL_ENV
+      ? input.envValues.get(A2A_V2_DATABASE_URL_ENV)
+      : undefined;
+  const password = passwordOf(url);
+  const mine = await inspectContainer(deps, input.containerName);
+  if (!(url && password) || (mine && mine.label !== "1")) {
+    return;
+  }
+  const ledgerInput: LedgerInput = {
+    configPath: input.configPath,
+    name: input.containerName,
+    password,
+    passwordFile: ledgerPasswordFilePath(input.configPath, input.containerName),
+    passwordKnown: true,
+    port: Number(new URL(url).port) || A2A_V2_LEDGER_PORT,
+  };
+  if (mine) {
+    await reuseLedger(deps, ledgerInput, mine);
+    return;
+  }
+  if (!(await volumeExists(deps, `${input.containerName}-data`))) {
+    return;
+  }
+  const state = await ensureLedger(deps, ledgerInput);
+  await waitForDatabase(deps, ledgerUrl(password, state.port));
+  deps.log(
+    `ledger recreated with its secret file: container ${input.containerName}, volume ${input.containerName}-data (kept), 127.0.0.1:${state.port}`
+  );
 };
 
 /** Step 2: the configured supervisors with --manifest bindings applied. */
@@ -607,17 +758,21 @@ export const runA2AV2Init = async (
     envRead.kind === "read" ? envRead.values : new Map<string, string>();
   if (current.a2aV2) {
     // Idempotent: the section is the operator's now. Keep the ledger running
-    // when it is ours, and change nothing else.
-    const mine = await inspectContainer(deps, containerName);
-    if (mine?.label === "1" && !mine.running) {
-      await deps.docker(["start", containerName]);
-    }
+    // when it is ours (recreating it from its kept volume when the operator
+    // removed the container), and change nothing else.
+    await keepConfiguredLedger(deps, {
+      configPath: options.configPath,
+      containerName,
+      databaseUrlEnv: current.a2aV2.databaseUrlEnv,
+      envValues,
+    });
     deps.log(
       `a2aV2 already configured in ${options.configPath}; config unchanged`
     );
     return { configWritten: false, envFile, ledger: "existing-config" };
   }
   const { databaseUrlEnv, ledger } = await prepareLedger(deps, {
+    configPath: options.configPath,
     containerName,
     ...(options.databaseUrlEnv
       ? { databaseUrlEnv: options.databaseUrlEnv }
