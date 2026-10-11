@@ -193,7 +193,10 @@ Serve (`loop orchestration serve <config>`):
     workflow id format refusal); the factory's message is in the line, and
     V1 starts on a Temporal host of its own.
 - Only V1's configuration refuses start: an invalid V1 part of the config, a
-  missing `LOOP_ORCH_TOKEN_*`-style token variable, an unreachable Temporal.
+  missing `LOOP_ORCH_TOKEN_*`-style token variable. Since bind-first
+  (2026-10-11, below) an unreachable Temporal no longer refuses start: the
+  server listens, answers 503 `starting` in phase `temporal-connect`, and
+  retries with backoff until Temporal answers.
 - Recipient enrollment never refuses start (fix8 critic fix 1). The
   configured recipient and its peer seats are enrolled per recipient: one
   whose run is stopped, whose run manifest is missing, whose session is
@@ -232,6 +235,83 @@ Limits:
   enters them as `loop-orchestration-sweetmac14`. Before fix8 an identity
   with `@` failed every V2 start at `governance-store` ("dispatch owner is
   invalid"); found by the fix8 e2e.
+
+### Bind-first startup (branch claude/fix-startup-bind-first, 2026-10-11)
+
+The outage: under launchd `loop orchestration serve` never opened
+127.0.0.1:7321. It ran its first reconcile before `serve()`; the mailbox
+reconciler read a mailbox under ~/Documents with `readFileSync`, macOS parked
+that open behind a Documents privacy (TCC) prompt, and the event loop froze.
+Every new ad-hoc-signed build (identifier `a.out`, new cdhash) prompts again.
+
+Now:
+
+- Before the bind only the config (and its `a2a-v2.env`) is read and the
+  state directory created. Then the port opens. Until the host runs and one
+  reconciliation pass has succeeded, `GET /healthz` answers 503
+  `{"schema": "loop-orchestration-health.v1", "state": "starting", "phase": "<phase>"}`
+  and every other route 503 `{"error": {"code": "starting"}}`.
+- Phases, each logged as `orchestration startup: <phase>` before it begins,
+  then `orchestration startup: ready`: `path-check` (async, bounded probes of
+  each binding's run manifest and run directory), `a2a-v2-plane` (the
+  ledger probe, bounded), `temporal-connect` (each attempt bounded at 10 s,
+  retried 1 s doubling to 30 s, logged as `orchestration startup:
+  temporal-connect attempt <n> failed (<cause>); retrying in <ms>ms`; a late
+  connection is closed), `a2a-v2-service` (only when the plane is ready;
+  the whole V2 start is bounded at 60 s, past which V2 is disabled
+  `start-failed` with "Supervisor A2A V2 service start did not finish within
+  60000ms", V1 starts on a host of its own and a service that resolves late
+  is closed), `runtime-host` (the V1 host), `first-reconcile`.
+- Mailboxes, cursors, manifests and run directories are read through
+  `MailboxFileAccess` (mailbox-file-access.ts): async, 5 s per operation. A
+  timed-out path that has not returned is refused without touching the
+  filesystem again. A timeout, EPERM or EACCES marks only that binding
+  unreadable, logged once: `[loop] <supervisor>: <path> is unreadable:
+  <cause> (possible macOS privacy prompt or permission denied)`; recovery is
+  logged once (`... is readable again`). `/healthz` carries
+  `unreadableBindingCount` (a count, never a path); it does not change
+  `state`. A binding whose manifest has not answered routes nowhere (delivery
+  falls through to its mailbox, if any) and is probed again every pass. The
+  CLI's `loop mailbox` readers are unchanged (synchronous).
+- V2 initial recovery: a recorded start whose query the engine cannot answer
+  yet ("ServiceError: Failed to query Workflow" with no gRPC code or
+  DEADLINE_EXCEEDED, FAILED_PRECONDITION or UNAVAILABLE, or any "no poller"
+  error; live at 08:20Z and 16:54Z on 2026-10-11, when the service's own
+  worker was not polling yet) is retried 500 ms doubling to 5 s for up to
+  30 s, each retry logged as `V2 initial recovery: <n> recorded start(s) not
+  answerable yet (...); retrying in <ms> ms, its worker may not be polling
+  yet`. Past the bound, or on any other failure, startup refuses the record
+  as before (decision 7) and the refusal is logged once.
+
+Signing the loop binary (owner, one time; nothing here was run):
+
+`bun run build` now signs the binary with identifier `dev.harness.loop`
+(`scripts/loop-codesign.ts`). Without `LOOP_CODESIGN_IDENTITY` it is ad hoc,
+so its designated requirement is still the cdhash and a Documents grant
+still does not survive a rebuild. A stable identity makes it survive:
+
+1. In Keychain Access: Certificate Assistant > Create a Certificate. Name
+   `loop local signing`, Identity Type `Self Signed Root`, Certificate Type
+   `Code Signing`. It lands in the login keychain.
+2. Check: `security find-identity -p codesigning` lists `loop local
+   signing` (with `-v` a self-signed root may be filtered out as untrusted;
+   codesign can still use it).
+3. Build: `LOOP_CODESIGN_IDENTITY="loop local signing" bun run build`. The
+   first signing may ask for keychain access to the key; allow `codesign`.
+4. Verify: `codesign -dv <binary>` shows `Identifier=dev.harness.loop` and
+   `Authority=loop local signing`; `codesign -d -r- <binary>` shows a
+   designated requirement naming the identifier and the certificate leaf.
+5. Install and restart the service as the runbook says. The first start of
+   the first signed build prompts once for Documents; later builds signed
+   with the same identity keep the grant.
+
+The compiled binary is also self-contained now: the Temporal core bridge's
+native addon (`@temporalio/core-bridge` `releases/<target>/index.node`) and
+source-map's `mappings.wasm` are embedded at build time
+(`scripts/temporal-worker-compile.ts`), where before they were loaded from
+the build tree's node_modules. Checked by building from a scratch copy,
+renaming its node_modules, and running `tests/loop/compiled-binary-serve.test.ts`
+and `bun run test:compiled-a2a` against that binary (LOOP_COMPILED_BINARY).
 
 ### A2A V2 clients: one identity, one token (fix9 client identity, 2026-10-11)
 
@@ -1003,10 +1083,17 @@ seat or recipient id (loop-orchestration-server.ts:255-282):
   "schema": "loop-orchestration-health.v1",
   "state": "ready" | "unavailable",
   "notEnrolledCount": <n>,
+  "unreadableBindingCount": <n>,
   "a2aV2NotEnrolledDeferral": {"boundMs", "deferredDeliveries", "notEnrolledFailures", "recipientsDeferred"},
   "a2aV2ReadinessOutage": {"boundMs", "deferredDeliveries", "outageFailures", "recipientsDeferred"}
 }
 ```
+
+While the server is starting (bind-first, above) the body is instead
+`{"schema", "state": "starting", "phase"}` with status 503.
+`unreadableBindingCount` counts bindings whose mailbox, cursor, manifest or
+run directory timed out or refused (EPERM/EACCES); it does not change
+`state`.
 
 The two `a2aV2*` blocks appear only when an A2A V2 service is mounted.
 `notEnrolledCount` is always supplied by the server (loop-orchestration-server.ts:1725-1731).
