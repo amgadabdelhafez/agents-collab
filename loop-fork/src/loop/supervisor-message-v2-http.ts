@@ -5,6 +5,7 @@ import type {
 import { readBoundedRequestText } from "./bounded-request-body";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
 import type { GovernedSupervisorMessageV2Service } from "./supervisor-message-v2-governance";
+import { SupervisorMessageV2RecipientTooEarlyError } from "./supervisor-message-v2-runtime";
 
 /** The host resolves the original workflow scope from a trusted assignment.
  * Neither the recipient's JSON nor its principal becomes the sender scope.
@@ -169,7 +170,30 @@ export const createSupervisorMessageV2RecipientHttpHandler =
         },
         { headers: { "cache-control": "no-store" } }
       );
-    } catch {
-      return response(409, "lifecycle-command-refused");
+    } catch (error) {
+      return lifecycleRefusal(error);
     }
   };
+
+/**
+ * A refused claim or acknowledge. The intended recipient (it passed the
+ * assignment) that is early, its delivery or claim not recorded yet, is told
+ * so, and when the retry can pass: nothing was signalled, so the same command
+ * succeeds once it is. Anything else stays the one opaque code.
+ */
+const lifecycleRefusal = (error: unknown): Response => {
+  if (!(error instanceof SupervisorMessageV2RecipientTooEarlyError)) {
+    return response(409, "lifecycle-command-refused");
+  }
+  const retryAt =
+    error.retryAt === null ? Number.NaN : Date.parse(error.retryAt);
+  return Response.json(
+    {
+      code: error.reason,
+      ...(Number.isFinite(retryAt)
+        ? { retryAfterMs: Math.max(0, retryAt - Date.now()) }
+        : {}),
+    },
+    { status: 409, headers: { "cache-control": "no-store" } }
+  );
+};

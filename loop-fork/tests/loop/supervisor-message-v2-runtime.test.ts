@@ -18,6 +18,7 @@ import {
   SupervisorMessageV2NotEnrolledDeferral,
   SupervisorMessageV2ReadinessOutageTracker,
   SupervisorMessageV2ReadinessUnavailableError,
+  SupervisorMessageV2RecipientTooEarlyError,
   SupervisorMessageV2RecoveryRunner,
   type SupervisorMessageV2TerminalOutcome,
   supervisorMessageV2WorkflowDefinition,
@@ -223,8 +224,32 @@ class RecordingWorkflowPort extends InMemoryWorkflowPort {
   }
 }
 
+/**
+ * As the Temporal port: every command's outcome is kept under its request
+ * id, a refusal included, and replayed to each later command with that id.
+ */
+class RefusalReplayingWorkflowPort extends RecordingWorkflowPort {
+  readonly #refused = new Map<string, unknown>();
+
+  override signal(command: WorkflowSignalCommand): WorkflowCommandReceipt {
+    if (this.#refused.has(command.requestId)) {
+      throw this.#refused.get(command.requestId);
+    }
+    try {
+      return super.signal(command);
+    } catch (error) {
+      this.#refused.set(command.requestId, error);
+      throw error;
+    }
+  }
+}
+
 const harness = (
-  options: { notEnrolledBoundMs?: number; outageBoundMs?: number } = {}
+  options: {
+    notEnrolledBoundMs?: number;
+    outageBoundMs?: number;
+    replayRefusals?: boolean;
+  } = {}
 ) => {
   let clock = Date.parse("2026-09-20T05:00:00.000Z");
   const logs: string[] = [];
@@ -242,7 +267,11 @@ const harness = (
     },
     log: (line) => logs.push(line),
   });
-  const workflows = new RecordingWorkflowPort({
+  const workflows = new (
+    options.replayRefusals
+      ? RefusalReplayingWorkflowPort
+      : RecordingWorkflowPort
+  )({
     definitions: [supervisorMessageV2WorkflowDefinition],
     now: () => new Date(clock).toISOString(),
   });
@@ -592,6 +621,105 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
     );
     expect(claimed.phase).toBe("claimed");
     expect(claimed.deliveryAttempts).toBe(2);
+  });
+
+  test("the recipient's early claim and acknowledge are refused before any signal, so the same request ids pass once the delivery is recorded", async () => {
+    // A port that, like Temporal's, replays a refusal to every retry of its
+    // request id: a signalled early refusal would refuse the ACK for good.
+    const h = harness({ replayRefusals: true });
+    h.providerDown.add("supervisor:target");
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("early-ack"),
+      "request:early-ack"
+    );
+    // The recipient already holds the message (a queued Claude entry, a
+    // mailbox envelope); the workflow has its first attempt failed and the
+    // next not yet due.
+    const pending = await h.status(workflowId);
+    expect(pending.phase).toBe("retry-scheduled");
+    const claimId = `a2a-ack:claim:${workflowId}`;
+    const acknowledgeId = `a2a-ack:acknowledge:${workflowId}`;
+    const earlyClaim = await h.coordinator
+      .claim(scope, workflowId, "supervisor:target", claimId)
+      .catch((error: unknown) => error);
+    expect(earlyClaim).toBeInstanceOf(
+      SupervisorMessageV2RecipientTooEarlyError
+    );
+    expect(earlyClaim).toBeInstanceOf(WorkflowError);
+    expect(earlyClaim).toMatchObject({
+      reason: "delivery-not-recorded",
+      retryAt: pending.nextRetryAt,
+    });
+    const earlyAck = await h.coordinator
+      .acknowledge(scope, workflowId, "supervisor:target", acknowledgeId)
+      .catch((error: unknown) => error);
+    expect(earlyAck).toMatchObject({
+      reason: "not-claimed",
+      retryAt: pending.nextRetryAt,
+    });
+    // Neither reached the workflow, so nothing is kept under either id.
+    expect(h.signalPayloads(workflowId).map((signal) => signal.name)).toEqual([
+      "delivery_failed",
+    ]);
+
+    // Another supervisor's claim is not "early": the workflow refuses it.
+    const intruder = await h.coordinator
+      .claim(scope, workflowId, "supervisor:intruder", "intruder:claim")
+      .catch((error: unknown) => error);
+    expect(intruder).toBeInstanceOf(WorkflowError);
+    expect(intruder).not.toBeInstanceOf(
+      SupervisorMessageV2RecipientTooEarlyError
+    );
+
+    // The retry falls due: the same claim drives the attempt that records
+    // the delivery, then claims; the same acknowledge then passes.
+    h.providerDown.clear();
+    h.advance(500);
+    const claimed = await h.coordinator.claim(
+      scope,
+      workflowId,
+      "supervisor:target",
+      claimId
+    );
+    expect(claimed.phase).toBe("claimed");
+    expect(claimed.deliveredAt).not.toBeNull();
+    const acknowledged = await h.coordinator.acknowledge(
+      scope,
+      workflowId,
+      "supervisor:target",
+      acknowledgeId
+    );
+    expect(acknowledged.phase).toBe("acknowledged");
+    expect(acknowledged.acknowledgedAt).not.toBeNull();
+  });
+
+  test("a claim while the delivery is still pending (no attempt recorded) is early too, with no retry instant", async () => {
+    const h = harness({ replayRefusals: true });
+    h.readinessStore.down = true;
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("early-pending"),
+      "request:early-pending"
+    );
+    expect((await h.status(workflowId)).phase).toBe("routed");
+    const claimId = `a2a-ack:claim:${workflowId}`;
+    await expect(
+      h.coordinator.claim(scope, workflowId, "supervisor:target", claimId)
+    ).rejects.toMatchObject({ reason: "delivery-not-recorded", retryAt: null });
+    expect(h.signalPayloads(workflowId)).toEqual([]);
+    h.readinessStore.down = false;
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect(
+      (
+        await h.coordinator.claim(
+          scope,
+          workflowId,
+          "supervisor:target",
+          claimId
+        )
+      ).phase
+    ).toBe("claimed");
   });
 });
 

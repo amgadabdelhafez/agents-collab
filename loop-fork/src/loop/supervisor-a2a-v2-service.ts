@@ -1539,6 +1539,8 @@ export interface SupervisorA2AV2AllSupervisorsOptions {
   log?: (line: string) => void;
   mayReceive(input: { from: string; principal: string; to: string }): boolean;
   principalForRecipient(recipient: string): string | undefined;
+  /** See SupervisorMessageV2RecipientEndpoints.renewExpiredLease. */
+  renewExpiredLease?(recipient: string): Promise<boolean>;
   /** The server's own resolver (createSupervisorEndpointLocatorResolver). */
   resolveLocator: SupervisorEndpointLocatorResolver;
   routePath: string;
@@ -1926,6 +1928,9 @@ const composeAllSupervisors = (input: {
     hasMailbox: all.hasMailbox,
     leases: input.leases ?? NO_LEASES,
     legacySeats: new Set(all.legacySeats),
+    ...(all.renewExpiredLease
+      ? { renewExpiredLease: all.renewExpiredLease }
+      : {}),
     resolveLocator: all.resolveLocator,
   };
   return {

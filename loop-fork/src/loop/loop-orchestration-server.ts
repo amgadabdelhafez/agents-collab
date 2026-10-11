@@ -1916,6 +1916,48 @@ export class SupervisorEndpointLeaseEnrollment {
     return this.#notEnrolledSince.get(recipient);
   }
 
+  /**
+   * The recipient route's catch-up for one recipient, now: its unreleased
+   * lease that has expired is renewed (its own fence, the configured TTL)
+   * when the session is observed live, as the next pass would. Nothing else
+   * is done here (no release, no report): the next pass still reports the
+   * seat enrolled again. Whether the lease is live afterwards.
+   */
+  async renewIfLive(recipient: string): Promise<boolean> {
+    const principal = this.#input.principalForRecipient(recipient);
+    if (principal === undefined) {
+      return false;
+    }
+    try {
+      const lease = (await this.#input.leases.list(this.#input.tenant)).find(
+        (entry) =>
+          entry.recipient === recipient &&
+          entry.releasedAt === null &&
+          entry.tenantId === this.#input.tenant &&
+          entry.principal === principal
+      );
+      if (!lease) {
+        return false;
+      }
+      const now = new Date(this.#input.now());
+      if (supervisorEndpointLeaseState(lease, now) === "live") {
+        return true;
+      }
+      if ((await this.#input.observe(lease)) !== "live") {
+        return false;
+      }
+      const renewed = await this.#input.leases.renew({
+        fence: { epoch: lease.epoch, holderRef: lease.holderRef },
+        recipient,
+        scope: { principal, tenantId: lease.tenantId },
+        ttlMs: this.#input.sessionTtlMs,
+      });
+      return renewed.status === "renewed";
+    } catch {
+      return false;
+    }
+  }
+
   async #maintainOne(
     lease: SupervisorEndpointLeaseV2,
     scope: { principal: string; tenantId: string },
@@ -2366,6 +2408,10 @@ const createDefaultRuntimeHost = async (input: {
             operation: "receive",
           }),
         principalForRecipient,
+        // The lease sweep's renewal, on demand: a recipient whose session is
+        // live is not refused while the sweep's renewal lags.
+        renewExpiredLease: async (id) =>
+          (await leaseEnrollment?.renewIfLive(id)) ?? false,
         resolveLocator,
         routePath: a2aConfig.routePath,
         sessionTtlMs: a2aConfig.sessionTtlMs,

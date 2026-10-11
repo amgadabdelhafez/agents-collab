@@ -224,5 +224,30 @@ T1 to T4 merged with `--no-ff` onto `claude/fix9-contracts` without textual conf
 
 - **Completion is control-principal only.** The result-graph and assignment routes accept only `a2aV2.principal`, so a message whose sender has another principal can be delivered and acknowledged but never completed. T5 runs the three session supervisors under the control principal.
 - **`maxDeliveryAttempts` above 20 is accepted by the config parser (up to 100), but the message workflow refuses it.** Every V2 send then fails. This predates r9.
-- **A recipient can see a message before its delivery is recorded.** A Claude target's first attempt only queues the entry (no provider acceptance), so the delivery is recorded by a later attempt, which the V2 recovery sweep drives every 30 seconds (the ingress default; no config key sets it). A Claude session sees the pushed entry, and a mailbox reader its envelope, before that. An acknowledgement in that window is refused and must be retried. This predates r9 for an r8 Claude seat; r9 makes every Claude session and channel a target.
+- **A recipient can see a message before its delivery is recorded.** A Claude target's first attempt only queues the entry (no provider acceptance), so the delivery is recorded by a later attempt, which the V2 recovery sweep drives every 30 seconds (the ingress default; no config key sets it). A Claude session sees the pushed entry, and a mailbox reader its envelope, before that. This predates r9 for an r8 Claude seat; r9 makes every Claude session and channel a target. Since ra1 (below) an acknowledgement in that window is waited out, not refused.
 - **`loop a2a status --message-id` takes the workflow id** that send prints, not the A2A message id; see the route table.
+
+### ra1: the flaky recipient ACK refusal (2026-10-11, `claude/ra1-ack-race`)
+
+The T5 e2e failed 1 of 3 runs with `ack refused for supervisor-message-workflow:v2:...` for the real recipient. The refusal code was swallowed, so the cause was a guess (the Claude recording lag above). It was not that: every ACK in the e2e waits for `deliveredAt` first. The code was surfaced and the route instrumented (the instrumentation is not committed). Then 9 runs, 3 and then 6 in parallel, all passed. Next, 6 runs in parallel beside 14 busy CPU loops, on a host already loaded by other sessions. Three failed on the ACK, two with `(acknowledge: assignment-denied; claim: assignment-denied)` and one with `(acknowledge: lifecycle-command-refused; claim: assignment-denied)`. Each time the recipient's lease read `expired` at that moment. The other three timed out waiting for deliveries.
+
+- **Cause: the recipient's endpoint lease expired under it.** The route's reachability rule refuses an expired lease. The e2e's TTL is 4 s and the sweep renews a live session's lease once less than half remains, so a stall of about 2 s let a live session's lease lapse, and an ACK in that gap was `assignment-denied`, the intruder's answer. Production's TTL is an hour, so there it takes a long server stall.
+- **Aggravating: a refusal was kept forever.** The workflow port keeps every command's outcome under its request id, refusals included, and `loop a2a ack` derives its request ids from the workflow id. So a claim refused early, or an acknowledge refused before the claim landed (the second failure above), was replayed to every later retry. "Must be retried" could never succeed for that message.
+
+Fixed:
+
+1. The recipient route renews an expired lease on demand when the server observes the session live (`SupervisorEndpointLeaseEnrollment.renewIfLive`: own fence, configured TTL, no release, no report). This is what the next sweep pass would do. A session not observed live is still refused, and the identity, assignment and workflow claimant checks are unchanged.
+2. The intended recipient's early claim (delivery not recorded) and early acknowledge (claim not recorded) are refused by the coordinator before any signal (`SupervisorMessageV2RecipientTooEarlyError`). Nothing is kept under the request id, and the route answers 409 `delivery-not-recorded` or `not-claimed` with `retryAfterMs` when a retry is scheduled. Any other claimant still gets the workflow's own refusal.
+3. `loop a2a ack` (and `loop mailbox ack` for V2 envelopes) waits out those two codes with the same request ids, at the server's hint or a bounded backoff, for up to 120 s. Once the retry is due, the claim drives the attempt that records the delivery.
+4. Refusal codes reach the error: `ack refused for <id> (acknowledge: <code>; claim: <code>)`. Only codes from a fixed set are shown. Anything else reads `refused`, so no response text or token reaches the message.
+5. The stressed runs then showed a second race: the sweep's renewal landing between the route's reads. The readiness probe compares the older descriptor with the renewed lease and reports `recipient endpoint identity changed`. When a check fails while a renewal of that same lease lands (same epoch, newer descriptor revision), the route now judges the renewed lease once more from fresh reads. A new claim (another epoch), or a failure with no renewal, stays final.
+
+The e2e now also acknowledges a Claude seat's message as soon as the session holds it, without waiting for `deliveredAt`. In an instrumented run it hit one `delivery-not-recorded` and then acknowledged.
+
+Evidence and limits. The fix is commit 6bc3c02e. On the final code the e2e passed 5 of 5 sequential runs, with the host's 1-minute load average between 29 and 100 from other sessions. Before the renewal-race recheck (item 5) it also passed 5 of 5 in parallel.
+
+Two stressed runs used the same setup (6 copies, 14 busy loops):
+- After items 1 to 4: no ACK refusal. Four runs failed elsewhere: three times on result publication (`assignment-denied` at the e2e's `publish-result` call) and once with the client's 10 s timeout (`unavailable`).
+- After item 5: no ACK refusal. Failures were two disposable PostgreSQL containers that never became healthy, one fenced-claim assertion, and one more result publication `assignment-denied`.
+
+Limit: under that overload, with the e2e's 4 s TTL, a lease or descriptor can still expire between the route's reads. Result publication has no early-retry path, so it can still be refused. Production's TTL is an hour. Not changed here.
