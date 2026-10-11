@@ -4,6 +4,7 @@ import {
   PostgresA2ATaskStore,
   type PostgresA2ATaskStoreOptions,
 } from "./a2a-postgres-task-store";
+import { FROM_METADATA_KEY } from "./a2a-supervisor-adapter";
 import {
   createSupervisorA2AAssignmentHttpHandler,
   createSupervisorA2AResultGraphStartHttpHandler,
@@ -11,6 +12,7 @@ import {
 import { WORKFLOW_IDS_METADATA_KEY } from "./a2a-supervisor-executor";
 import {
   createSupervisorA2AHttpHandler,
+  type SupervisorA2AAuthenticatedIdentity,
   type SupervisorA2AAuthenticator,
 } from "./a2a-supervisor-http";
 import {
@@ -25,7 +27,37 @@ import {
   type SupervisorA2AV2IngressOptions,
 } from "./a2a-supervisor-v2-ingress";
 import {
+  A2A_V2_MESSAGE_STATUS_SCHEMA,
+  A2A_V2_ROUTE_ERROR_STATUS,
+  A2A_V2_SESSION_RECEIPT_SCHEMA,
+  type A2AV2MessageStatusResponse,
+  type A2AV2RouteErrorCode,
+  type A2AV2SessionOperation,
+  type A2AV2SessionReceipt,
+  type A2AV2SessionRequestByOperation,
+  a2aV2SupervisorIngressPath,
+  a2aV2TaskStateName,
+  a2aV2WorkResultCompleted,
+  matchA2AV2Route,
+  parseA2AV2SessionRequest,
+} from "./a2a-v2-routes-contract";
+import { readBoundedRequestText } from "./bounded-request-body";
+import {
+  SupervisorEndpointLeaseError,
+  type SupervisorEndpointLeaseFenceRefusal,
+  type SupervisorEndpointLeaseHolderSummary,
+  type SupervisorEndpointLeaseReader,
+  type SupervisorEndpointLeaseResolution,
+  type SupervisorEndpointLeaseStore,
+  type SupervisorEndpointLeaseV2,
+  SupervisorEndpointLocatorError,
+  type SupervisorEndpointLocatorResolver,
+  supervisorEndpointLocatorRefused,
+} from "./supervisor-endpoint-lease";
+import {
   deriveSupervisorMessageV2ResultGraphWorkflowId,
+  type SupervisorMessageV2DeliveryEnvelope,
+  type SupervisorMessageV2Projection,
   type SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
 } from "./supervisor-message-v2-contract";
@@ -39,20 +71,33 @@ import {
   unknownResultGraphKeyAdvice,
 } from "./supervisor-message-v2-delivery-ledger";
 import {
+  decideSupervisorEndpointRoute,
+  SUPERVISOR_ENDPOINT_REASONS,
+  type SupervisorEndpointDeliveryPort,
+  supervisorEndpointUndeliverable,
+} from "./supervisor-message-v2-endpoint-contract";
+import {
   GovernedSupervisorMessageV2Service,
   PostgresSupervisorMessageV2GovernanceReceiptStore,
   type SupervisorMessageV2AuthorityPort,
 } from "./supervisor-message-v2-governance";
 import { createSupervisorMessageV2RecipientHttpHandler } from "./supervisor-message-v2-http";
-import { createSupervisorMessageV2RecipientAssignmentResolver } from "./supervisor-message-v2-recipient-assignment";
+import {
+  createSupervisorMessageV2RecipientAssignmentResolver,
+  createSupervisorMessageV2RecipientReachability,
+  type SupervisorMessageV2RecipientEndpoints,
+} from "./supervisor-message-v2-recipient-assignment";
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  type SupervisorMessageV2DeliveryOutcome,
   type SupervisorMessageV2DeliveryPort,
+  type SupervisorMessageV2DeliveryReadinessPort,
   SupervisorMessageV2NotEnrolledDeferral,
   type SupervisorMessageV2NotEnrolledSnapshot,
   type SupervisorMessageV2ReadinessOutageSnapshot,
   SupervisorMessageV2ReadinessOutageTracker,
+  SupervisorMessageV2ReadinessUnavailableError,
   type SupervisorMessageV2RecipientEnrollmentPort,
 } from "./supervisor-message-v2-runtime";
 import {
@@ -114,6 +159,12 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   migrate(): Promise<void>;
 };
 
+/** T1's lease store as this service owns it. */
+type LeaseResource = SupervisorEndpointLeaseStore & {
+  close(): Promise<void>;
+  migrate?(): Promise<void>;
+};
+
 type SessionResource = Pick<
   PostgresSupervisorSessionV2Store,
   | "assertReady"
@@ -131,6 +182,16 @@ type SessionResource = Pick<
  * Temporal constructors below.
  */
 export interface SupervisorA2AV2ServiceDependencies {
+  /**
+   * r9: T1's endpoint lease store, constructed with the server's own locator
+   * resolver. Absent (until T1 is wired), the session routes answer 503
+   * `v2-unavailable` and no recipient has a lease row.
+   */
+  connectLeases?(input: {
+    databaseUrl: string;
+    now: () => string;
+    resolveLocator: SupervisorEndpointLocatorResolver;
+  }): Promise<LeaseResource>;
   /**
    * `options.deployment` is the workflow-id discriminator: the host's Temporal
    * task queue, the same deployment discriminator its workflow port enforces.
@@ -154,17 +215,24 @@ export interface SupervisorA2AV2ServiceDependencies {
   createWorkflows(client: unknown, taskQueue: string): WorkflowPort;
 }
 
-const defaultDependencies: SupervisorA2AV2ServiceDependencies = {
-  connectLedger: (databaseUrl, options) =>
-    PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
-  connectSessions: (input) => PostgresSupervisorSessionV2Store.connect(input),
-  connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
-  createHost: (options) => TemporalSupervisorRuntimeHost.create(options),
-  createWorkflows: (client, taskQueue) =>
-    new TemporalWorkflowPort(client, { taskQueue }),
-};
+export const defaultSupervisorA2AV2ServiceDependencies: SupervisorA2AV2ServiceDependencies =
+  {
+    connectLedger: (databaseUrl, options) =>
+      PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
+    connectSessions: (input) => PostgresSupervisorSessionV2Store.connect(input),
+    connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
+    createHost: (options) => TemporalSupervisorRuntimeHost.create(options),
+    createWorkflows: (client, taskQueue) =>
+      new TemporalWorkflowPort(client, { taskQueue }),
+  };
 
 export interface SupervisorA2AV2ServiceOptions {
+  /**
+   * r9: every configured supervisor as a recipient: its SDK ingress at
+   * {routePath}/supervisors/<slug>, the session routes, the sender's message
+   * status, and lease-aware delivery and readiness. Absent, exactly r8.
+   */
+  allSupervisors?: SupervisorA2AV2AllSupervisorsOptions;
   assignmentRoute?: { pathname: string; principal: string };
   card: SupervisorA2AV2IngressOptions["card"];
   databaseUrl: string;
@@ -245,6 +313,11 @@ export interface SupervisorA2AV2ServiceOptions {
   resultGraphTasks?: readonly SupervisorA2AResultArtifactTarget[];
   route: {
     authenticator: SupervisorA2AAuthenticator;
+    /**
+     * r9: false when the config names no r8 recipient. The primary ingress
+     * still owns recovery; only its HTTP route is not served.
+     */
+    mounted?: boolean;
     pathname?: string;
     tenant: string;
   };
@@ -263,12 +336,29 @@ export interface SupervisorA2AV2ServiceOptions {
 }
 
 /** The governed session-store operations available to start-time enrollment. */
-export type SupervisorA2AV2SessionEnrollmentPort = Pick<
-  SupervisorA2AV2Service,
-  "currentSession" | "rebindSession" | "registerSession"
->;
+export interface SupervisorA2AV2SessionEnrollmentPort
+  extends Pick<
+    SupervisorA2AV2Service,
+    "currentSession" | "rebindSession" | "registerSession"
+  > {
+  /** r9: the lease store, when one is wired, for the lease sweep. */
+  endpointLeases?: Pick<
+    SupervisorEndpointLeaseStore,
+    "list" | "release" | "renew" | "resolve"
+  >;
+  /** r9: T2's per-kind readiness probe, when it is wired. */
+  endpointReadiness?: SupervisorEndpointDeliveryPort["readiness"];
+}
 
 export interface SupervisorA2AV2Service {
+  /**
+   * r9: every route `matchA2AV2Route(routePath, pathname)` matches (sessions,
+   * per-supervisor ingress, message status). Absent without allSupervisors.
+   */
+  allSupervisorsRoute?: {
+    httpHandler(request: Request): Promise<Response>;
+    routePath: string;
+  };
   assignmentRoute?: {
     pathname: string;
     httpHandler(request: Request): Promise<Response>;
@@ -347,6 +437,7 @@ const safeFailureCategory = (error: unknown): string =>
  * standard server supplies authentication and route exposure separately.
  */
 class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
+  readonly allSupervisorsRoute: SupervisorA2AV2Service["allSupervisorsRoute"];
   readonly assignmentRoute: SupervisorA2AV2Service["assignmentRoute"];
   readonly #workflows: WorkflowPort;
   readonly #now: () => string;
@@ -368,11 +459,25 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly #notEnrolled: SupervisorMessageV2NotEnrolledDeferral;
   readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
   readonly #sessions: SessionResource;
+  readonly #leases: LeaseResource | undefined;
+  readonly #reachable:
+    | ((
+        scope: TrustedSupervisorMessageV2Scope,
+        recipient: string
+      ) => Promise<boolean>)
+    | undefined;
   readonly #taskStore: TaskStoreResource;
   #closing: Promise<void> | undefined;
 
   constructor(input: {
+    allSupervisorsRoute?: SupervisorA2AV2Service["allSupervisorsRoute"];
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
+    leases?: LeaseResource;
+    /** r9: the recipient route's reachability rule, for publishResult. */
+    reachable?(
+      scope: TrustedSupervisorMessageV2Scope,
+      recipient: string
+    ): Promise<boolean>;
     workflows: WorkflowPort;
     now: () => string;
     previousResultGraphKeys?: readonly SupervisorResultGraphKey[];
@@ -393,7 +498,10 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     sessions: SessionResource;
     taskStore: TaskStoreResource;
   }) {
+    this.allSupervisorsRoute = input.allSupervisorsRoute;
     this.assignmentRoute = input.assignmentRoute;
+    this.#leases = input.leases;
+    this.#reachable = input.reachable;
     this.#workflows = input.workflows;
     this.#now = input.now;
     this.#resultGraphKey = input.resultGraphKey;
@@ -562,7 +670,14 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     if (!binding || binding.recipient !== input.recipient) {
       throw new Error("Result publication assignment denied");
     }
-    await this.#sessions.assertReady(scope, input.recipient);
+    if (this.#reachable) {
+      // r9: the same rule as the recipient route (lease, mailbox or r8).
+      if (!(await this.#reachable(scope, input.recipient))) {
+        throw new Error("Result publication recipient is not reachable");
+      }
+    } else {
+      await this.#sessions.assertReady(scope, input.recipient);
+    }
     await publishSupervisorA2AAcceptedResult({
       binding,
       context: new ServerCallContext({
@@ -605,6 +720,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     for (const resource of [
       this.host,
       ...(this.#receipts ? [this.#receipts] : []),
+      ...(this.#leases ? [this.#leases] : []),
       this.#sessions,
       this.#ledger,
       this.#taskStore,
@@ -827,6 +943,923 @@ const createResultGraphRoute = (
   };
 };
 
+/* ---------------------------------------------------------------------------
+ * r9: every configured supervisor as a recipient. The routes below sit under
+ * `a2aV2.routePath` (see a2a-v2-routes-contract.ts); the r8 routes are
+ * unchanged. Each handler takes its stores as ports, so it is tested with
+ * fakes of the T1 lease store and the T2 endpoint delivery port.
+ * ------------------------------------------------------------------------- */
+
+const SESSION_BODY_MAX_BYTES = 16 * 1024;
+const INGRESS_BODY_MAX_BYTES = 64 * 1024;
+/** GET messages/<id> scans at most this many pages of the sender's tasks. */
+const MESSAGE_STATUS_TASK_PAGES = 10;
+const MESSAGE_STATUS_TASK_PAGE_SIZE = 100;
+
+const routeJson = (
+  status: number,
+  value: unknown,
+  headers?: HeadersInit
+): Response =>
+  Response.json(value, {
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      ...headers,
+    },
+    status,
+  });
+
+const routeError = (
+  code: Exclude<A2AV2RouteErrorCode, "lease-fenced" | "lease-held">,
+  headers?: HeadersInit
+): Response =>
+  routeJson(A2A_V2_ROUTE_ERROR_STATUS[code], { error: { code } }, headers);
+
+const isJsonRequest = (request: Request): boolean => {
+  const mediaType = (request.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  return (
+    mediaType === "application/json" || mediaType === "application/a2a+json"
+  );
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Authenticate a request, or the error response. An authenticator that
+ * throws is a 500 with a fixed code; no identity is a 401.
+ */
+const authenticateRoute = async (
+  authenticator: SupervisorA2AAuthenticator,
+  request: Request
+): Promise<SupervisorA2AAuthenticatedIdentity | Response> => {
+  let identity: SupervisorA2AAuthenticatedIdentity | undefined;
+  try {
+    identity = await authenticator.authenticate(request);
+  } catch {
+    return routeError("authentication-failed");
+  }
+  return identity ?? routeError("unauthenticated");
+};
+
+/** The lease store as the session routes use it: absent until T1 is wired. */
+export type A2AV2SessionLeaseStore = Pick<
+  SupervisorEndpointLeaseStore,
+  "claim" | "release" | "renew"
+>;
+
+export interface A2AV2SessionRoutesOptions {
+  /** Any configured supervisor identity (the control-surface tokens). */
+  authenticator: SupervisorA2AAuthenticator;
+  /** Undefined when no lease store is available: every request is 503. */
+  leases(): A2AV2SessionLeaseStore | undefined;
+  log?: (line: string) => void;
+  principalForRecipient(recipient: string): string | undefined;
+  /** The server's own resolver; a claim's locator is resolved before the store. */
+  resolveLocator: SupervisorEndpointLocatorResolver;
+  /** a2aV2.sessionTtlMs, for a request that names no ttlMs. */
+  sessionTtlMs: number;
+  tenant: string;
+}
+
+const sessionReceipt = (
+  operation: A2AV2SessionOperation,
+  lease: SupervisorEndpointLeaseV2,
+  extra: Pick<A2AV2SessionReceipt, "changed" | "tookOver">
+): A2AV2SessionReceipt => ({
+  ...extra,
+  descriptorRevision: lease.descriptorRevision,
+  epoch: lease.epoch,
+  expiresAt: lease.expiresAt,
+  holderRef: lease.holderRef,
+  kind: lease.kind,
+  operation,
+  releasedAt: lease.releasedAt,
+  schema: A2A_V2_SESSION_RECEIPT_SCHEMA,
+  supervisorId: lease.recipient,
+});
+
+/** A store rejection: never its text. */
+const sessionStoreFailure = (error: unknown): Response => {
+  if (error instanceof SupervisorEndpointLocatorError) {
+    return routeError("locator-refused");
+  }
+  if (error instanceof SupervisorEndpointLeaseError) {
+    return routeError("request-invalid");
+  }
+  return routeError("v2-unavailable");
+};
+
+/**
+ * POST {routePath}/sessions/{claim,renew,release}. The bearer identity's
+ * supervisorId must equal the body's, and must be the configured binding of
+ * its principal. The scope is the seat's own: {tenant, principalFor(id)}.
+ *
+ * SECURITY: a claim's locator is untrusted ids. It is resolved here, with the
+ * server's resolver for the AUTHENTICATED supervisor, before the store sees
+ * it (the store resolves it again in its transaction); a refusal is 403
+ * `locator-refused` with no detail. Renew re-resolves the stored locator in
+ * the store, after the fence. No receipt echoes a locator.
+ */
+/** An authenticated, decoded, identity-bound session request. */
+interface A2AV2SessionCall<O extends A2AV2SessionOperation> {
+  body: A2AV2SessionRequestByOperation[O];
+  leases: A2AV2SessionLeaseStore;
+  recipient: string;
+  scope: TrustedSupervisorMessageV2Scope;
+}
+
+/** Method, media type, bearer, body bound, strict decode and identity. */
+const acceptSessionRequest = async <O extends A2AV2SessionOperation>(
+  options: A2AV2SessionRoutesOptions,
+  request: Request,
+  operation: O
+): Promise<A2AV2SessionCall<O> | Response> => {
+  if (request.method !== "POST") {
+    return routeError("method-not-allowed", { allow: "POST" });
+  }
+  if (!isJsonRequest(request)) {
+    return routeError("content-type-invalid");
+  }
+  const identity = await authenticateRoute(options.authenticator, request);
+  if (identity instanceof Response) {
+    return identity;
+  }
+  const raw = await readBoundedRequestText(request, SESSION_BODY_MAX_BYTES);
+  if (raw === undefined) {
+    return routeError("body-too-large");
+  }
+  let body: A2AV2SessionRequestByOperation[O];
+  try {
+    body = parseA2AV2SessionRequest(operation, JSON.parse(raw));
+  } catch {
+    return routeError("request-invalid");
+  }
+  // The body names the authenticated supervisor, whose configured principal
+  // is the authenticated one: a token acts only for its own seat.
+  const principal = options.principalForRecipient(identity.supervisorId);
+  if (
+    body.supervisorId !== identity.supervisorId ||
+    principal === undefined ||
+    principal !== identity.principal
+  ) {
+    return routeError("identity-mismatch");
+  }
+  const leases = options.leases();
+  if (!leases) {
+    return routeError("v2-unavailable");
+  }
+  return {
+    body,
+    leases,
+    recipient: identity.supervisorId,
+    scope: { principal, tenantId: options.tenant },
+  };
+};
+
+const leaseHeldResponse = (
+  current: SupervisorEndpointLeaseHolderSummary
+): Response =>
+  routeJson(A2A_V2_ROUTE_ERROR_STATUS["lease-held"], {
+    error: { code: "lease-held", current },
+  });
+
+const leaseFencedResponse = (
+  reason: SupervisorEndpointLeaseFenceRefusal
+): Response =>
+  routeJson(A2A_V2_ROUTE_ERROR_STATUS["lease-fenced"], {
+    error: { code: "lease-fenced", reason },
+  });
+
+const claimSession = async (
+  options: A2AV2SessionRoutesOptions,
+  call: A2AV2SessionCall<"claim">,
+  refused: (reason: string) => Response
+): Promise<Response> => {
+  const { body, recipient } = call;
+  // SECURITY: resolve the untrusted ids for the AUTHENTICATED supervisor
+  // before the store sees them.
+  try {
+    options.resolveLocator(body.locator, recipient);
+  } catch (error) {
+    return refused(supervisorEndpointLocatorRefused(error).reason);
+  }
+  const result = await call.leases.claim({
+    holderRef: body.holderRef,
+    locator: body.locator,
+    recipient,
+    scope: call.scope,
+    sessionRef: body.sessionRef,
+    ...(body.takeover === undefined ? {} : { takeover: body.takeover }),
+    ttlMs: body.ttlMs ?? options.sessionTtlMs,
+  });
+  if (result.status === "held") {
+    return leaseHeldResponse(result.current);
+  }
+  if (result.status === "locator-refused") {
+    return refused(result.reason);
+  }
+  return routeJson(
+    200,
+    sessionReceipt("claim", result.lease, { tookOver: result.tookOver })
+  );
+};
+
+const renewSession = async (
+  options: A2AV2SessionRoutesOptions,
+  call: A2AV2SessionCall<"renew">,
+  refused: (reason: string) => Response
+): Promise<Response> => {
+  const { body } = call;
+  const result = await call.leases.renew({
+    fence: { epoch: body.epoch, holderRef: body.holderRef },
+    recipient: call.recipient,
+    scope: call.scope,
+    ttlMs: body.ttlMs ?? options.sessionTtlMs,
+  });
+  if (result.status === "fenced") {
+    return leaseFencedResponse(result.reason);
+  }
+  if (result.status === "locator-refused") {
+    return refused(result.reason);
+  }
+  return routeJson(200, sessionReceipt("renew", result.lease, {}));
+};
+
+const releaseSession = async (
+  call: A2AV2SessionCall<"release">
+): Promise<Response> => {
+  const { body } = call;
+  const result = await call.leases.release({
+    fence: { epoch: body.epoch, holderRef: body.holderRef },
+    recipient: call.recipient,
+    scope: call.scope,
+  });
+  if (result.status === "fenced") {
+    return leaseFencedResponse(result.reason);
+  }
+  return routeJson(
+    200,
+    sessionReceipt("release", result.lease, { changed: result.changed })
+  );
+};
+
+/**
+ * POST {routePath}/sessions/{claim,renew,release}. The bearer identity's
+ * supervisorId must equal the body's, and must be the configured binding of
+ * its principal. The scope is the seat's own: {tenant, principalFor(id)}.
+ *
+ * SECURITY: a claim's locator is untrusted ids. It is resolved here, with the
+ * server's resolver for the AUTHENTICATED supervisor, before the store sees
+ * it (the store resolves it again in its transaction); a refusal is 403
+ * `locator-refused` with no detail. Renew re-resolves the stored locator in
+ * the store, after the fence. No receipt echoes a locator.
+ */
+export const createA2AV2SessionRoutesHandler = (
+  options: A2AV2SessionRoutesOptions
+): ((
+  request: Request,
+  operation: A2AV2SessionOperation
+) => Promise<Response>) => {
+  const log = options.log ?? ((line: string) => console.error(line));
+  return async (request, operation) => {
+    const call = await acceptSessionRequest(options, request, operation);
+    if (call instanceof Response) {
+      return call;
+    }
+    // The reason is for the operator's log only; the caller learns nothing.
+    const refused = (reason: string): Response => {
+      log(
+        `A2A V2 session ${operation} refused for ${call.recipient}: locator ${reason}`
+      );
+      return routeError("locator-refused");
+    };
+    try {
+      if (operation === "claim") {
+        return await claimSession(
+          options,
+          call as A2AV2SessionCall<"claim">,
+          refused
+        );
+      }
+      if (operation === "renew") {
+        return await renewSession(
+          options,
+          call as A2AV2SessionCall<"renew">,
+          refused
+        );
+      }
+      return await releaseSession(call as A2AV2SessionCall<"release">);
+    } catch (error) {
+      return sessionStoreFailure(error);
+    }
+  };
+};
+
+export interface A2AV2SupervisorIngressGateOptions {
+  /** Any configured supervisor identity. */
+  authenticator: SupervisorA2AAuthenticator;
+  /**
+   * The configured grants: may this principal, as `from`, send to `to`
+   * (operation `receive`)?
+   */
+  mayReceive(input: { from: string; principal: string; to: string }): boolean;
+}
+
+/** The SDK methods that carry a message to the path's supervisor. */
+const SENDING_METHODS = new Set(["SendMessage", "SendStreamingMessage"]);
+
+/** `harness.dev/from` of the message a JSON-RPC request sends, if it sends. */
+const sentFrom = (
+  parsed: unknown
+): { from: unknown; sends: true } | { sends: false } => {
+  if (!isPlainRecord(parsed)) {
+    return { sends: false };
+  }
+  const params = isPlainRecord(parsed.params) ? parsed.params : undefined;
+  if (!(SENDING_METHODS.has(String(parsed.method)) || params?.message)) {
+    return { sends: false };
+  }
+  const message = isPlainRecord(params?.message) ? params.message : undefined;
+  const metadata = isPlainRecord(message?.metadata)
+    ? message.metadata
+    : undefined;
+  return { from: metadata?.[FROM_METADATA_KEY], sends: true };
+};
+
+const parseJsonOrUndefined = (raw: string): unknown => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // The SDK answers a parse error itself.
+    return undefined;
+  }
+};
+
+/**
+ * The gate in front of one supervisor's SDK ingress: it authenticates any
+ * configured identity, then requires every message the request carries to
+ * name the AUTHENTICATED supervisor in `harness.dev/from` and a configured
+ * `receive` grant for {principal, from, to}. A refusal is 403
+ * `identity-mismatch` and the SDK never sees the request. The SDK handler is
+ * then given the same identity, not a second authentication.
+ */
+export const createA2AV2SupervisorIngressGate = (
+  options: A2AV2SupervisorIngressGateOptions
+): ((
+  request: Request,
+  to: string,
+  sdk: (
+    request: Request,
+    identity?: SupervisorA2AAuthenticatedIdentity
+  ) => Promise<Response>
+) => Promise<Response>) => {
+  return async (request, to, sdk) => {
+    if (request.method !== "POST" || !isJsonRequest(request)) {
+      // The SDK adapter answers 405 or 415 before it would authenticate.
+      return sdk(request);
+    }
+    const identity = await authenticateRoute(options.authenticator, request);
+    if (identity instanceof Response) {
+      return identity;
+    }
+    const raw = await readBoundedRequestText(request, INGRESS_BODY_MAX_BYTES);
+    if (raw === undefined) {
+      return routeError("body-too-large");
+    }
+    const parsed = parseJsonOrUndefined(raw);
+    if (Array.isArray(parsed)) {
+      // A batch is not a request this ingress serves.
+      return routeError("request-invalid");
+    }
+    const sent = sentFrom(parsed);
+    if (
+      sent.sends &&
+      (sent.from !== identity.supervisorId ||
+        !options.mayReceive({
+          from: identity.supervisorId,
+          principal: identity.principal,
+          to,
+        }))
+    ) {
+      return routeError("identity-mismatch");
+    }
+    const headers = new Headers(request.headers);
+    headers.delete("content-length");
+    return sdk(
+      new Request(request.url, { body: raw, headers, method: request.method }),
+      identity
+    );
+  };
+};
+
+export interface A2AV2MessageStatusOptions {
+  authenticator: SupervisorA2AAuthenticator;
+  /**
+   * The message's projection in exactly this scope, or undefined when it is
+   * absent there (absent, or another tenant's or principal's: never told
+   * apart).
+   */
+  status(
+    scope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<
+    | Pick<
+        SupervisorMessageV2Projection,
+        "acknowledgedAt" | "deliveredAt" | "phase" | "to"
+      >
+    | undefined
+  >;
+  /** The SDK task state of the A2A task carrying the message, if any. */
+  taskState(
+    scope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<TaskState | undefined>;
+  tenant: string;
+}
+
+/**
+ * GET {routePath}/messages/<messageId>, where the id is the message workflow
+ * id the A2A task carries in `harness.dev/workflowId`. Answers only within
+ * {route tenant, authenticated principal}: the sender's own messages. Any
+ * other id is 404, indistinguishable from an absent one. Delivery, the
+ * recipient's read ACK and completion stay three separate facts.
+ */
+export const createA2AV2MessageStatusHandler = (
+  options: A2AV2MessageStatusOptions
+): ((request: Request, messageId: string) => Promise<Response>) => {
+  return async (request, messageId) => {
+    if (request.method !== "GET") {
+      return routeError("method-not-allowed", { allow: "GET" });
+    }
+    const identity = await authenticateRoute(options.authenticator, request);
+    if (identity instanceof Response) {
+      return identity;
+    }
+    const scope = { principal: identity.principal, tenantId: options.tenant };
+    try {
+      const projection = await options.status(scope, messageId);
+      if (!projection) {
+        return routeError("not-found");
+      }
+      const taskState = a2aV2TaskStateName(
+        await options.taskState(scope, messageId)
+      );
+      const body: A2AV2MessageStatusResponse = {
+        acknowledgedAt: projection.acknowledgedAt,
+        deliveredAt: projection.deliveredAt,
+        messageId,
+        phase: projection.phase,
+        schema: A2A_V2_MESSAGE_STATUS_SCHEMA,
+        taskState,
+        to: projection.to,
+        workResultCompleted: a2aV2WorkResultCompleted(taskState),
+      };
+      return routeJson(200, body);
+    } catch {
+      return routeError("v2-unavailable");
+    }
+  };
+};
+
+/**
+ * The state of the sender's A2A task that carries `workflowId`, from the
+ * sender's own task scope, scanning a bounded number of pages.
+ */
+export const a2aV2MessageTaskState = async (
+  taskStore: TaskStore,
+  scope: TrustedSupervisorMessageV2Scope,
+  workflowId: string
+): Promise<TaskState | undefined> => {
+  const context = new ServerCallContext({
+    tenant: scope.tenantId,
+    user: { isAuthenticated: true, userName: scope.principal },
+  });
+  let pageToken = "";
+  for (let page = 0; page < MESSAGE_STATUS_TASK_PAGES; page += 1) {
+    const listed = await taskStore.list(
+      {
+        contextId: "",
+        includeArtifacts: false,
+        pageSize: MESSAGE_STATUS_TASK_PAGE_SIZE,
+        pageToken,
+        status: TaskState.TASK_STATE_UNSPECIFIED,
+        statusTimestampAfter: undefined,
+        tenant: scope.tenantId,
+      },
+      context
+    );
+    const carrying = listed.tasks.find((task) => {
+      const ids = task.metadata?.[WORKFLOW_IDS_METADATA_KEY];
+      return Array.isArray(ids) && ids.includes(workflowId);
+    });
+    if (carrying) {
+      return carrying.status?.state;
+    }
+    if (!listed.nextPageToken) {
+      return undefined;
+    }
+    pageToken = listed.nextPageToken;
+  }
+  return undefined;
+};
+
+/** The r9 options of the service; absent, the service is exactly r8's. */
+export interface SupervisorA2AV2AllSupervisorsOptions {
+  /** Any configured supervisor identity (the control-surface tokens). */
+  authenticator: SupervisorA2AAuthenticator;
+  /**
+   * T2's endpoint delivery and readiness, built from the store this service
+   * opened. Absent: a lease-backed recipient is unready (no adapter), while
+   * mailbox-held recipients are delivered through `delivery`.
+   */
+  endpointDelivery?(input: {
+    leases: SupervisorEndpointLeaseReader;
+    sessions: Pick<SessionResource, "current">;
+  }): SupervisorEndpointDeliveryPort;
+  hasMailbox(recipient: string): boolean;
+  /** r8's manifest-bound seats; see SupervisorMessageV2RecipientEndpoints. */
+  legacySeats: readonly string[];
+  log?: (line: string) => void;
+  mayReceive(input: { from: string; principal: string; to: string }): boolean;
+  principalForRecipient(recipient: string): string | undefined;
+  /** The server's own resolver (createSupervisorEndpointLocatorResolver). */
+  resolveLocator: SupervisorEndpointLocatorResolver;
+  routePath: string;
+  sessionTtlMs: number;
+  /** Every configured supervisor; each gets {routePath}/supervisors/<slug>. */
+  supervisorIds: readonly string[];
+}
+
+/** No lease store: every recipient has no lease row. */
+const NO_LEASES: SupervisorEndpointLeaseReader = {
+  list: () => Promise.resolve([]),
+  resolve: () => Promise.resolve({ state: "none" }),
+};
+
+/**
+ * Delivery, readiness and the not-enrolled port for every configured
+ * supervisor, by one rule. An r8 seat with no lease row keeps r8's path (its
+ * sender-scope descriptor and the bridge-then-mailbox delivery). Every other
+ * recipient follows `decideSupervisorEndpointRoute`: through T2's endpoint
+ * port when it is wired, else mailbox-held recipients through the mailbox
+ * delivery and lease-backed ones unready (a transient failure; never the
+ * mailbox while a session holds the lease).
+ */
+export class SupervisorA2AV2RecipientRouting
+  implements
+    SupervisorMessageV2DeliveryPort,
+    SupervisorMessageV2DeliveryReadinessPort,
+    SupervisorMessageV2RecipientEnrollmentPort
+{
+  readonly #endpoint: SupervisorEndpointDeliveryPort | undefined;
+  readonly #enrollment: SupervisorMessageV2RecipientEnrollmentPort | undefined;
+  readonly #hasMailbox: (recipient: string) => boolean;
+  readonly #leases: SupervisorEndpointLeaseReader;
+  readonly #legacy: {
+    delivery: SupervisorMessageV2DeliveryPort;
+    readiness: SupervisorMessageV2DeliveryReadinessPort;
+  };
+  readonly #legacySeats: ReadonlySet<string>;
+
+  constructor(input: {
+    delivery: SupervisorMessageV2DeliveryPort;
+    endpoint?: SupervisorEndpointDeliveryPort;
+    enrollment?: SupervisorMessageV2RecipientEnrollmentPort;
+    hasMailbox(recipient: string): boolean;
+    leases: SupervisorEndpointLeaseReader;
+    legacySeats: readonly string[];
+    /** r8's readiness: the descriptor in the sender scope. */
+    sessions: SupervisorMessageV2DeliveryReadinessPort;
+  }) {
+    this.#endpoint = input.endpoint;
+    this.#enrollment = input.enrollment;
+    this.#hasMailbox = input.hasMailbox;
+    this.#leases = input.leases;
+    this.#legacy = { delivery: input.delivery, readiness: input.sessions };
+    this.#legacySeats = new Set(input.legacySeats);
+  }
+
+  /** The lease resolution, or undefined for an r8 seat with no lease row. */
+  async #resolution(
+    tenantId: string,
+    recipient: string
+  ): Promise<SupervisorEndpointLeaseResolution | undefined> {
+    let resolution: SupervisorEndpointLeaseResolution;
+    try {
+      resolution = await this.#leases.resolve(tenantId, recipient);
+    } catch {
+      throw new SupervisorMessageV2ReadinessUnavailableError();
+    }
+    return this.#legacySeats.has(recipient) && resolution.state === "none"
+      ? undefined
+      : resolution;
+  }
+
+  async assertReady(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    recipient: string
+  ): Promise<unknown> {
+    const resolution = await this.#resolution(trustedScope.tenantId, recipient);
+    if (!resolution) {
+      return this.#legacy.readiness.assertReady(trustedScope, recipient);
+    }
+    if (this.#endpoint) {
+      return this.#endpoint.readiness.assertReady(trustedScope, recipient);
+    }
+    const route = decideSupervisorEndpointRoute(
+      resolution,
+      this.#hasMailbox(recipient)
+    );
+    if (route === "mailbox") {
+      return { state: "mailbox-ready" };
+    }
+    if (route === "defer") {
+      throw new Error(SUPERVISOR_ENDPOINT_REASONS.leaseExpired);
+    }
+    if (route === "none") {
+      throw new Error(SUPERVISOR_ENDPOINT_REASONS.noEndpoint);
+    }
+    // A live lease with no adapter wired cannot be delivered to.
+    throw new Error(SUPERVISOR_ENDPOINT_REASONS.probeFailed);
+  }
+
+  async deliver(
+    envelope: SupervisorMessageV2DeliveryEnvelope
+  ): Promise<SupervisorMessageV2DeliveryOutcome> {
+    let resolution: SupervisorEndpointLeaseResolution | undefined;
+    try {
+      resolution = await this.#resolution(envelope.tenantId, envelope.target);
+    } catch {
+      return {
+        reason: "recipient endpoint store is unavailable",
+        status: "transient-failure",
+      };
+    }
+    if (!resolution) {
+      return this.#legacy.delivery.deliver(envelope);
+    }
+    if (this.#endpoint) {
+      return this.#endpoint.deliver(envelope);
+    }
+    const route = decideSupervisorEndpointRoute(
+      resolution,
+      this.#hasMailbox(envelope.target)
+    );
+    if (route === "mailbox") {
+      return this.#legacy.delivery.deliver(envelope);
+    }
+    if (route === "endpoint") {
+      return {
+        reason: SUPERVISOR_ENDPOINT_REASONS.probeFailed,
+        status: "transient-failure",
+      };
+    }
+    return supervisorEndpointUndeliverable(route);
+  }
+
+  notEnrolledSince(recipient: string): number | undefined {
+    return (
+      this.#enrollment?.notEnrolledSince(recipient) ??
+      this.#endpoint?.readiness.notEnrolledSince(recipient)
+    );
+  }
+}
+
+/**
+ * The one r9 route handler: sessions, each configured supervisor's gated SDK
+ * ingress, and the sender's message status. Each supervisor's ingress shares
+ * the primary's stores and trackers; only its SDK handler is used (the
+ * primary ingress owns recovery).
+ */
+const createAllSupervisorsRoute = (input: {
+  all: SupervisorA2AV2AllSupervisorsOptions;
+  card: SupervisorA2AV2ServiceOptions["card"];
+  leases(): LeaseResource | undefined;
+  ledger: LedgerResource;
+  log?: (line: string) => void;
+  shared: Omit<
+    SupervisorA2AV2IngressOptions,
+    "card" | "operatorConfigPath" | "recoveryIntervalMs" | "supervisorId"
+  >;
+  statusCoordinator: SupervisorMessageV2Coordinator;
+  taskStore: TaskStore;
+  tenant: string;
+}): NonNullable<SupervisorA2AV2Service["allSupervisorsRoute"]> => {
+  const { all } = input;
+  const gate = createA2AV2SupervisorIngressGate({
+    authenticator: all.authenticator,
+    mayReceive: all.mayReceive,
+  });
+  // The gate authenticated the request; the SDK adapter is handed that same
+  // identity for exactly the request object the gate built.
+  const gated = new WeakMap<Request, SupervisorA2AAuthenticatedIdentity>();
+  const sdkAuthenticator: SupervisorA2AAuthenticator = {
+    authenticate: (request) => gated.get(request),
+  };
+  const ingress = new Map<
+    string,
+    (
+      request: Request,
+      identity?: SupervisorA2AAuthenticatedIdentity
+    ) => Promise<Response>
+  >();
+  for (const supervisorId of new Set(all.supervisorIds)) {
+    const pathname = a2aV2SupervisorIngressPath(all.routePath, supervisorId);
+    const seatIngress = new SupervisorA2AV2Ingress({
+      ...input.shared,
+      card: {
+        ...input.card,
+        supervisorId,
+        url: new URL(pathname, input.card.url).toString(),
+      },
+      supervisorId,
+    });
+    const sdk = createSupervisorA2AHttpHandler({
+      authenticator: sdkAuthenticator,
+      handler: seatIngress.handler,
+      pathname,
+      tenant: input.tenant,
+    });
+    ingress.set(supervisorId, (request, identity) => {
+      if (identity) {
+        gated.set(request, identity);
+      }
+      return sdk(request);
+    });
+  }
+  const sessions = createA2AV2SessionRoutesHandler({
+    authenticator: all.authenticator,
+    leases: input.leases,
+    ...(input.log ? { log: input.log } : {}),
+    principalForRecipient: all.principalForRecipient,
+    resolveLocator: all.resolveLocator,
+    sessionTtlMs: all.sessionTtlMs,
+    tenant: input.tenant,
+  });
+  const status = createA2AV2MessageStatusHandler({
+    authenticator: all.authenticator,
+    status: async (scope, workflowId) => {
+      try {
+        // Absent, or another tenant's or principal's: one answer, 404.
+        await input.ledger.assertStartIntent(workflowId, scope);
+      } catch {
+        return undefined;
+      }
+      return input.statusCoordinator.status(scope, workflowId);
+    },
+    taskState: (scope, workflowId) =>
+      a2aV2MessageTaskState(input.taskStore, scope, workflowId),
+    tenant: input.tenant,
+  });
+  return {
+    httpHandler: (request) => {
+      const match = matchA2AV2Route(
+        all.routePath,
+        new URL(request.url).pathname
+      );
+      if (match?.route === "session") {
+        return sessions(request, match.operation);
+      }
+      if (match?.route === "message-status") {
+        return status(request, match.messageId);
+      }
+      const seat = match ? ingress.get(match.supervisorId) : undefined;
+      return match && seat
+        ? gate(request, match.supervisorId, seat)
+        : Promise.resolve(routeError("not-found"));
+    },
+    routePath: all.routePath,
+  };
+};
+
+/** The primary route, unless r9 configured no r8 recipient to serve. */
+const primaryRoutes = (
+  options: SupervisorA2AV2ServiceOptions,
+  handler: (request: Request) => Promise<Response>
+): [string, (request: Request) => Promise<Response>][] =>
+  options.route.mounted === false
+    ? []
+    : [[options.route.pathname ?? "/a2a", handler]];
+
+/**
+ * r9: open the lease store (T1) and build T2's endpoint port when wired, and
+ * the routing every delivery path shares. Undefined without allSupervisors.
+ * `onLeases` hands the store to the caller as soon as it is open, so a later
+ * failure still closes it.
+ */
+const openAllSupervisorsRouting = async (input: {
+  dependencies: SupervisorA2AV2ServiceDependencies;
+  onLeases(leases: LeaseResource): void;
+  onStage(stage: string): void;
+  options: SupervisorA2AV2ServiceOptions;
+  sessions: SessionResource;
+}): Promise<
+  | {
+      enrollment: Pick<
+        SupervisorA2AV2SessionEnrollmentPort,
+        "endpointLeases" | "endpointReadiness"
+      >;
+      routing: SupervisorA2AV2RecipientRouting;
+    }
+  | undefined
+> => {
+  const all = input.options.allSupervisors;
+  if (!all) {
+    return undefined;
+  }
+  let leases: LeaseResource | undefined;
+  if (input.dependencies.connectLeases) {
+    input.onStage("endpoint-lease-store");
+    leases = await input.dependencies.connectLeases({
+      databaseUrl: input.options.databaseUrl,
+      now: input.options.now,
+      resolveLocator: all.resolveLocator,
+    });
+    input.onLeases(leases);
+    await leases.migrate?.();
+  }
+  input.onStage("endpoint-delivery");
+  const endpoint = all.endpointDelivery?.({
+    leases: leases ?? NO_LEASES,
+    sessions: input.sessions,
+  });
+  return {
+    enrollment: {
+      ...(leases ? { endpointLeases: leases } : {}),
+      ...(endpoint ? { endpointReadiness: endpoint.readiness } : {}),
+    },
+    routing: new SupervisorA2AV2RecipientRouting({
+      delivery: input.options.delivery,
+      endpoint,
+      enrollment: input.options.recipientEnrollment,
+      hasMailbox: all.hasMailbox,
+      leases: leases ?? NO_LEASES,
+      legacySeats: all.legacySeats,
+      sessions: input.sessions,
+    }),
+  };
+};
+
+/**
+ * r9: the recipient route's lease rule, the result publication rule (the
+ * same one), and the all-supervisors route. Empty without allSupervisors.
+ */
+const composeAllSupervisors = (input: {
+  leases: LeaseResource | undefined;
+  ledger: LedgerResource;
+  options: SupervisorA2AV2ServiceOptions;
+  sessions: SessionResource;
+  shared: Parameters<typeof createAllSupervisorsRoute>[0]["shared"];
+  statusCoordinator: SupervisorMessageV2Coordinator;
+  taskStore: TaskStoreResource;
+}): {
+  endpoints?: SupervisorMessageV2RecipientEndpoints;
+  reachable?(
+    scope: TrustedSupervisorMessageV2Scope,
+    recipient: string
+  ): Promise<boolean>;
+  route?: SupervisorA2AV2Service["allSupervisorsRoute"];
+} => {
+  const { options } = input;
+  const all = options.allSupervisors;
+  if (!all) {
+    return {};
+  }
+  const endpoints: SupervisorMessageV2RecipientEndpoints = {
+    hasMailbox: all.hasMailbox,
+    leases: input.leases ?? NO_LEASES,
+    legacySeats: new Set(all.legacySeats),
+    resolveLocator: all.resolveLocator,
+  };
+  return {
+    endpoints,
+    reachable: createSupervisorMessageV2RecipientReachability({
+      endpoints,
+      principalForRecipient:
+        options.recipientRoute?.principalForRecipient ??
+        all.principalForRecipient,
+      sessions: input.sessions,
+      tenantId: options.route.tenant,
+    }),
+    route: createAllSupervisorsRoute({
+      all,
+      card: options.card,
+      leases: () => input.leases,
+      ledger: input.ledger,
+      log: all.log ?? options.log,
+      shared: input.shared,
+      statusCoordinator: input.statusCoordinator,
+      taskStore: input.taskStore,
+      tenant: options.route.tenant,
+    }),
+  };
+};
+
 /**
  * Construct the standard local V2 composition from the maintained A2A SDK,
  * PostgreSQL stores, and Temporal workflow port. No listener is published by
@@ -835,21 +1868,30 @@ const createResultGraphRoute = (
 export const createSupervisorA2AV2Service = async (
   options: SupervisorA2AV2ServiceOptions
 ): Promise<SupervisorA2AV2Service> => {
-  const dependencies = options.dependencies ?? defaultDependencies;
+  const dependencies =
+    options.dependencies ?? defaultSupervisorA2AV2ServiceDependencies;
   // One tracker for every delivery path of this service, so a recipient's
   // outage is logged, bounded, and counted once, whichever path delivers.
   const readinessOutage = new SupervisorMessageV2ReadinessOutageTracker({
     boundMs: options.readinessOutageBoundMs,
   });
+  // r9: lease-aware delivery and readiness for every configured supervisor,
+  // built once the stores are open. Its not-enrolled port adds T2's expired
+  // leases to the host's own enrollment.
+  let routing: SupervisorA2AV2RecipientRouting | undefined;
   // Likewise one not-enrolled deferral for every path, fed by the host's
   // own enrollment of its seats.
   const notEnrolled = new SupervisorMessageV2NotEnrolledDeferral({
     boundMs: options.notEnrolledBoundMs,
-    enrollment: options.recipientEnrollment,
+    enrollment: {
+      notEnrolledSince: (recipient) =>
+        (routing ?? options.recipientEnrollment)?.notEnrolledSince(recipient),
+    },
   });
   let taskStore: TaskStoreResource | undefined;
   let ledger: LedgerResource | undefined;
   let sessions: SessionResource | undefined;
+  let leases: LeaseResource | undefined;
   let ingress: SupervisorA2AV2Ingress | undefined;
   let host: TemporalSupervisorRuntimeHost | undefined;
   let receipts: PostgresSupervisorMessageV2GovernanceReceiptStore | undefined;
@@ -889,11 +1931,28 @@ export const createSupervisorA2AV2Service = async (
       provider: options.providerReadiness,
     });
     await sessions.migrate();
+    const opened = await openAllSupervisorsRouting({
+      dependencies,
+      onLeases: (store) => {
+        leases = store;
+      },
+      onStage: (next) => {
+        stage = next;
+      },
+      options,
+      sessions,
+    });
+    routing = opened?.routing;
+    const delivery: SupervisorMessageV2DeliveryPort =
+      routing ?? options.delivery;
+    const readiness: SupervisorMessageV2DeliveryReadinessPort =
+      routing ?? sessions;
     if (options.enrollSessions) {
       stage = "session-enrollment";
       const store = sessions;
       await options.enrollSessions({
         currentSession: (scope, recipient) => store.current(scope, recipient),
+        ...opened?.enrollment,
         rebindSession: (scope, descriptor) => store.rebind(scope, descriptor),
         registerSession: (scope, descriptor) =>
           store.register(scope, descriptor),
@@ -915,11 +1974,11 @@ export const createSupervisorA2AV2Service = async (
         authority: options.messageAuthority,
         coordinator: new SupervisorMessageV2Coordinator(
           workflows,
-          options.delivery,
+          delivery,
           ledger,
           options.dispatchOwner,
           () => new Date(options.now()),
-          sessions,
+          readiness,
           readinessOutage,
           notEnrolled
         ),
@@ -930,14 +1989,14 @@ export const createSupervisorA2AV2Service = async (
     // Every ingress (primary and peer) shares these, the outage tracker and
     // the not-enrolled deferral among them.
     const shared = {
-      delivery: options.delivery,
+      delivery,
       dispatchOwner: options.dispatchOwner,
       ledger,
       notEnrolled,
       now: options.now,
       policy: options.policy,
       readinessOutage,
-      sessionReadiness: sessions,
+      sessionReadiness: readiness,
       taskStore,
       workflows,
     };
@@ -963,9 +2022,7 @@ export const createSupervisorA2AV2Service = async (
       pathname: options.route.pathname,
       tenant: options.route.tenant,
     });
-    const routes = new Map([
-      [options.route.pathname ?? "/a2a", primaryHandler],
-    ]);
+    const routes = new Map(primaryRoutes(options, primaryHandler));
     for (const peer of options.peerRoutes ?? []) {
       validatePeerRoute(peer, [
         ...routes.keys(),
@@ -1001,6 +2058,24 @@ export const createSupervisorA2AV2Service = async (
         ? handler(request)
         : Promise.resolve(new Response(null, { status: 404 }));
     };
+    const r9 = composeAllSupervisors({
+      leases,
+      ledger,
+      options,
+      sessions,
+      shared,
+      statusCoordinator: new SupervisorMessageV2Coordinator(
+        workflows,
+        delivery,
+        ledger,
+        options.dispatchOwner,
+        () => new Date(options.now()),
+        readiness,
+        readinessOutage,
+        notEnrolled
+      ),
+      taskStore,
+    });
     let recipientRoute: SupervisorA2AV2Service["recipientRoute"];
     let ownedService: OwnedSupervisorA2AV2Service;
     const assignmentRoute = createAssignmentRoute(
@@ -1030,6 +2105,7 @@ export const createSupervisorA2AV2Service = async (
             recipientAssignment: ledger.recipientAssignment.bind(ledger),
           },
           sessions,
+          endpoints: r9.endpoints,
         });
       recipientRoute = {
         pathname: options.recipientRoute.pathname,
@@ -1043,7 +2119,10 @@ export const createSupervisorA2AV2Service = async (
       };
     }
     ownedService = new OwnedSupervisorA2AV2Service({
+      allSupervisorsRoute: r9.route,
       assignmentRoute,
+      leases,
+      reachable: r9.reachable,
       workflows,
       now: options.now,
       previousResultGraphKeys: options.previousResultGraphKeys,
@@ -1071,6 +2150,7 @@ export const createSupervisorA2AV2Service = async (
     // reverse dependency order.
     await closeQuietly(host ?? ingress);
     await closeQuietly(receipts);
+    await closeQuietly(leases);
     await closeQuietly(sessions);
     await closeQuietly(ledger);
     await closeQuietly(taskStore);
