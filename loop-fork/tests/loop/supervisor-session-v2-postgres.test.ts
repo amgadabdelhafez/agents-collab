@@ -1116,6 +1116,10 @@ describe("PostgreSQL endpoint lease store", () => {
       });
       expect(again.tookOver).toBe(false);
       expect(again.descriptor.revision).toBe(3);
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: again.lease,
+        state: "live",
+      });
     } finally {
       await sessions.close();
     }
@@ -1124,7 +1128,7 @@ describe("PostgreSQL endpoint lease store", () => {
   test("a competing claim is fenced; takeover evicts the live holder and fences its renew and release", async () => {
     const owner = seatScope();
     const clock = { ms: START };
-    const { leases, sessions } = await open({ clock });
+    const { calls, leases, sessions } = await open({ clock });
     try {
       const a = await claimed(leases, claimInput(owner, "holder:a"));
       clock.ms += 1000;
@@ -1171,6 +1175,7 @@ describe("PostgreSQL endpoint lease store", () => {
         revision: 2,
         sessionRef: "session:claude-alpha-2",
       });
+      const resolvedBeforeFencing = calls.length;
       // The evicted holder's renew and release are fenced by the epoch.
       expect(
         await leases.renew({
@@ -1203,11 +1208,12 @@ describe("PostgreSQL endpoint lease store", () => {
           scope: owner,
         })
       ).toEqual({ reason: "holder-mismatch", status: "fenced" });
-      // Nothing that was fenced moved the lease.
+      // Nothing that was fenced moved the lease, or resolved its locator.
       expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
         lease: b.lease,
         state: "live",
       });
+      expect(calls).toHaveLength(resolvedBeforeFencing);
       // No lease for a recipient never claimed.
       expect(
         await leases.renew({
@@ -1591,15 +1597,30 @@ describe("PostgreSQL endpoint lease store", () => {
       const { leases, sessions } = await open();
       try {
         await claimed(leases, claimInput(owner, "holder:a"));
+        const stored = await admin<
+          { descriptor_id: string; kind: string; session_ref: string }[]
+        >`
+          SELECT descriptor_id, kind, session_ref
+          FROM loop_supervisor_endpoint_lease_v2
+          WHERE tenant_id = ${owner.tenantId}
+        `;
         for (const edit of [
           // Another run's ids without the digest that binds them.
-          `jsonb_set(locator_json, '{runId}', '"run-2"')`,
+          `locator_json = jsonb_set(locator_json, '{runId}', '"run-2"')`,
           // A path smuggled into the row.
-          `locator_json || '{"runDir": "/etc"}'::jsonb`,
+          `locator_json = locator_json || '{"runDir": "/etc"}'::jsonb`,
+          // The kind column disagreeing with the locator.
+          `kind = 'claude-channel'`,
+          // Another scope's descriptor.
+          `descriptor_id = 'supervisor-session-descriptor:v2:${"0".repeat(64)}'`,
+          // A session ref that is not one.
+          `session_ref = 'claude-alpha-1'`,
+          // A fence that is not one.
+          "holder_ref = 'bad holder'",
         ]) {
           await admin.unsafe(
             `UPDATE loop_supervisor_endpoint_lease_v2
-             SET locator_json = ${edit}
+             SET ${edit}
              WHERE tenant_id = $1`,
             [owner.tenantId]
           );
@@ -1614,7 +1635,11 @@ describe("PostgreSQL endpoint lease store", () => {
           ).rejects.toThrow("stored endpoint lease is invalid");
           await admin`
             UPDATE loop_supervisor_endpoint_lease_v2
-            SET locator_json = ${JSON.stringify(loopRun())}::text::jsonb
+            SET locator_json = ${JSON.stringify(loopRun())}::text::jsonb,
+              kind = ${stored[0]?.kind ?? ""},
+              descriptor_id = ${stored[0]?.descriptor_id ?? ""},
+              session_ref = ${stored[0]?.session_ref ?? ""},
+              holder_ref = 'holder:a'
             WHERE tenant_id = ${owner.tenantId}
           `;
           expect((await leases.resolve(owner.tenantId, ALPHA)).state).toBe(
@@ -1626,6 +1651,66 @@ describe("PostgreSQL endpoint lease store", () => {
       }
     }, 60_000);
   });
+
+  test("renew decides again under the row lock: a change landing while it resolves its locator wins", async () => {
+    for (const change of [
+      {
+        // A takeover: the epoch moves on.
+        expected: { reason: "epoch-mismatch", status: "fenced" },
+        set: "epoch = epoch + 1, holder_ref = 'holder:intruder'",
+      },
+      {
+        // The stored locator changes under the same fence (out of band).
+        expected: { reason: "invalid", status: "locator-refused" },
+        set: `locator_json = '${JSON.stringify(loopRun("run-2"))}'::jsonb,
+          locator_digest = '${supervisorEndpointLocatorDigest(loopRun("run-2"))}'`,
+      },
+    ]) {
+      const owner = seatScope();
+      const { calls, leases, sessions } = await open();
+      try {
+        const a = await claimed(leases, claimInput(owner, "holder:a"));
+        let renewal: Promise<unknown> | undefined;
+        await admin.begin(async (tx) => {
+          await tx.unsafe(
+            `UPDATE loop_supervisor_endpoint_lease_v2 SET ${change.set}
+             WHERE tenant_id = $1`,
+            [owner.tenantId]
+          );
+          // The renewal reads the committed row, passes the fence, resolves
+          // its locator, then waits on this transaction's row lock.
+          renewal = leases.renew({
+            fence: fenceOf(a.lease),
+            recipient: ALPHA,
+            scope: owner,
+            ttlMs: TTL,
+          });
+          // Commit only once the renewal is blocked on this row lock, so its
+          // write path, not just its first read, meets the change.
+          let waiting = 0;
+          for (let tick = 0; tick < 400 && waiting === 0; tick += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            const [lock] = await admin<{ count: number }[]>`
+              SELECT count(*)::int AS count FROM pg_locks WHERE NOT granted
+            `;
+            waiting = lock?.count ?? 0;
+          }
+          expect(calls).toHaveLength(2);
+          expect(waiting).toBeGreaterThan(0);
+        });
+        expect(await renewal).toEqual(change.expected);
+        // Nothing was extended past the change.
+        expect(await descriptorRows(owner)).toEqual([{ revision: "1" }]);
+        const [row] = await admin<{ expires_at: Date }[]>`
+          SELECT expires_at FROM loop_supervisor_endpoint_lease_v2
+          WHERE tenant_id = ${owner.tenantId}
+        `;
+        expect(row?.expires_at.toISOString()).toBe(a.lease.expiresAt);
+      } finally {
+        await sessions.close();
+      }
+    }
+  }, 60_000);
 
   test("lease and descriptor commit together: a denied rebind leaves the lease as it was", async () => {
     const owner = seatScope();

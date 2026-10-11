@@ -662,10 +662,12 @@ const storedLeaseFromRow = (row: LeaseRow): StoredEndpointLease => {
     ) {
       throw storedLeaseInvalid();
     }
-    const sessionRef = requireSupervisorEndpointSessionRef(row.session_ref);
-    // A stored identity that no longer derives (a Codex sessionRef that does
-    // not name its thread) is refused like any other corrupt row.
-    supervisorEndpointDescriptorIdentity(locator, sessionRef);
+    // The stored session ref must still be one, and must still derive the
+    // descriptor identity with this locator (a Codex ref names its thread).
+    const { sessionRef } = supervisorEndpointDescriptorIdentity(
+      locator,
+      row.session_ref as string
+    );
     const descriptorId = requireString(
       row.descriptor_id,
       "descriptorId",
