@@ -291,8 +291,73 @@ hostile LOOP_ORCHESTRATION_CONFIG is refused before any token is read",
 "the token never leaves the configured origin", "a run enrolled as another
 supervisor is renamed only by an explicit takeover"; the r9 e2e
 (`a2a-v2-all-supervisors-e2e.test.ts`) runs each `loop a2a` call with only
-its supervisor's token. Each guard was mutation-checked: reverting it fails
-those tests.
+its supervisor's token.
+
+Correction (ra1, 2026-10-11): the claim that every guard was mutation-checked
+was too broad. The r9b security review found four guards with no killing
+test: `--as ALICE` with only `BOB_TOKEN` set, the exact property keys of each
+MCP tool schema, the bridge's start-time identity cache, and the release
+tool's recorded-lease owner check. Each now has one: "only the acting
+supervisor's own token is read ...", "each MCP session tool's input schema
+has exactly its pinned property keys", "the a2a_release tool refuses a lease
+recorded for another supervisor before any request" (all in
+`a2a-session-client.test.ts`), and "a session bridge fixes its acting
+supervisor when it starts ..." (`bridge.test.ts`). On 2026-10-11 these
+mutations were each applied alone, and each failed at least one test named
+above:
+
+- the multi-token refusal removed;
+- a caller's opt-in honoured without the human flag;
+- the MCP tools honouring an opt-in;
+- the identity-argument refusal removed;
+- a2a_enroll asking for a takeover;
+- the CLI's and the tool's release owner checks removed;
+- the send tool acting as a tool-chosen identity;
+- the origin check removed;
+- each of the three config-override checks removed;
+- a token taken from another variable when the own one is unset;
+- an extra schema property;
+- the bridge's start-time fix removed, and its cache bypassed.
+
+Limit: the `--a2a-as` launch claim, the teardown release and `loop mailbox
+ack` refuse a multi-token environment only because they never pass the
+opt-in. Nothing tests those call sites for adding one.
+
+### A2A V2 ACK refusals (ra1, 2026-10-11)
+
+`loop a2a ack` (and `loop mailbox ack` for V2 envelopes) claims and then
+acknowledges each workflow on the recipient route. A refusal names its
+codes: `ack refused for <workflow-id> (acknowledge: <code>; claim: <code>)`.
+Only codes from a fixed set are shown, and anything else reads `refused`.
+
+- `assignment-denied`: this supervisor is not the message's recipient, or
+  its endpoint is not reachable now. That means the lease was released and
+  there is no mailbox, or the lease expired and the server does not observe
+  the session live. An expired lease whose session is live is renewed on the
+  spot, and a check that a renewal of the same lease raced is made once more,
+  so the sweep's renewal timing does not refuse a live recipient.
+- `delivery-not-recorded`, `not-claimed`: the recipient was early. It holds
+  the message (a Claude session's pushed entry, a mailbox envelope) before
+  the workflow recorded the delivery or the claim. Nothing is signalled, so
+  the ACK waits these out with the same request ids for up to 120 s, at the
+  server's `retryAfterMs` or a bounded backoff. Once the delivery's retry is
+  due, the claim records the delivery itself. You see these codes only when
+  the wait ran out; run the ack again.
+- `lifecycle-command-refused`: the workflow refused the command (dead-lettered,
+  cancelled, already acknowledged under other request ids, or an engine
+  error).
+- `unavailable`, `v2-unavailable`: the server or its V2 plane did not answer.
+
+Tests: `recipient-api-client.test.ts`, `supervisor-message-v2-http.test.ts`,
+`supervisor-message-v2-runtime.test.ts` (early claim and acknowledge on a
+port that, like Temporal's, replays refusals),
+`supervisor-message-v2-recipient-assignment.test.ts`,
+`loop-orchestration-server-r9.test.ts` (renewal on demand), and the r9 e2e
+(an ACK as soon as the session holds the message). Each new guard was
+mutation-checked: the coordinator's two early checks, the claimant gate on
+them, the route's early code, the client's wait, the code allowlist, the
+on-demand renewal and its liveness check, and the renewal-race recheck with
+its epoch and revision conditions.
 
 ### fix8 critic fixes (2026-10-11)
 

@@ -1533,3 +1533,106 @@ test("a run enrolled as another supervisor is renamed only by an explicit takeov
   await claimRunA2AEndpoint(input, { env: h.env });
   expect(h.server.seen.length).toBe(2);
 });
+
+/* ---------------------------------------------------------------------------
+ * r9b security review: guards that had no killing test.
+ * ------------------------------------------------------------------------- */
+
+test("only the acting supervisor's own token is read: --as ALICE with only BOB_TOKEN set is refused, with or without --allow-multi-token-env", async () => {
+  const h = harness();
+  for (const allowMultiTokenEnv of [false, true]) {
+    let refusal = "";
+    try {
+      resolveA2AClientEndpoint(ALICE, { allowMultiTokenEnv, env: h.bobEnv });
+    } catch (error) {
+      refusal = (error as Error).message;
+    }
+    expect(refusal).toContain("ALICE_TOKEN is not set");
+    expect(refusal).not.toContain(BOB_TOKEN);
+  }
+  const status = ["a2a", "status", "--as", ALICE, "--message-id", "m1"];
+  for (const argv of [status, [...status, "--allow-multi-token-env"]]) {
+    await expect(runA2ACommand(argv, { env: h.bobEnv })).rejects.toThrow(
+      "ALICE_TOKEN is not set"
+    );
+  }
+  // A session bridge fixed as Alice, started in Bob's environment.
+  await expect(
+    callA2ASessionTool("a2a_status", { message_id: "m1" }, aliceSession(h), {
+      env: h.bobEnv,
+    })
+  ).rejects.toThrow("ALICE_TOKEN is not set");
+  expect(h.server.seen).toEqual([]);
+});
+
+test("each MCP session tool's input schema has exactly its pinned property keys", () => {
+  expect(
+    Object.fromEntries(
+      A2A_SESSION_TOOLS.map((tool) => [
+        tool.name,
+        {
+          additionalProperties: tool.inputSchema.additionalProperties,
+          properties: Object.keys(tool.inputSchema.properties).sort(),
+          required:
+            "required" in tool.inputSchema
+              ? [...tool.inputSchema.required].sort()
+              : [],
+        },
+      ])
+    )
+  ).toEqual({
+    a2a_enroll: {
+      additionalProperties: false,
+      properties: ["provider_session", "ttl_ms"],
+      required: [],
+    },
+    a2a_release: { additionalProperties: false, properties: [], required: [] },
+    a2a_send: {
+      additionalProperties: false,
+      properties: ["context_id", "message", "message_id", "to"],
+      required: ["message", "to"],
+    },
+    a2a_status: {
+      additionalProperties: false,
+      properties: ["message_id"],
+      required: ["message_id"],
+    },
+  });
+});
+
+test("the a2a_release tool refuses a lease recorded for another supervisor before any request", async () => {
+  const h = harness();
+  const session = aliceSession(h);
+  const recordFor = (supervisorId: string) =>
+    writeFileSync(
+      join(session.sessionDir, "a2a-lease.json"),
+      JSON.stringify({
+        claimedAt: "2026-10-11T00:00:00.000Z",
+        epoch: 3,
+        expiresAt: EXPIRES,
+        holderRef: "claude-channel:desk-1",
+        kind: "claude-channel",
+        locator: { kind: "claude-channel", sessionId: "desk-1" },
+        releasedAt: null,
+        schema: "loop-a2a-lease-record.v1",
+        supervisorId,
+      })
+    );
+  recordFor(BOB);
+  expect(readA2ALeaseRecord(session.sessionDir)?.supervisorId).toBe(BOB);
+  // Bob's token is in this environment: without the check the release would
+  // go out as Bob, a confused deputy for Alice's session.
+  await expect(
+    callA2ASessionTool("a2a_release", {}, session, { env: h.bobEnv })
+  ).rejects.toThrow(`the recorded lease belongs to ${BOB}`);
+  expect(h.server.seen).toEqual([]);
+  expect(readA2ALeaseRecord(session.sessionDir)?.releasedAt).toBeNull();
+  // Alice's own record releases with Alice's token.
+  recordFor(ALICE);
+  expect(
+    await callA2ASessionTool("a2a_release", {}, session, { env: h.env })
+  ).toMatchObject({ outcome: "released", supervisorId: ALICE });
+  expect(h.server.seen.map((entry) => entry.authorization)).toEqual([
+    `Bearer ${ALICE_TOKEN}`,
+  ]);
+});

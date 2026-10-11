@@ -7859,3 +7859,48 @@ test("a2a session tools are served only by a standalone session's claude bridge"
     rmSync(home, { force: true, recursive: true });
   }
 });
+
+test("a session bridge fixes its acting supervisor when it starts; a later change to its dir does not move it", async () => {
+  const home = makeTempDir();
+  try {
+    const sessionDir = join(home, ".loop", "sessions", "alice", "desk-1");
+    mkdirSync(sessionDir, { recursive: true });
+    const env = {
+      ...process.env,
+      HOME: home,
+      LOOP_ORCHESTRATION_CONFIG: join(home, "absent-config.json"),
+    };
+    const live = startLiveBridgeProcess(sessionDir, "claude", env);
+    // The bridge is up and reading requests (no tool has been listed or
+    // called yet), so whatever it acts as was fixed at start.
+    live.write(encodeLine({ id: 1, jsonrpc: "2.0", method: "ping" }));
+    await live.waitForStdout('"id":1');
+    // Re-resolved now, this dir would no longer be a session (a run dir has
+    // a manifest): a bridge that resolved per request would drop the tools.
+    writeFileSync(join(sessionDir, "manifest.json"), "{}");
+    live.write(
+      encodeLine({ id: 6, jsonrpc: "2.0", method: "tools/list", params: {} })
+    );
+    live.write(
+      encodeLine({
+        id: 2,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { arguments: { message_id: "m1" }, name: "a2a_status" },
+      })
+    );
+    await live.waitForStdout('"id":2');
+    const done = await live.close();
+    expect(
+      listedTools(done.stdout)
+        .map((tool) => tool.name)
+        .filter((name) => String(name).startsWith("a2a_"))
+    ).toEqual(["a2a_enroll", "a2a_release", "a2a_send", "a2a_status"]);
+    // Still acting as supervisor:alice (and finding no server).
+    expect(rpcErrorMessage(done.stdout, 2)).toContain(
+      "orchestration config is unavailable"
+    );
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
