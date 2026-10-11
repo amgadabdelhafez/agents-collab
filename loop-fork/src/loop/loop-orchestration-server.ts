@@ -53,6 +53,10 @@ import {
   writeOwnerOnlyFile,
   writeTokenSigningKey,
 } from "./orchestration-token-service";
+import {
+  type ConfiguredSupervisorAddressBook,
+  configuredSupervisorAddressBook,
+} from "./project-identity";
 import { isActiveRunState, readRunManifest } from "./run-state";
 import {
   createSupervisorA2AV2Service,
@@ -76,6 +80,7 @@ import {
   supervisorEndpointRef,
   supervisorEndpointRoots,
 } from "./supervisor-endpoint-lease";
+import { SUPERVISOR_ID_RE as SUPERVISOR_RE } from "./supervisor-id";
 import { SupervisorInboxStreamHub } from "./supervisor-inbox-stream";
 import { SupervisorMailboxConsumptionReconciler } from "./supervisor-mailbox-consumption";
 import {
@@ -144,7 +149,6 @@ export const LOOP_ORCHESTRATION_WORKFLOW_TYPES = [
 ] as const;
 
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
-const SUPERVISOR_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const OPERATIONS = new Set<SupervisorMessageGovernedOperation>([
   "acknowledge",
   "cancel",
@@ -443,6 +447,11 @@ export interface LoopOrchestrationFetchHandlerOptions {
   notEnrolledSeats?: () => readonly string[];
   reconciliationHealthy: () => boolean;
   /**
+   * RA2: the configured address a V1 receive's recipient names
+   * (`orchestrationRecipient`). Absent: recipients are used as sent.
+   */
+  resolveRecipient?: (recipient: string) => string;
+  /**
    * RA1: the session token routes (`/api/v1/tokens/...`), when the config
    * has a `tokens` section; see `createTokenRoutes`.
    */
@@ -531,6 +540,9 @@ export const createLoopOrchestrationFetchHandler = (
   // The V1 surface refuses result graph ids; its refusal names the V2 route
   // that starts one instead, when this server mounts it.
   const v1Handler = options.host.httpHandler(options.authenticator, {
+    ...(options.resolveRecipient
+      ? { resolveRecipient: options.resolveRecipient }
+      : {}),
     resultGraphRoutePath: options.a2aV2Service?.resultGraphRoute?.pathname,
   });
   return async (request: Request): Promise<Response> => {
@@ -1116,6 +1128,7 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
   const supervisors: SupervisorConfig[] =
     value.supervisors.map(parseSupervisor);
   assertRoleBindings(supervisors);
+  const addresses = supervisorAddressBook({ supervisors });
   if (!Array.isArray(value.grants) || value.grants.length === 0) {
     throw new Error("orchestration grants are required");
   }
@@ -1136,10 +1149,10 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
       throw new Error("grant operations are invalid");
     }
     return {
-      from: required(entry.from, SUPERVISOR_RE, "grant from"),
+      from: grantAddress(addresses, entry.from, "grant from"),
       operations: [...new Set(entry.operations)].sort(),
       principal: required(entry.principal, NAME_RE, "grant principal"),
-      to: required(entry.to, SUPERVISOR_RE, "grant to"),
+      to: grantAddress(addresses, entry.to, "grant to"),
     };
   });
   const port = value.port;
@@ -1230,6 +1243,61 @@ const parseTokens = (value: unknown): TokensConfig | undefined => {
       "orchestration tokens signingKeyFile"
     ),
   };
+};
+
+/**
+ * RA2: the configured addresses' role aliases (project-identity.ts
+ * `configuredSupervisorAddressBook`), built once per supervisors list. A
+ * legacy role address whose entry binds "<owner>/<name>" also answers to its
+ * role id `supervisor:<owner>/<name>/<project>`; nothing else is aliased.
+ * Refuses a configuration that would give one role two addresses.
+ */
+const addressBooks = new WeakMap<
+  readonly SupervisorConfig[],
+  ConfiguredSupervisorAddressBook
+>();
+export const supervisorAddressBook = (
+  config: Pick<ServerConfig, "supervisors">
+): ConfiguredSupervisorAddressBook => {
+  let book = addressBooks.get(config.supervisors);
+  if (!book) {
+    try {
+      book = configuredSupervisorAddressBook(config.supervisors);
+    } catch (error) {
+      throw new Error(
+        `orchestration supervisors are invalid: ${(error as Error).message}`
+      );
+    }
+    addressBooks.set(config.supervisors, book);
+  }
+  return book;
+};
+
+/**
+ * RA2: the configured address a message recipient names. A role id that is a
+ * configured legacy address's alias routes to that address; any other id is
+ * returned unchanged, so an unknown recipient is refused downstream exactly
+ * as before.
+ */
+export const orchestrationRecipient = (
+  config: Pick<ServerConfig, "supervisors">,
+  recipient: string
+): string => supervisorAddressBook(config).resolve(recipient) ?? recipient;
+
+/** A grant names configured addresses, never a role alias of one. */
+const grantAddress = (
+  addresses: ConfiguredSupervisorAddressBook,
+  value: unknown,
+  field: string
+): string => {
+  const id = required(value, SUPERVISOR_RE, field);
+  const target = addresses.aliases.get(id);
+  if (target !== undefined) {
+    throw new Error(
+      `${field} ${id} is the role alias of ${target}: name ${target}`
+    );
+  }
+  return id;
 };
 
 /**
@@ -2415,6 +2483,7 @@ const createDefaultRuntimeHost = async (input: {
         resolveLocator,
         routePath: a2aConfig.routePath,
         sessionTtlMs: a2aConfig.sessionTtlMs,
+        supervisorAliases: supervisorAddressBook(input.config).aliases,
         supervisorIds: supervisors.map((entry) => entry.supervisorId),
       },
       card: {
@@ -3251,6 +3320,8 @@ export const runLoopOrchestrationServer = async (
       host,
       notEnrolledSeats: () => notEnrolled,
       reconciliationHealthy: () => reconciliationHealthy,
+      resolveRecipient: (recipient) =>
+        orchestrationRecipient(config, recipient),
       tokenRoutes: tokenSurface.tokenRoutes,
     });
     const server = serve({

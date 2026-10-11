@@ -33,6 +33,7 @@ import {
   supervisorEndpointLocatorDigest,
   supervisorEndpointLocatorRefused,
 } from "./supervisor-endpoint-lease";
+import { SUPERVISOR_ID_RE as RECIPIENT_RE } from "./supervisor-id";
 import {
   parseTrustedSupervisorMessageV2Scope,
   type TrustedSupervisorMessageV2Scope,
@@ -208,7 +209,6 @@ const ENDPOINT_REF_RE = /^endpoint:[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const PROVIDER_RE = /^(claude-code|codex-app-server|controlled-test)$/;
 const RECEIPT_ID_RE =
   /^supervisor-session-(?:readiness|rebind):v2:[a-f0-9]{64}$/;
-const RECIPIENT_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const REFERENCE_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/;
 const SESSION_DESCRIPTOR_ID_RE =
   /^supervisor-session-descriptor:v2:[a-f0-9]{64}$/;

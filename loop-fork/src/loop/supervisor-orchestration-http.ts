@@ -1,4 +1,5 @@
 import { readBoundedRequestText } from "./bounded-request-body";
+import { SUPERVISOR_ID_RE } from "./supervisor-id";
 import { SupervisorMessageGovernanceError } from "./supervisor-message-governance";
 import type {
   SupervisorMessageReceiveCommand,
@@ -26,6 +27,12 @@ export interface SupervisorOrchestrationHttpOptions {
   authenticator: SupervisorControlSurfaceAuthenticator;
   messages: SupervisorOrchestrationRuntime;
   /**
+   * RA2: the configured address a receive's `input.to` names (a role id that
+   * aliases a configured legacy address routes to that address). Absent: the
+   * recipient is used as sent.
+   */
+  resolveRecipient?: (recipient: string) => string;
+  /**
    * The A2A V2 route that starts a message's result graph
    * (`<routePath>/result-graph`), when this server has one. It is only named
    * in the refusal of a reserved result graph id, so an operator script that
@@ -38,7 +45,6 @@ export interface SupervisorOrchestrationHttpOptions {
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 64 * 1024;
 const PRINCIPAL_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
-const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const STABLE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
 const WORKFLOW_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
 const ARTIFACT_REF_RE = /^artifact:\/\/sha256\/[a-f0-9]{64}$/;
@@ -168,14 +174,20 @@ const parseMessageExisting = (
 
 const parseMessageReceive = (
   value: Record<string, unknown>,
-  identity: SupervisorControlSurfaceIdentity
+  identity: SupervisorControlSurfaceIdentity,
+  resolveRecipient?: (recipient: string) => string
 ): SupervisorMessageReceiveCommand => {
   exactKeys(value, ["input", "messageKind", "requestId"]);
   if (!isRecord(value.input) || value.input.from !== identity.supervisorId) {
     throw new Error("receive sender is invalid");
   }
+  const to = value.input.to;
+  const input =
+    resolveRecipient && typeof to === "string" && SUPERVISOR_ID_RE.test(to)
+      ? { ...value.input, to: resolveRecipient(to) }
+      : value.input;
   return {
-    input: value.input as SupervisorMessageReceiveCommand["input"],
+    input: input as SupervisorMessageReceiveCommand["input"],
     messageKind: requireString(
       value.messageKind,
       "messageKind",
@@ -360,7 +372,9 @@ const postMessage = async (
 ): Promise<Response | undefined> => {
   if (pathname === `${API_PREFIX}/supervisor-messages/receive`) {
     return json(200, {
-      data: await options.messages.receive(parseMessageReceive(body, identity)),
+      data: await options.messages.receive(
+        parseMessageReceive(body, identity, options.resolveRecipient)
+      ),
     });
   }
   if (

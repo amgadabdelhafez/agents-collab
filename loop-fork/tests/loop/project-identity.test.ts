@@ -371,10 +371,12 @@ test("the five legacy supervisor ids alias to a role, a session and an operator 
     "supervisor:harvto",
     "supervisor:portfolio-coordinator",
   ]);
+  // Owner decision 2026-10-11: harvto has one role per checkout, so its
+  // project comes from configuration; harness and ai-cur fix theirs.
   const keys = {
     "supervisor:ai-cur": "amgad/ai-cur",
     "supervisor:harness": "amgad/harness-engineering",
-    "supervisor:harvto": "amgad/harvto",
+    "supervisor:harvto": { project: "backend", repoKey: "harvto-llc/harvto" },
   };
   expect(resolveSupervisorIdentity("supervisor:harness", keys)).toEqual({
     kind: "role",
@@ -382,8 +384,25 @@ test("the five legacy supervisor ids alias to a role, a session and an operator 
     roleId: "supervisor:amgad/harness-engineering/harness",
   });
   expect(resolveSupervisorIdentity("supervisor:harvto", keys)).toMatchObject({
-    roleId: "supervisor:amgad/harvto/harvto",
+    roleId: "supervisor:harvto-llc/harvto/backend",
   });
+  // harvto without a configured project names no role: nothing is guessed.
+  expect(() =>
+    resolveSupervisorIdentity("supervisor:harvto", {
+      "supervisor:harvto": "harvto-llc/harvto",
+    })
+  ).toThrow(
+    "legacy supervisor:harvto has no project: bind it to one of its repository's projects"
+  );
+  // A configured project contradicting the one an alias fixes is refused.
+  expect(() =>
+    resolveSupervisorIdentity("supervisor:harness", {
+      "supervisor:harness": {
+        project: "other",
+        repoKey: "amgad/harness-engineering",
+      },
+    })
+  ).toThrow('legacy supervisor:harness is project "harness", not "other"');
   expect(resolveSupervisorIdentity("supervisor:ai-cur", keys)).toMatchObject({
     roleId: "supervisor:amgad/ai-cur/ai-cur",
   });

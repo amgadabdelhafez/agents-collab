@@ -6,6 +6,7 @@ import {
   resolveA2AClientEndpoint,
 } from "./a2a-session-client";
 import { isSupervisorMessageV2WorkflowId } from "./recipient-api-client";
+import { SUPERVISOR_ID_RE } from "./supervisor-id";
 import {
   consumeMailbox,
   type MailboxReadOutcome,
@@ -38,7 +39,6 @@ import {
  * unseen. --receipt (as printed by receive) additionally pins the exact set.
  */
 export const MAILBOX_COMMAND = "mailbox";
-const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/u;
 const DEFAULT_WATCHER_TTL_MS = 30 * 60_000;
 const ACTIONS = ["ack", "receive", "send", "status"] as const;
 type MailboxAction = (typeof ACTIONS)[number];

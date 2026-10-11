@@ -14,6 +14,15 @@ import { join, resolve as resolvePath } from "node:path";
 import type { GitResult } from "./git";
 import { runGit as runGitCommand } from "./git";
 import { resolveCheckoutId } from "./run-state";
+import {
+  FLAT_SUPERVISOR_ID_RE,
+  isSupervisorRoleId as isRoleId,
+  isSupervisorRepoKey,
+  SUPERVISOR_ID_BODY_MAX,
+  SUPERVISOR_ID_SEGMENT_RE,
+  SUPERVISOR_PREFIX,
+  SUPERVISOR_ROLE_ID_RE,
+} from "./supervisor-id";
 
 /**
  * Location-independent repository identity (RA1).
@@ -34,23 +43,12 @@ const PROJECT_FILE_NAME = "project.json";
 const PROJECT_FILE_MAX_BYTES = 64 * 1024;
 const PROJECT_FILE_KEYS = ["repo", "projects"] as const;
 
-/** One path segment: RECIPIENT_RE's body character rules, without '/'. */
-const SEGMENT_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-/** RECIPIENT_RE's body length bound, kept for role ids. */
-const ID_BODY_MAX = 128;
-const SUPERVISOR_PREFIX = "supervisor:";
+/** One path segment: a flat id body's character rules, without '/'. */
+const SEGMENT_RE = SUPERVISOR_ID_SEGMENT_RE;
+const ID_BODY_MAX = SUPERVISOR_ID_BODY_MAX;
 
-/**
- * A role id: RECIPIENT_RE (`supervisor:[a-z0-9][a-z0-9._-]{0,127}`) extended
- * for '/'. The body is still at most 128 characters of [a-z0-9._-/], and every
- * '/'-separated segment starts with a letter or digit, so no segment is empty,
- * "." or "..". Exactly three segments: owner, name, project.
- */
-export const SUPERVISOR_ROLE_ID_RE =
-  /^supervisor:(?=[a-z0-9._/-]{1,128}$)[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
-
-/** A legacy flat supervisor id: RECIPIENT_RE exactly. */
-const LEGACY_SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
+/** A legacy flat supervisor id. */
+const LEGACY_SUPERVISOR_ID_RE = FLAT_SUPERVISOR_ID_RE;
 const SESSION_ID_RE = /^session:[a-z0-9][a-z0-9._-]{0,127}$/;
 const OPERATOR_PRINCIPAL_RE = /^operator:[a-z0-9][a-z0-9._-]{0,127}$/;
 
@@ -101,28 +99,23 @@ const SEGMENT_RULE =
   "lowercase letters, digits, '.', '_' or '-', starting with a letter or digit";
 
 /** "<owner>/<name>" with both parts valid segments and no ".git" suffix. */
-export const isRepoKey = (value: string): boolean => {
-  const parts = value.split("/");
-  return (
-    parts.length === 2 &&
-    parts.every((part) => SEGMENT_RE.test(part)) &&
-    !value.endsWith(".git") &&
-    value.length <= ID_BODY_MAX
-  );
-};
+export const isRepoKey = (value: string): boolean => isSupervisorRepoKey(value);
 
 export const isProjectName = (value: string): boolean => SEGMENT_RE.test(value);
 
-export const isSupervisorRoleId = (value: string): boolean =>
-  SUPERVISOR_ROLE_ID_RE.test(value);
+export const isSupervisorRoleId = (value: string): boolean => isRoleId(value);
 
 /** `supervisor:<repoKey>/<project>`, refused unless both parts are valid. */
-export const supervisorRoleId = (repoKey: string, project: string): string => {
+const requireRepoKey = (repoKey: string): void => {
   if (!isRepoKey(repoKey)) {
     throw new ProjectIdentityError(
       `repo key must be "<owner>/<name>": ${SEGMENT_RULE} in each part (got ${quoted(repoKey)})`
     );
   }
+};
+
+export const supervisorRoleId = (repoKey: string, project: string): string => {
+  requireRepoKey(repoKey);
   if (!isProjectName(project)) {
     throw new ProjectIdentityError(
       `project must be a name of ${SEGMENT_RULE} (got ${quoted(project)})`
@@ -399,7 +392,15 @@ export const resolveSupervisorRole = (
 // Legacy supervisor ids, kept working for one release.
 
 export type LegacySupervisorAlias =
-  | { kind: "role"; legacyId: string; project: string }
+  | {
+      kind: "role";
+      legacyId: string;
+      /**
+       * The project the role is, when the alias fixes it. Absent: the
+       * configured binding names it (harvto has one role per checkout).
+       */
+      project?: string;
+    }
   | {
       kind: "session";
       legacyId: string;
@@ -411,7 +412,9 @@ export type LegacySupervisorAlias =
 
 const LEGACY_ALIAS_LIST: readonly LegacySupervisorAlias[] = [
   { kind: "role", legacyId: "supervisor:harness", project: "harness" },
-  { kind: "role", legacyId: "supervisor:harvto", project: "harvto" },
+  // harvto-llc/harvto/<project>: backend, harvto-site, shopify-theme,
+  // ar-prototype or tools, whichever one the configuration binds.
+  { kind: "role", legacyId: "supervisor:harvto" },
   { kind: "role", legacyId: "supervisor:ai-cur", project: "ai-cur" },
   {
     kind: "session",
@@ -447,14 +450,22 @@ export type ResolvedSupervisorIdentity =
   | { kind: "operator"; legacyId: string; principal: string };
 
 /**
+ * What configuration binds a legacy role id to: its repo key, and the project
+ * when the alias does not fix one. A bare string is a repo key alone.
+ */
+export type LegacyRoleBinding = string | { project?: string; repoKey: string };
+
+/**
  * Resolve a supervisor id to its RA1 identity. A role id passes through. A
- * legacy role or session needs the repo key its role lives in, from
- * `legacyRepoKeys` (operator configuration keyed by the legacy role id); this
- * module never guesses which repository a legacy id meant.
+ * legacy role or session needs the repo key its role lives in (and, for
+ * harvto, the project), from `legacyBindings` (operator configuration keyed
+ * by the legacy role id); this module never guesses which repository or
+ * project a legacy id meant. A configured project that contradicts the
+ * project an alias fixes is refused.
  */
 export const resolveSupervisorIdentity = (
   supervisorId: string,
-  legacyRepoKeys: Readonly<Record<string, string>> = {}
+  legacyBindings: Readonly<Record<string, LegacyRoleBinding>> = {}
 ): ResolvedSupervisorIdentity => {
   if (isSupervisorRoleId(supervisorId)) {
     return { kind: "role", roleId: supervisorId };
@@ -472,13 +483,32 @@ export const resolveSupervisorIdentity = (
         `${quoted(legacyId)} is not a legacy role`
       );
     }
-    const repoKey = legacyRepoKeys[legacyId];
-    if (repoKey === undefined) {
+    const bound = Object.hasOwn(legacyBindings, legacyId)
+      ? legacyBindings[legacyId]
+      : undefined;
+    if (bound === undefined) {
       throw new ProjectIdentityError(
         `legacy ${legacyId} has no repo key: bind it to "<owner>/<name>"`
       );
     }
-    return supervisorRoleId(repoKey, target.project);
+    const binding = typeof bound === "string" ? { repoKey: bound } : bound;
+    requireRepoKey(binding.repoKey);
+    if (
+      target.project !== undefined &&
+      binding.project !== undefined &&
+      binding.project !== target.project
+    ) {
+      throw new ProjectIdentityError(
+        `legacy ${legacyId} is project ${quoted(target.project)}, not ${quoted(binding.project)}`
+      );
+    }
+    const project = target.project ?? binding.project;
+    if (project === undefined) {
+      throw new ProjectIdentityError(
+        `legacy ${legacyId} has no project: bind it to one of its repository's projects`
+      );
+    }
+    return supervisorRoleId(binding.repoKey, project);
   };
   switch (alias.kind) {
     case "role":
@@ -501,6 +531,119 @@ export const resolveSupervisorIdentity = (
         principal: alias.principal,
       };
   }
+};
+
+/** One configured address, as the orchestration config's supervisors list it. */
+export interface ConfiguredSupervisorAddress {
+  role?: { project: string; repoKey: string; role: string };
+  supervisorId: string;
+}
+
+/**
+ * RA2: how the configured addresses answer to role ids.
+ * - `aliases`: role id -> the configured legacy address it routes to. A
+ *   legacy role address (supervisor:harness, :harvto, :ai-cur) is aliased
+ *   only when its own entry carries a supervisor role binding whose repo key
+ *   is "<owner>/<name>"; the repo key (and harvto's project) come from that
+ *   binding, never from a guess.
+ * - `identities`: each configured legacy address's resolved identity, where
+ *   configuration resolves it (a legacy session needs its role's binding).
+ * - `resolve(id)`: the configured address `id` names (itself when configured,
+ *   its legacy address when it is an alias), else undefined.
+ */
+export interface ConfiguredSupervisorAddressBook {
+  aliases: ReadonlyMap<string, string>;
+  identities: ReadonlyMap<string, ResolvedSupervisorIdentity>;
+  resolve(supervisorId: string): string | undefined;
+}
+
+/** A role-id address's binding, when it has one, must name that same role. */
+const assertOwnRoleBinding = (entry: ConfiguredSupervisorAddress): void => {
+  const { role, supervisorId } = entry;
+  if (!(role && isSupervisorRoleId(supervisorId))) {
+    return;
+  }
+  const own = parseSupervisorRoleId(supervisorId);
+  if (
+    role.role !== "supervisor" ||
+    own?.repoKey !== role.repoKey ||
+    own.project !== role.project
+  ) {
+    throw new ProjectIdentityError(
+      `${supervisorId} is bound to ${role.role}:${role.repoKey}/${role.project}: a role id address binds its own role`
+    );
+  }
+};
+
+/** The configured bindings of legacy role addresses, keyed by legacy id. */
+const legacyRoleBindings = (
+  entries: readonly ConfiguredSupervisorAddress[]
+): Record<string, LegacyRoleBinding> => {
+  const bindings: Record<string, LegacyRoleBinding> = {};
+  for (const { role, supervisorId } of entries) {
+    const alias = LEGACY_SUPERVISOR_ALIASES.get(supervisorId);
+    if (alias?.kind !== "role" || !role || !isRepoKey(role.repoKey)) {
+      continue;
+    }
+    if (role.role !== "supervisor") {
+      throw new ProjectIdentityError(
+        `legacy ${supervisorId} is bound as ${quoted(role.role)}: a legacy supervisor role binds role "supervisor"`
+      );
+    }
+    bindings[supervisorId] = { project: role.project, repoKey: role.repoKey };
+  }
+  return bindings;
+};
+
+/**
+ * Build the address book, refusing a configuration in which one role would
+ * have two addresses, a legacy role is bound as anything but a supervisor or
+ * to another project than its alias fixes, or a role-id address carries a
+ * binding naming another role.
+ */
+export const configuredSupervisorAddressBook = (
+  entries: readonly ConfiguredSupervisorAddress[]
+): ConfiguredSupervisorAddressBook => {
+  const configured = new Set(entries.map((entry) => entry.supervisorId));
+  for (const entry of entries) {
+    assertOwnRoleBinding(entry);
+  }
+  const bindings = legacyRoleBindings(entries);
+  const aliases = new Map<string, string>();
+  const identities = new Map<string, ResolvedSupervisorIdentity>();
+  for (const { supervisorId } of entries) {
+    const alias = LEGACY_SUPERVISOR_ALIASES.get(supervisorId);
+    const roleOf = alias?.kind === "session" ? alias.mayHold : supervisorId;
+    if (
+      !alias ||
+      (alias.kind !== "operator" && !Object.hasOwn(bindings, roleOf))
+    ) {
+      continue;
+    }
+    const identity = resolveSupervisorIdentity(supervisorId, bindings);
+    identities.set(supervisorId, identity);
+    if (identity.kind !== "role") {
+      continue;
+    }
+    if (configured.has(identity.roleId)) {
+      throw new ProjectIdentityError(
+        `${identity.roleId} is configured and is also ${supervisorId}'s role: configure one address`
+      );
+    }
+    const existing = aliases.get(identity.roleId);
+    if (existing !== undefined) {
+      throw new ProjectIdentityError(
+        `${identity.roleId} is the role of both ${existing} and ${supervisorId}`
+      );
+    }
+    aliases.set(identity.roleId, supervisorId);
+  }
+  return {
+    aliases,
+    identities,
+    resolve: (supervisorId) =>
+      configured.has(supervisorId) ? supervisorId : aliases.get(supervisorId),
+  };
 };
 
 /** Self-check of the alias table's shapes; run at import. */

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, join, normalize } from "node:path";
+import {
+  SUPERVISOR_ID_RE as RECIPIENT_RE,
+  supervisorSlug,
+} from "./supervisor-id";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
 import type {
   SupervisorSessionDescriptorV2,
@@ -286,7 +290,6 @@ export class SupervisorEndpointLeaseError extends Error {
   }
 }
 
-const RECIPIENT_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const HOLDER_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/;
 const THREAD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,247}$/;
 const SESSION_REF_RE = /^session:[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
@@ -310,7 +313,6 @@ const PATH_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 const CODEX_REMOTE_URL_RE =
   /^ws:\/\/(?:127\.0\.0\.1|localhost):([1-9]\d{0,4})\/?$/;
 const MAX_PORT = 65_535;
-const SUPERVISOR_PREFIX = "supervisor:";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -495,11 +497,13 @@ export const supervisorEndpointRoots = (
   };
 };
 
-/** The recipient id without `supervisor:`; a single safe path segment. */
+/**
+ * The recipient's single safe path segment (supervisor-id.ts
+ * `supervisorSlug`): a flat id's body unchanged, a role id's body with '/'
+ * written as '~', so no two recipients share a session directory.
+ */
 export const supervisorEndpointSlug = (supervisorId: string): string =>
-  requireSupervisorEndpointRecipient(supervisorId).slice(
-    SUPERVISOR_PREFIX.length
-  );
+  supervisorSlug(requireSupervisorEndpointRecipient(supervisorId));
 
 /** `<runsRoot>/<repoId>/<runId>`, lexically. Containment is checked separately. */
 export const supervisorEndpointRunDir = (

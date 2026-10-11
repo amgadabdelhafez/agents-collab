@@ -431,6 +431,44 @@ Tests: `tests/loop/orchestration-origin-policy.test.ts`,
 `a2a-session-client.test.ts`, `recipient-api-client.test.ts` and
 `a2a-v2-init.test.ts`.
 
+### RA2: role ids on the wire (claude/ra2-role-ids-wire)
+
+- **One validator.** `src/loop/supervisor-id.ts` is the only supervisor id
+  pattern; the 13 former copies import it. It accepts a flat id
+  (`supervisor:[a-z0-9][a-z0-9._-]{0,127}`) or a role id
+  `supervisor:<owner>/<name>/<project>` (three segments, each starting with
+  a letter or digit, body at most 128 characters).
+- **Encoding.** Slug (URL segment, session directory, channel chat id) and
+  mailbox file name write a role id's `/` as `~`, which no id contains:
+  `supervisor:amgad/ai-cur/ai-cur` is `/a2a/v2/supervisors/amgad~ai-cur~ai-cur`
+  and `supervisor_amgad~ai-cur~ai-cur.jsonl`. Every flat id's slug and file
+  name are byte-identical to before (`supervisor_harness.jsonl`). Only the
+  canonical form decodes: `%7E`, `/` in a slug, or a two- or four-segment
+  `~` slug is refused.
+- **Legacy routing.** A legacy role address keeps its id and gains its role
+  id as an alias only when its own entry binds `"role": {"role":
+  "supervisor", "repoKey": "<owner>/<name>", "project": ...}`. The 2026-10-11
+  decisions: `supervisor:harness` binds `amgad/harness-engineering` /
+  `harness`; `supervisor:ai-cur` binds `amgad/ai-cur` / `ai-cur`;
+  `supervisor:harvto` binds `harvto-llc/harvto` and whichever checkout
+  project it serves (the alias does not fix harvto's project). The other
+  harvto checkouts are addresses of their own
+  (`supervisor:harvto-llc/harvto/tools`). A V1 receive or a V2
+  `supervisors/<alias slug>` request addressed to the alias reaches the
+  legacy address, and the grant is decided for that address. Refused at
+  config parse: a role id configured both as an address and as an alias,
+  two legacy addresses with one role, a legacy role bound as anything but
+  `supervisor` or to another project than its alias fixes, a role-id
+  address whose binding names another role, and a grant naming an alias.
+  Sessions still enroll as the configured address; the alias is addressing
+  only.
+- `supervisors[].role.repoKey` accepts `<owner>/<name>` as well as the
+  flat scope names RA1 used.
+
+Tests: `tests/loop/supervisor-id.test.ts`, the RA2 case in
+`supervisor-a2a-v2-service-r9.test.ts`, and the alias cases in
+`project-identity.test.ts`.
+
 ### fix8 critic fixes (2026-10-11)
 
 1. V2 start problems degrade (c3c5b106): the serve behaviour and reasons
