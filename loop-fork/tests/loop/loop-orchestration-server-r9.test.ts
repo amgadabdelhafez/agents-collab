@@ -235,6 +235,17 @@ test("r9 rebind rule: a lease-backed descriptor rebinds only in its seat's own s
       "principal:harvto"
     )
   ).toBe(false);
+  // Defense in depth: the store reads `current` by the trusted scope, so its
+  // principal is the seat's in practice. A current descriptor that names
+  // another principal (a foreign or corrupt row) is still never taken over,
+  // even when the scope and the next descriptor are the seat's own.
+  expect(
+    decide(
+      descriptor({ principal: "principal:harness" }),
+      descriptor({ revision: 2 }),
+      "principal:harvto"
+    )
+  ).toBe(false);
   // r8's rule is unchanged for r8's descriptor ...
   const r8 = descriptor({
     descriptorId: "descriptor:runner",

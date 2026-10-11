@@ -15,6 +15,7 @@ import {
 import { WORKFLOW_IDS_METADATA_KEY } from "../../src/loop/a2a-supervisor-executor";
 import { publishSupervisorA2AAcceptedResult } from "../../src/loop/a2a-supervisor-result";
 import type { SupervisorA2AV2IngressLifecycle } from "../../src/loop/a2a-supervisor-v2-ingress";
+import { a2aV2SupervisorIngressPath } from "../../src/loop/a2a-v2-routes-contract";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
 import {
   createSupervisorA2AV2Service,
@@ -1822,6 +1823,179 @@ test("end to end on PostgreSQL and Temporal: send a message, start its result gr
       const description = await handle.describe().catch(() => undefined);
       if (description?.status.name === "RUNNING") {
         await handle.terminate("keyed result graph proof cleanup");
+      }
+    }
+    await environment.teardown();
+    await postgres?.close();
+    rmSync(root, { force: true, recursive: true });
+  }
+}, 90_000);
+
+test("r9 per-supervisor ingress end to end on PostgreSQL and Temporal: an accepted SendMessage through {routePath}/supervisors/<slug> passes the gate, the SDK, the coordinator and the ledger, and is delivered", async () => {
+  const root = mkdtempSync(join(tmpdir(), "supervisor-a2a-v2-r9-ingress-"));
+  const environment = await TestWorkflowEnvironment.createLocal();
+  let postgres: DisposablePostgres | undefined;
+  let adminSessions: PostgresSupervisorSessionV2Store | undefined;
+  let service: SupervisorA2AV2Service | undefined;
+  const delivered: SupervisorMessageV2DeliveryEnvelope[] = [];
+  const taskQueue = `supervisor-a2a-v2-r9-${process.pid}-${randomUUID().slice(0, 8)}`;
+  const routePath = "/a2a/v2";
+  const tokens = new Map([
+    [
+      "Bearer service-factory-token",
+      { principal: SCOPE.principal, supervisorId: SENDER },
+    ],
+    [
+      "Bearer other-principal-token",
+      { principal: "principal:someone-else", supervisorId: PEER },
+    ],
+  ]);
+  try {
+    postgres = await DisposablePostgres.create();
+    adminSessions = await PostgresSupervisorSessionV2Store.connect({
+      authority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:r9-ingress-proof",
+          reasonCode: "allowed",
+        }),
+      },
+      databaseUrl: postgres.databaseUrl(),
+      now: () => NOW,
+      provider: { ready: () => ({}) as never },
+    });
+    await adminSessions.migrate();
+    // RECIPIENT is an r8 seat with no lease row: it keeps r8's readiness (the
+    // descriptor in the sender scope) and r8's delivery.
+    await adminSessions.register(SCOPE, descriptor());
+    service = await createSupervisorA2AV2Service({
+      ...serviceOptions({
+        databaseUrl: postgres.databaseUrl(),
+        delivery: {
+          deliver: (envelope: SupervisorMessageV2DeliveryEnvelope) => {
+            delivered.push(envelope);
+            return Promise.resolve({ status: "accepted" as const });
+          },
+        },
+        environment,
+        root,
+        taskQueue,
+      }),
+      allSupervisors: {
+        authenticator: {
+          authenticate: (request: Request) =>
+            tokens.get(request.headers.get("authorization") ?? ""),
+        },
+        hasMailbox: () => false,
+        legacySeats: [RECIPIENT],
+        // Exactly one receive grant: SENDER -> RECIPIENT under SCOPE.
+        mayReceive: ({ from, principal, to }) =>
+          principal === SCOPE.principal && from === SENDER && to === RECIPIENT,
+        principalForRecipient: (recipient: string) =>
+          recipient === RECIPIENT ? "principal:recipient-seat" : undefined,
+        resolveLocator: () => {
+          throw new Error("no locator is resolved on this path");
+        },
+        routePath,
+        sessionTtlMs: 60_000,
+        supervisorIds: [RECIPIENT, SENDER, PEER],
+      },
+    });
+    const route = service.allSupervisorsRoute;
+    if (!route) {
+      throw new Error("Expected the all-supervisors route");
+    }
+    const pathname = a2aV2SupervisorIngressPath(routePath, RECIPIENT);
+    const clientAs = (token: string) => {
+      const fetchImpl: typeof fetch = Object.assign(
+        (...[resource, init]: Parameters<typeof fetch>): Promise<Response> => {
+          const headers = new Headers(init?.headers);
+          headers.set("authorization", token);
+          const url =
+            resource instanceof Request ? resource.url : String(resource);
+          return route.httpHandler(new Request(url, { ...init, headers }));
+        },
+        { preconnect: fetch.preconnect }
+      );
+      return new JsonRpcTransportFactory({ fetchImpl }).create(
+        `http://a2a.local${pathname}`,
+        agentCardFor({
+          description: "Disposable r9 per-supervisor ingress proof.",
+          supervisorId: RECIPIENT,
+          url: `http://a2a.local${pathname}`,
+        })
+      );
+    };
+
+    // 1. The granted sender's SendMessage is accepted and delivered.
+    const submitted = await (
+      await clientAs("Bearer service-factory-token")
+    ).sendMessage({
+      configuration: undefined,
+      message: message(`r9-ingress-${randomUUID()}`),
+      metadata: undefined,
+      tenant: SCOPE.tenantId,
+    });
+    if (!("id" in submitted)) {
+      throw new Error("Expected an A2A task");
+    }
+    expect(delivered).toHaveLength(1);
+    const [envelope] = delivered;
+    expect(envelope).toMatchObject({
+      principal: SCOPE.principal,
+      target: RECIPIENT,
+      tenantId: SCOPE.tenantId,
+    });
+    expect(submitted.metadata?.[WORKFLOW_IDS_METADATA_KEY]).toEqual([
+      envelope?.workflowId,
+    ]);
+
+    // 2. The ledger recorded it in the sender's scope: the sender reads its
+    // status; another principal gets the same 404 as an absent id.
+    const statusAs = (token: string) =>
+      route.httpHandler(
+        new Request(
+          `http://a2a.local${routePath}/messages/${encodeURIComponent(
+            envelope?.workflowId ?? ""
+          )}`,
+          { headers: { authorization: token } }
+        )
+      );
+    const own = await statusAs("Bearer service-factory-token");
+    expect(own.status).toBe(200);
+    expect(await own.json()).toMatchObject({
+      messageId: envelope?.workflowId,
+      to: RECIPIENT,
+      workResultCompleted: false,
+    });
+    expect((await statusAs("Bearer other-principal-token")).status).toBe(404);
+
+    // 3. A sender without a grant is refused by the gate: nothing new is
+    // delivered.
+    const refused = await (await clientAs("Bearer other-principal-token"))
+      .sendMessage({
+        configuration: undefined,
+        message: {
+          ...message(`r9-ingress-refused-${randomUUID()}`),
+          metadata: { [FROM_METADATA_KEY]: PEER },
+        },
+        metadata: undefined,
+        tenant: SCOPE.tenantId,
+      })
+      .then(
+        () => "accepted",
+        (error: unknown) => String(error)
+      );
+    expect(refused).not.toBe("accepted");
+    expect(delivered).toHaveLength(1);
+  } finally {
+    await service?.close().catch(() => undefined);
+    await adminSessions?.close().catch(() => undefined);
+    for (const envelope of delivered) {
+      const handle = environment.client.workflow.getHandle(envelope.workflowId);
+      const description = await handle.describe().catch(() => undefined);
+      if (description?.status.name === "RUNNING") {
+        await handle.terminate("r9 ingress proof cleanup");
       }
     }
     await environment.teardown();

@@ -1761,6 +1761,8 @@ export const configuredA2AV2RebindAuthority = (
         input.next.endpointRef === config.endpointRef) ||
         (seatPrincipal !== undefined &&
           input.trustedScope.principal === seatPrincipal &&
+          // Defense in depth: the store reads `current` by trustedScope, so
+          // this holds in practice; a foreign or corrupt row is still refused.
           input.current.principal === seatPrincipal &&
           input.next.principal === seatPrincipal &&
           // A claim may take over r8's descriptor of the same seat scope.
