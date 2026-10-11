@@ -260,16 +260,21 @@ test("RA1: a configured origin passes the origin policy and the token goes only 
     writeFileSync(h.configPath, JSON.stringify({ ...h.config, ...patch }));
     return () => resolveA2AClientEndpoint(ALICE, { env: h.env });
   };
+  // ra2: beyond loopback a static token is never used. Without an enrolled
+  // session credential the client refuses before any request.
+  expect(
+    withConfig({ hostname: "0.0.0.0", origin: "https://loop.home.lab" })
+  ).toThrow("a static token is only sent on loopback");
   // The configured origin wins over the listener, whatever it binds.
-  const remote = withConfig({
+  const tlsLoopback = withConfig({
     hostname: "0.0.0.0",
-    origin: "https://loop.home.lab",
+    origin: "https://127.0.0.1:7443",
   })();
-  expect(remote.baseUrl).toBe("https://loop.home.lab");
-  expect(remote.url(`${ROUTE}/sessions/claim`)).toBe(
-    `https://loop.home.lab${ROUTE}/sessions/claim`
+  expect(tlsLoopback.baseUrl).toBe("https://127.0.0.1:7443");
+  expect(tlsLoopback.url(`${ROUTE}/sessions/claim`)).toBe(
+    `https://127.0.0.1:7443${ROUTE}/sessions/claim`
   );
-  expect(() => remote.url("//evil.example/a2a")).toThrow(
+  expect(() => tlsLoopback.url("//evil.example/a2a")).toThrow(
     "not on the configured server"
   );
   expect(
@@ -1452,7 +1457,7 @@ test("a multi-token environment is refused unless --allow-multi-token-env, namin
       .supervisorId
   ).toBe(ALICE);
   expect(
-    resolveA2AClientEndpoint(ALICE, {
+    await resolveA2AClientEndpoint(ALICE, {
       allowMultiTokenEnv: true,
       env: h.bothEnv,
     }).authorization()

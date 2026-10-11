@@ -366,7 +366,8 @@ Nothing here exposes the server: it still binds exactly the configured
 `hostname`. RA1 replaces four loopback-only checks with one policy
 (`src/loop/orchestration-origin-policy.ts`) and adds session tokens
 (`src/loop/orchestration-token-service.ts`). Static `tokenEnv` tokens keep
-working unchanged as legacy.
+working unchanged as legacy (ra2: the client sends one only to a loopback
+origin; see below).
 
 - **Origin policy.** Plaintext only on a loopback IP literal: an `http:`
   origin must be `127.0.0.1` or `[::1]` (never `localhost`), and every
@@ -430,6 +431,71 @@ Tests: `tests/loop/orchestration-origin-policy.test.ts`,
 `tests/loop/loop-orchestration-server-ra1.test.ts`, and the RA1 cases in
 `a2a-session-client.test.ts`, `recipient-api-client.test.ts` and
 `a2a-v2-init.test.ts`.
+
+### ra2: `loop connect` and `loop a2a` from anywhere (claude/ra2-connect-anywhere)
+
+Client side only; nothing here changes what the server listens on. A
+session on another machine (or behind NAT: it dials out, it never listens)
+reaches the server at the config's `origin`.
+
+- **Server.** The client resolves it from the ra1 origin policy: the
+  config's `origin` (https anywhere, or http on 127.0.0.1/[::1]), else the
+  loopback listener. A session on another machine needs only a client
+  config: `{"origin": "https://loop.home.lab", "a2aV2": {"routePath":
+  "/a2a/v2"}, "supervisors": [{"supervisorId": "supervisor:x", "role":
+  {...}}]}` (`LOOP_ORCHESTRATION_CONFIG`, owned by the user, not group- or
+  world-writable).
+- **Enroll once.** On the server host: `loop orchestration token-code
+  <config> supervisor:x --out <new-file>`; carry the file to the session's
+  machine (keep it 0600). Then `loop connect --as supervisor:x --deliver
+  ... --enroll-code-file <file> [--trust-file <ca.pem>]`. The code is read
+  from the file (never argv, never printed) and spent; the session token is
+  kept in `~/.loop/credentials/<slug>.json` (0600, directory 0700, owned by
+  the user), bound to the supervisor id and the origin. The token must be
+  for the configured `role` of `--as`, or nothing is kept.
+- **Refresh.** Whichever process of the session needs the token first
+  within 5 minutes of its expiry refreshes it (a lock file next to the
+  credential serializes them); `loop connect` also arms one timer for when
+  the refresh is due. A request refused for a token another process just
+  replaced is retried once with the new one. An expired token cannot be
+  refreshed (a laptop asleep for over 30 minutes): enroll again with a new
+  code. A revoked session's refresh is refused and the credential is left
+  as it was.
+- **Static tokens: loopback only.** Without a credential, `loop a2a` and
+  `loop connect` use the supervisor's `tokenEnv` only when the origin is on
+  127.0.0.1 or [::1]; beyond loopback they refuse before any request
+  (`... a static token is only sent on loopback. Enroll with loop connect
+  --enroll-code-file <path>`). With a credential, it is used on loopback
+  too.
+- **Private CA.** `--trust-file <ca.pem>` (on `loop connect` and every
+  `loop a2a` action) names PEM anchors trusted for the https origin; it is
+  refused for an http origin, and the file must be owned by the user and
+  not group- or world-writable. Verification is never turned off.
+- **V2 recipient ACK by a role-bound recipient (server).** V2 governance
+  asks the grant question with the message's scope principal (the
+  sender's); for a role-bound sender the server now asks it as the
+  authenticated claimant's own principal (`v2RecipientGrantRequest`), so a
+  worker can claim and ACK its supervisor's message. Before this, a
+  role-bound recipient's ACK was always `lifecycle-command-refused`.
+- **Inbox stream client.** A message event that does not parse is never
+  skipped: the client drops the connection and resumes from its last
+  delivered sequence (`Last-Event-ID`).
+
+Not in this branch: the server still accepts a static token on any
+listener (refusing it beyond loopback is the owner's 2026-10-11 decision,
+server side), and a supervisor session may still mint enrollment codes for
+its workers (`roleMayControl`). The bridge's session MCP tools take no
+`--trust-file`.
+
+Tests: `tests/loop/a2a-session-credential.test.ts` (enrollment, the
+loopback-only static fallback, origin binding, refresh, the superseded
+retry, expiry, revocation, keepFresh), `tests/loop/ra2-connect-anywhere-e2e.test.ts`
+(the real server on local Temporal and a disposable PostgreSQL behind a
+throwaway TLS front with a self-signed CA: a client-only session enrolls,
+receives, ACKs, loses its network, reconnects from its Last-Event-ID,
+refreshes from a second process, releases), and the ra2 cases in
+`supervisor-inbox-stream.test.ts`, `supervisor-a2a-v2-service-r9.test.ts`
+and `loop-orchestration-server-ra1.test.ts`.
 
 ### fix8 critic fixes (2026-10-11)
 

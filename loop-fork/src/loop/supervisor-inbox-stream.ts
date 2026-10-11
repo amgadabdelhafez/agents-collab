@@ -41,10 +41,20 @@ import {
  *   recipient are capped (`maxPending`), beyond which delivery is a transient
  *   failure the workflow retries (bounded by its own attempts).
  * - Wakeups are server-side and in-process: the delivery activity that
- *   appended wakes that recipient's streams (the workflow delivery path).
- *   Nothing re-reads the inbox on a timer. A heartbeat comment keeps the
- *   connection open through idle timeouts, NAT and proxies, and re-checks the
- *   lease fence; it reads no messages.
+ *   appended wakes that recipient's streams (the workflow delivery path), and
+ *   a claim or release on the session routes wakes them to re-check the
+ *   fence. Nothing re-reads the inbox on a timer. A heartbeat comment keeps
+ *   the connection open through idle timeouts, NAT and proxies, and re-checks
+ *   the lease fence; it reads no messages.
+ * - The per-connection lease re-check (every `heartbeatMs`, 5 s) is NOT a
+ *   polling transport under the no-polling rule: it reads one lease row and
+ *   never a message, so no message is ever found by it; it exists only while
+ *   a connection is open (O(open streams), independent of message volume);
+ *   and it bounds how long a stream fenced by something that does not wake
+ *   this process (lease expiry, a row changed by another server process or
+ *   by hand) keeps serving: at most one heartbeat. Messages are only read
+ *   after a wake. If open streams ever make it matter, the fence check moves
+ *   onto the same LISTEN/NOTIFY seam multi-replica wakeups need (`wake`).
  * - A slow consumer is bounded: at most `maxBufferedBytes` (plus one event)
  *   are queued for a connection; a consumer that does not drain within
  *   `stallMs` is disconnected and resumes from its own Last-Event-ID.
@@ -461,8 +471,9 @@ export class SupervisorInboxStreamHub {
  * ------------------------------------------------------------------------- */
 
 export interface SupervisorInboxStreamLimits {
-  /** Idle interval of the keepalive comment and the fence re-check. Below
-   * Bun.serve's default 10 s idle timeout. */
+  /** Idle interval of the keepalive comment and the fence re-check (one
+   * lease row, never a message; see the module comment on the no-polling
+   * rule). Below Bun.serve's default 10 s idle timeout. */
   heartbeatMs: number;
   /** Bytes queued for one connection before the server waits for a drain. */
   maxBufferedBytes: number;

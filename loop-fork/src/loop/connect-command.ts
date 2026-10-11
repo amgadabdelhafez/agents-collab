@@ -5,9 +5,12 @@ import {
   type A2AClientEndpoint,
   acknowledgeA2AWorkflows,
   claimA2ASession,
+  clientTrust,
+  readA2AClientConfig,
   releaseA2ASession,
   resolveA2AClientEndpoint,
 } from "./a2a-session-client";
+import { enrollA2ASession, fetchWithTrust } from "./a2a-session-credential";
 import { claudeChannelNotification } from "./bridge-runtime";
 import { readBridgeStatus } from "./bridge-store";
 import { BridgeSupervisorMessageDeliveryPort } from "./bridge-supervisor-message-delivery";
@@ -36,7 +39,16 @@ import { SupervisorMessageV2BridgeDeliveryPort } from "./supervisor-message-v2-b
  *   loop connect --as supervisor:x --deliver claude --session <claude-session-id>
  *   loop connect --as supervisor:x --deliver codex  --thread <id> --codex-remote ws://127.0.0.1:<port>
  *   loop connect --as supervisor:x --deliver seat   --run <run-id> --seat claude|codex
- *                (each: [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env])
+ *                (each: [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env]
+ *                 [--enroll-code-file <path>] [--trust-file <ca.pem>])
+ *
+ * - ra2: the server is the config's own origin (https anywhere, or http on
+ *   loopback). A session beyond loopback authenticates with its enrolled
+ *   session token: `--enroll-code-file` exchanges a single-use code (read
+ *   from the file, never argv) for one and keeps it as this supervisor's
+ *   credential; later runs, and `loop a2a`, reuse it. This process keeps it
+ *   fresh while it runs. A static tokenEnv token is only used on loopback.
+ *   `--trust-file` names the PEM anchors of a private CA for an https origin.
  *
  * - Identity is fixed before any input is read: `--as`, its tokenEnv, and the
  *   fence of the inbox-stream lease this process claims (holderRef
@@ -57,7 +69,7 @@ export const CONNECT_COMMAND = "connect";
 export const ALLOW_MULTI_TOKEN_ENV_FLAG = "--allow-multi-token-env";
 
 const USAGE = [
-  "Usage: loop connect --as <supervisor:id> --deliver <claude|codex|seat> [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env] ...",
+  "Usage: loop connect --as <supervisor:id> --deliver <claude|codex|seat> [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env] [--enroll-code-file <path>] [--trust-file <ca.pem>] ...",
   "  --deliver claude --session <claude-session-id>",
   "  --deliver codex  --thread <thread-id> --codex-remote ws://127.0.0.1:<port>",
   "  --deliver seat   --run <run-id> --seat claude|codex",
@@ -67,10 +79,12 @@ const VALUE_FLAGS = [
   "--as",
   "--codex-remote",
   "--deliver",
+  "--enroll-code-file",
   "--run",
   "--seat",
   "--session",
   "--thread",
+  "--trust-file",
   "--ttl-ms",
 ] as const;
 const BOOLEAN_FLAGS = [ALLOW_MULTI_TOKEN_ENV_FLAG, "--takeover"] as const;
@@ -89,9 +103,13 @@ export type ConnectTarget =
 
 export interface ConnectOptions {
   allowMultiTokenEnv: boolean;
+  /** A file holding a single-use enrollment code (never the code itself). */
+  enrollCodeFile?: string;
   supervisorId: string;
   takeover: boolean;
   target: ConnectTarget;
+  /** PEM trust anchors for an https origin with a private CA. */
+  trustFile?: string;
   ttlMs?: number;
 }
 
@@ -145,7 +163,13 @@ const ALLOWED_TARGET_FLAGS: Record<DeliverKind, readonly string[]> = {
   codex: ["--codex-remote", "--thread"],
   seat: ["--run", "--seat"],
 };
-const COMMON_FLAGS = ["--as", "--deliver", "--ttl-ms"];
+const COMMON_FLAGS = [
+  "--as",
+  "--deliver",
+  "--enroll-code-file",
+  "--trust-file",
+  "--ttl-ms",
+];
 
 const seatTarget = (
   need: (name: string) => string,
@@ -236,9 +260,13 @@ export const parseConnectArgs = (
   }
   const target = connectTarget(deliver, values, deps);
   const ttl = values.get("--ttl-ms");
+  const enrollCodeFile = values.get("--enroll-code-file");
+  const trustFile = values.get("--trust-file");
   return {
     allowMultiTokenEnv: booleans.has(ALLOW_MULTI_TOKEN_ENV_FLAG),
+    ...(enrollCodeFile === undefined ? {} : { enrollCodeFile }),
     supervisorId,
+    ...(trustFile === undefined ? {} : { trustFile }),
     takeover: booleans.has("--takeover"),
     target,
     ...(ttl === undefined
@@ -564,6 +592,39 @@ const delivererFor = (
   return loopSeatDeliverer(target.runDir, target.seat);
 };
 
+/**
+ * ra2: exchanges the code in `--enroll-code-file` for this supervisor's
+ * session credential at the config's origin. Only a role-bound address can
+ * hold a session token, and the token must be for that role.
+ */
+const enrollConnectSession = async (
+  options: ConnectOptions & { enrollCodeFile: string },
+  deps: ConnectDeps,
+  log: (line: string) => void
+): Promise<void> => {
+  const client = readA2AClientConfig(options.supervisorId, deps);
+  if (!client.role) {
+    throw new Error(
+      `${client.supervisorId} has no role in the orchestration config; only a role-bound address can hold a session token`
+    );
+  }
+  const uid = deps.uid?.();
+  const trustCa = clientTrust(client.origin, options.trustFile, uid);
+  const enrolled = await enrollA2ASession({
+    codeFile: options.enrollCodeFile,
+    ...(deps.env ? { env: deps.env } : {}),
+    fetchImpl: fetchWithTrust(deps.fetchImpl ?? fetch, trustCa),
+    ...(deps.nowMs ? { now: deps.nowMs } : {}),
+    origin: client.origin,
+    role: client.role,
+    supervisorId: client.supervisorId,
+    ...(uid === undefined ? {} : { uid }),
+  });
+  log(
+    `[loop connect] enrolled ${client.supervisorId} at ${client.origin} (session ${enrolled.sessionId}, token until ${new Date(enrolled.expiresAt * 1000).toISOString()})`
+  );
+};
+
 /** Claims this process's inbox-stream lease: a fresh holder, fixed fence. */
 const claimInboxStream = async (
   endpoint: A2AClientEndpoint,
@@ -626,18 +687,35 @@ export const runConnectCommand = async (
   const log = runtime.log ?? ((line: string) => console.error(line));
   const write = runtime.write ?? stdoutWriter;
   const options = parseConnectArgs(argv, deps);
+  const clientDeps: ConnectDeps = {
+    ...deps,
+    allowMultiTokenEnv: options.allowMultiTokenEnv,
+    log,
+    ...(options.trustFile === undefined
+      ? {}
+      : { trustFile: options.trustFile }),
+  };
   // Identity first: nothing from stdin is read before it is fixed.
+  if (options.enrollCodeFile !== undefined && !runtime.endpoint) {
+    await enrollConnectSession(
+      { ...options, enrollCodeFile: options.enrollCodeFile },
+      clientDeps,
+      log
+    );
+  }
   const endpoint =
     runtime.endpoint ??
-    resolveA2AClientEndpoint(options.supervisorId, {
-      ...deps,
-      allowMultiTokenEnv: options.allowMultiTokenEnv,
-    });
+    resolveA2AClientEndpoint(options.supervisorId, clientDeps);
   if (endpoint.supervisorId !== options.supervisorId) {
     throw new Error("connect endpoint does not act as --as");
   }
   const fence = await claimInboxStream(endpoint, options, deps, log);
   const abort = new AbortController();
+  // A session token is refreshed ahead of expiry while this process runs, so
+  // every reconnect presents a valid one.
+  endpoint.keepFresh(abort.signal, (error) =>
+    log(`[loop connect] session token: ${error.message}`)
+  );
   const client = new InboxStreamClient({
     deliver:
       runtime.deliverer ??

@@ -37,11 +37,15 @@ import {
  *   loop a2a status  --as supervisor:x --message-id <workflow-id>  (the workflowId send prints)
  *   loop a2a ack     --as supervisor:x --workflow <workflow-id> [--workflow <id>...]
  *
- * The server and token come from the orchestration config and the
- * supervisor's tokenEnv, never from argv. `--as` is required and only that
- * supervisor's tokenEnv is read; an environment that also holds another
- * configured supervisor's token is refused unless `--allow-multi-token-env`
- * is given (run each session with only its own token). `send` reports
+ * The server comes from the orchestration config and the token from the
+ * supervisor's enrolled session credential (ra2; see `loop connect
+ * --enroll-code-file`) or, on loopback only, its tokenEnv; never from argv.
+ * `--trust-file`
+ * names the PEM anchors of a private CA for an https origin. `--as` is
+ * required and only that supervisor's tokenEnv is read; an environment that
+ * also holds another configured supervisor's token is refused unless
+ * `--allow-multi-token-env` is given (run each session with only its own
+ * token). `send` reports
  * acceptance, `ack` the recipient's read acknowledgement, `status` all three
  * facts apart; nothing here marks work complete.
  */
@@ -51,7 +55,7 @@ type A2AAction = (typeof ACTIONS)[number];
 export const ALLOW_MULTI_TOKEN_ENV_FLAG = "--allow-multi-token-env";
 
 const USAGE = [
-  "Usage: loop a2a <enroll|release|send|status|ack> --as <supervisor:id> [--allow-multi-token-env] ...",
+  "Usage: loop a2a <enroll|release|send|status|ack> --as <supervisor:id> [--allow-multi-token-env] [--trust-file <ca.pem>] ...",
   "  enroll  --kind loop-run --run <run-id> [--seat claude|codex] | --kind codex-thread --run <run-id> | --kind claude-channel --session <id> [--provider-session <id>]; [--takeover] [--ttl-ms <ms>]",
   "  release --run <run-id> | --session <id>",
   "  send    --to <supervisor:id> --body-file <path> [--message-id <id>] [--context <id>]",
@@ -60,7 +64,7 @@ const USAGE = [
 ].join("\n");
 
 const VALUE_FLAGS: Record<A2AAction, readonly string[]> = {
-  ack: ["--as", "--workflow"],
+  ack: ["--as", "--trust-file", "--workflow"],
   enroll: [
     "--as",
     "--kind",
@@ -68,11 +72,19 @@ const VALUE_FLAGS: Record<A2AAction, readonly string[]> = {
     "--run",
     "--seat",
     "--session",
+    "--trust-file",
     "--ttl-ms",
   ],
-  release: ["--as", "--run", "--session"],
-  send: ["--as", "--body-file", "--context", "--message-id", "--to"],
-  status: ["--as", "--message-id"],
+  release: ["--as", "--run", "--session", "--trust-file"],
+  send: [
+    "--as",
+    "--body-file",
+    "--context",
+    "--message-id",
+    "--to",
+    "--trust-file",
+  ],
+  status: ["--as", "--message-id", "--trust-file"],
 };
 const BOOLEAN_FLAGS: Record<A2AAction, readonly string[]> = {
   ack: [ALLOW_MULTI_TOKEN_ENV_FLAG],
@@ -276,9 +288,11 @@ export const runA2ACommand = async (
     required(flags, "--as")
   );
   // Only the human flag opts in to a multi-token environment.
+  const trustFile = one(flags, "--trust-file");
   const deps: A2ACommandDeps = {
     ...callerDeps,
     allowMultiTokenEnv: flags.booleans.has(ALLOW_MULTI_TOKEN_ENV_FLAG),
+    ...(trustFile === undefined ? {} : { trustFile }),
   };
   if (action === "enroll") {
     return await enroll(supervisorId, flags, deps);
