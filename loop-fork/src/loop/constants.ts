@@ -62,8 +62,10 @@ Usage:
   ${STOP_USAGE}
                                            Tear a run down like the Governess does: mark it stopped, end its own verified processes, kill its session, release its workspace (--yes skips the prompt)
   loop orchestration serve <config>        Run the orchestration service (A2A V2 on when the config has an a2aV2 section)
-  loop orchestration a2a-v2 init <config> [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]
-                                           Provision the local A2A V2 ledger and add the a2aV2 section (backup + atomic replace)
+  loop orchestration a2a-v2 init <config> [--control <supervisor-id>] [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]
+                                           Provision the local A2A V2 ledger and add the a2aV2 section (backup + atomic replace); without --recipient every configured supervisor is a recipient
+  loop a2a <enroll|release|send|status|ack> --as <supervisor-id> ...
+                                           A supervisor's own A2A V2 client: enroll or release its endpoint, send, read status, acknowledge (never completion)
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only
