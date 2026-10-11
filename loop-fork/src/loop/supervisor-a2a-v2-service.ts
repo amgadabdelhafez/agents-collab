@@ -58,6 +58,7 @@ import {
   type SupervisorEndpointLocatorResolver,
   supervisorEndpointLocatorRefused,
 } from "./supervisor-endpoint-lease";
+import { SUPERVISOR_ID_RE as PEER_SUPERVISOR_ID } from "./supervisor-id";
 import {
   createSupervisorInboxStreamHandler,
   PostgresSupervisorInboxStore,
@@ -131,7 +132,6 @@ import type {
   WorkflowStartReceipt,
 } from "./workflow-port";
 
-const PEER_SUPERVISOR_ID = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 /** Terminal A2A states in which a task can never accept a result, so the
  * graph task it reserved may pass to another A2A task. */
 const ENDED_WITHOUT_RESULT: readonly TaskState[] = [
@@ -1597,6 +1597,12 @@ export interface SupervisorA2AV2AllSupervisorsOptions {
   resolveLocator: SupervisorEndpointLocatorResolver;
   routePath: string;
   sessionTtlMs: number;
+  /**
+   * RA2: role id -> the configured legacy address it aliases
+   * (project-identity.ts `configuredSupervisorAddressBook`). Each alias also
+   * gets {routePath}/supervisors/<alias slug>, served by its address.
+   */
+  supervisorAliases?: ReadonlyMap<string, string>;
   /** Every configured supervisor; each gets {routePath}/supervisors/<slug>. */
   supervisorIds: readonly string[];
 }
@@ -1774,6 +1780,21 @@ const createAllSupervisorsRoute = (input: {
       identity?: SupervisorA2AAuthenticatedIdentity
     ) => Promise<Response>
   >();
+  const seats = new Map<string, SupervisorA2AV2Ingress>();
+  const mount = (routeId: string, seatIngress: SupervisorA2AV2Ingress) => {
+    const sdk = createSupervisorA2AHttpHandler({
+      authenticator: sdkAuthenticator,
+      handler: seatIngress.handler,
+      pathname: a2aV2SupervisorIngressPath(all.routePath, routeId),
+      tenant: input.tenant,
+    });
+    ingress.set(routeId, (request, identity) => {
+      if (identity) {
+        gated.set(request, identity);
+      }
+      return sdk(request);
+    });
+  };
   for (const supervisorId of new Set(all.supervisorIds)) {
     const pathname = a2aV2SupervisorIngressPath(all.routePath, supervisorId);
     const seatIngress = new SupervisorA2AV2Ingress({
@@ -1785,18 +1806,18 @@ const createAllSupervisorsRoute = (input: {
       },
       supervisorId,
     });
-    const sdk = createSupervisorA2AHttpHandler({
-      authenticator: sdkAuthenticator,
-      handler: seatIngress.handler,
-      pathname,
-      tenant: input.tenant,
-    });
-    ingress.set(supervisorId, (request, identity) => {
-      if (identity) {
-        gated.set(request, identity);
-      }
-      return sdk(request);
-    });
+    seats.set(supervisorId, seatIngress);
+    mount(supervisorId, seatIngress);
+  }
+  // RA2: a role id that aliases a configured legacy address is served by
+  // that address's own ingress (same seat, same recipient); the gate below
+  // decides the grant for the configured address, never the alias.
+  const aliases = all.supervisorAliases ?? new Map<string, string>();
+  for (const [alias, target] of aliases) {
+    const seatIngress = seats.get(target);
+    if (seatIngress && !seats.has(alias)) {
+      mount(alias, seatIngress);
+    }
   }
   const hub = all.inboxStream;
   const sessions = createA2AV2SessionRoutesHandler({
@@ -1863,7 +1884,13 @@ const createAllSupervisorsRoute = (input: {
       }
       const seat = match ? ingress.get(match.supervisorId) : undefined;
       return match && seat
-        ? gate(request, match.supervisorId, seat)
+        ? gate(
+            request,
+            seats.has(match.supervisorId)
+              ? match.supervisorId
+              : (aliases.get(match.supervisorId) ?? match.supervisorId),
+            seat
+          )
         : Promise.resolve(routeError("not-found"));
     },
     routePath: all.routePath,

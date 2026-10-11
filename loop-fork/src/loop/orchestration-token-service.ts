@@ -22,6 +22,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { readBoundedRequestText } from "./bounded-request-body";
+import { isSupervisorRepoKey } from "./supervisor-id";
 
 /**
  * RA1: session tokens for the orchestration control surface.
@@ -57,6 +58,10 @@ export type TokenRole = (typeof TOKEN_ROLES)[number];
 /** What a configured address is in the control hierarchy. */
 export interface RoleBinding {
   project: string;
+  /**
+   * A flat scope name, or (RA2) the repository's "<owner>/<name>". Only the
+   * latter names a role id, so only it routes a legacy supervisor address.
+   */
   repoKey: string;
   role: TokenRole;
 }
@@ -128,7 +133,7 @@ export const parseRoleBinding = (
     !(
       isTokenRole(value.role) &&
       typeof value.repoKey === "string" &&
-      SCOPE_RE.test(value.repoKey) &&
+      (SCOPE_RE.test(value.repoKey) || isSupervisorRepoKey(value.repoKey)) &&
       typeof value.project === "string" &&
       SCOPE_RE.test(value.project)
     )

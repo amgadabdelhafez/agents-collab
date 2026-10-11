@@ -24,6 +24,7 @@ import {
   SUPERVISOR_ENDPOINT_MANIFEST_FILE,
   supervisorEndpointRoots,
 } from "./supervisor-endpoint-lease";
+import { supervisorIdFromSlug } from "./supervisor-id";
 
 /**
  * `loop a2a`: a supervisor session's own A2A V2 client.
@@ -426,7 +427,9 @@ export const a2aBridgeSession = (
     return Object.freeze({
       sessionDir: dir,
       sessionId,
-      supervisorId: requireSupervisorEndpointRecipient(`supervisor:${slug}`),
+      supervisorId: requireSupervisorEndpointRecipient(
+        supervisorIdFromSlug(slug)
+      ),
     });
   } catch {
     return undefined;

@@ -24,6 +24,7 @@ import {
   type SupervisorEndpointInboxStreamLocator,
   type SupervisorEndpointLeaseFence,
 } from "./supervisor-endpoint-lease";
+import { supervisorSlug } from "./supervisor-id";
 import type { SupervisorInboxEvent } from "./supervisor-inbox-stream";
 import { SupervisorMessageV2BridgeDeliveryPort } from "./supervisor-message-v2-bridge-delivery";
 
@@ -293,7 +294,7 @@ export const claudeChannelDeliverer =
     await write(
       claudeChannelNotification({
         at: event.appendedAt,
-        chatId: `a2a_${supervisorId.slice("supervisor:".length)}`,
+        chatId: `a2a_${supervisorSlug(supervisorId)}`,
         content: formatInboxMessage(event),
         messageId: event.envelope.messageId,
         sourceType: "a2a",

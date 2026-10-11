@@ -1,3 +1,4 @@
+import { SUPERVISOR_ID_RE } from "./supervisor-id";
 import {
   type JsonObject,
   type JsonValue,
@@ -100,7 +101,6 @@ export interface SupervisorMessageDeliveryRequest extends JsonObject {
   workflowId: string;
 }
 
-const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const STABLE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
 const ARTIFACT_REF_RE = /^artifact:\/\/sha256\/[a-f0-9]{64}$/;
 const CANONICAL_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;

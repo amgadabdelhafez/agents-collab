@@ -29,6 +29,7 @@ import {
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import { processGroupAlive } from "./process-group";
 import { AGENT_GROUP_KIND, PANE_PROCESS_KIND } from "./run-pane-processes";
+import { SUPERVISOR_ID_RE as A2A_SUPERVISOR_ID_RE } from "./supervisor-id";
 import { createManifestHandle, type ManifestHandle } from "./tmux-socket";
 import type {
   Agent,
@@ -1915,7 +1916,6 @@ const optionalWorkspaceReleaseKind = (
 // the manifest before it lets that supervisor claim the run's endpoint, so
 // every manifest rewrite must keep it; anything but a supervisor id is
 // dropped rather than carried.
-const A2A_SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/u;
 const optionalA2ASupervisorId = (
   parsed: Record<string, unknown>
 ): Pick<RunManifest, "a2aSupervisorId"> | Record<string, never> =>

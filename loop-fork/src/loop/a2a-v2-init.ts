@@ -1,3 +1,4 @@
+import { SUPERVISOR_ID_RE as SUPERVISOR_RE } from "./supervisor-id";
 // fix8: `loop orchestration a2a-v2 init <config>` turns the A2A V2 plane on for
 // an existing orchestration config.
 //
@@ -79,7 +80,6 @@ const LEDGER_DB = "loop_a2a";
 const MOUNT_UNSAFE_RE = /[,"\n]/;
 const DOCKER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/;
 const TOKEN_ENV_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
-const SUPERVISOR_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const PRINCIPAL_RE = /^principal:[a-z0-9][a-z0-9._:-]{0,255}$/;
 const TENANT_INVALID_RE = /[^a-z0-9._-]+/g;
 const EDGE_DASH_RE = /^[-._]+|[-._]+$/g;

@@ -1041,8 +1041,14 @@ test("recipient routing hands every lease-routed recipient to T2's endpoint port
 const fakeService = (input: {
   createHostFails?: boolean;
   leases?: ReturnType<typeof fakeLeaseStore>;
+  mayReceive?: (request: {
+    from: string;
+    principal: string;
+    to: string;
+  }) => boolean;
   mounted?: boolean;
   resolveLocator: SupervisorEndpointLocatorResolver;
+  supervisorAliases?: ReadonlyMap<string, string>;
 }) => {
   const closes: string[] = [];
   const closable = (name: string) => ({
@@ -1061,11 +1067,14 @@ const fakeService = (input: {
       authenticator,
       hasMailbox: () => false,
       legacySeats: [],
-      mayReceive: () => true,
+      mayReceive: input.mayReceive ?? (() => true),
       principalForRecipient: principalFor,
       resolveLocator: input.resolveLocator,
       routePath: "/a2a/v2",
       sessionTtlMs: 60_000,
+      ...(input.supervisorAliases
+        ? { supervisorAliases: input.supervisorAliases }
+        : {}),
       supervisorIds: [ALPHA, BETA],
     },
     card: {
@@ -1226,6 +1235,69 @@ test("the service mounts every supervisor's gated ingress, the session routes an
     "ledger",
     "task-store",
   ]);
+});
+
+test("RA2: a role id that aliases a configured legacy address is served by that address's ingress, and the grant is decided for the address", async () => {
+  const home = serverHome();
+  const role = "supervisor:amgad/harness-engineering/harness";
+  const decided: string[] = [];
+  const { service: pending } = fakeService({
+    mayReceive: (request) => {
+      decided.push(request.to);
+      return false;
+    },
+    mounted: false,
+    resolveLocator: home.resolveLocator,
+    supervisorAliases: new Map([[role, BETA]]),
+  });
+  const service = await pending;
+  const handle = (path: string, body: unknown) =>
+    (
+      service.allSupervisorsRoute as NonNullable<
+        typeof service.allSupervisorsRoute
+      >
+    ).httpHandler(
+      new Request(`http://127.0.0.1:7321${path}`, {
+        body: JSON.stringify(body),
+        headers: {
+          authorization: "Bearer token-alpha",
+          "content-type": "application/json",
+        },
+        method: "POST",
+      })
+    );
+  const read = {
+    id: 9,
+    jsonrpc: "2.0",
+    method: "GetTask",
+    params: { id: "t-404" },
+  };
+  // The alias's one-segment slug reaches the SDK (JSON-RPC, not 404).
+  const viaAlias = await handle(
+    "/a2a/v2/supervisors/amgad~harness-engineering~harness",
+    read
+  );
+  expect(viaAlias.status).toBe(200);
+  expect(await viaAlias.json()).toMatchObject({ id: 9, jsonrpc: "2.0" });
+  // A send through the alias is decided for the configured address.
+  expect(
+    (
+      await handle(
+        "/a2a/v2/supervisors/amgad~harness-engineering~harness",
+        sendMessage(ALPHA)
+      )
+    ).status
+  ).toBe(403);
+  expect(decided).toEqual([BETA]);
+  // The '/' form is never one segment, and a role id nobody aliased has no
+  // ingress.
+  for (const path of [
+    "/a2a/v2/supervisors/amgad/harness-engineering/harness",
+    "/a2a/v2/supervisors/amgad~harness-engineering~other",
+  ]) {
+    expect((await handle(path, read)).status).toBe(404);
+  }
+  await service.close();
 });
 
 test("the service answers 503 on the session routes when no lease store is wired, and closes an opened lease store when a later stage fails", async () => {

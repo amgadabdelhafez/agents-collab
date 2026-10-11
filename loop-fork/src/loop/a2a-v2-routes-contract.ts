@@ -12,6 +12,7 @@ import {
   type SupervisorEndpointLocator,
   supervisorEndpointSlug,
 } from "./supervisor-endpoint-lease";
+import { supervisorIdFromSlug } from "./supervisor-id";
 import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
 
 /**
@@ -30,12 +31,13 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  * |        |   (ra1, text/event-stream)             | live inbox-stream lease fence|
  *
  * - <slug> is the recipient id without its `supervisor:` prefix, so the
- *   segment is never read as a URL scheme. The ingress is the A2A JSON-RPC
- *   SDK transport, exactly as the existing primary and peer ingress: the
- *   message's `harness.dev/from` metadata must equal the authenticated
- *   supervisorId, the recipient is the path's supervisor, and grants still
- *   decide. No agent-card route is added: clients build the card locally with
- *   agentCardFor({supervisorId, url: <ingress URL>}) and
+ *   segment is never read as a URL scheme; a role id's '/' is written '~'
+ *   (RA2, supervisor-id.ts), so the slug stays one segment. The ingress is
+ *   the A2A JSON-RPC SDK transport, exactly as the existing primary and peer
+ *   ingress: the message's `harness.dev/from` metadata must equal the
+ *   authenticated supervisorId, the recipient is the path's supervisor, and
+ *   grants still decide. No agent-card route is added: clients build the
+ *   card locally with agentCardFor({supervisorId, url: <ingress URL>}) and
  *   ClientFactory.createFromAgentCard. Streaming and push stay false.
  * - messages/<messageId> answers only within {route tenant, authenticated
  *   principal}; any other message is 404, indistinguishable from absent.
@@ -83,9 +85,7 @@ export const A2A_V2_SESSION_INBOX_SUFFIX = "/inbox" as const;
 export const A2A_V2_LEASE_EPOCH_HEADER = "x-loop-lease-epoch" as const;
 export const A2A_V2_LEASE_HOLDER_HEADER = "x-loop-lease-holder" as const;
 
-const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const MESSAGE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
-const SUPERVISOR_PREFIX = "supervisor:";
 
 export class A2AV2RouteContractError extends Error {
   constructor(message: string) {
@@ -97,8 +97,9 @@ export class A2AV2RouteContractError extends Error {
 export const a2aV2SupervisorSlug = (supervisorId: string): string =>
   supervisorEndpointSlug(supervisorId);
 
+/** RA2: only a recipient's canonical slug (supervisor-id.ts) names it. */
 export const a2aV2SupervisorIdFromSlug = (slug: string): string | undefined =>
-  SLUG_RE.test(slug) ? `${SUPERVISOR_PREFIX}${slug}` : undefined;
+  supervisorIdFromSlug(slug);
 
 export const a2aV2SessionRoutePath = (
   routePath: string,
