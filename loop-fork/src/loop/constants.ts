@@ -44,6 +44,9 @@ export const DEFAULT_USAGE_TRACKER_TIMEOUT_MS = 1500;
 export const RECONCILE_USAGE =
   "loop reconcile stopped-run|failed-start|failed-terminal <run-id>";
 
+/** The one usage line `loop stop` enforces and `--help` shows. */
+export const STOP_USAGE = "loop stop <run-id> [--yes]";
+
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
 
@@ -56,6 +59,8 @@ Usage:
   loop upgrade                             Alias for update
   ${RECONCILE_USAGE}
                                            Hand back a dead stopped or failed run's workspace, only once its tmux session and every recorded process are gone
+  ${STOP_USAGE}
+                                           Tear a run down like the Governess does: mark it stopped, end its own verified processes, kill its session, release its workspace (--yes skips the prompt)
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only
@@ -87,6 +92,7 @@ Options:
   --run-id <id>                            Reuse a specific run id; resumes paired runs in paired mode when supported
   --session <id>                           Resume from a paired run id or raw session/thread ID
   --tmux                                   Run in tmux (paired mode opens the selected two agents side-by-side; no prompt/proof starts interactive sessions)
+  --trust-workspace                        Answer Claude Code's folder trust prompt for this workspace only (off by default: a fresh folder fails fast with the remedy)
   --workspace <path>                       Run in and bind to an existing registered Git worktree
   --worktree                               Create and run in a fresh git worktree (name: repo-loop-X)
   --governess                                Compatibility flag; governess is always enabled for paired tmux runs

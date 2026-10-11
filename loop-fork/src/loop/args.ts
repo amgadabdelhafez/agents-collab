@@ -722,6 +722,11 @@ const consumeArg = (
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
+  if (arg === "--trust-workspace") {
+    opts.trustWorkspace = true;
+    return { nextIndex: index + 1, stop: false, onlyAgent };
+  }
+
   const valueArg = parseValueArg(argv, index, arg);
   if (valueArg) {
     applyValueFlag(valueArg.flag, valueArg.value, opts, onlyAgent);

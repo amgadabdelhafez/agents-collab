@@ -5925,12 +5925,14 @@ const TRANSIENT_RELEASE_REFUSALS = [
  * Bounded wait for the teardown's own effects to be observable, then the
  * reconcile handback. Each attempt is the full `reconcileLegacyStoppedRun`
  * conjunction; an attempt that still sees a live or unknown process or
- * session is retried, and the last refusal is returned unreleased.
+ * session is retried, and the last refusal is returned unreleased. The
+ * Governess teardown releases a stopped run; `loop stop` also releases a run
+ * that was already failed, in that state (`terminalState`).
  */
 export const confirmTeardownRelease = async (
   manifestPath: string,
   runId: string,
-  deps: Omit<StoppedRunReconcileDeps, "terminalState"> & {
+  deps: StoppedRunReconcileDeps & {
     attempts: number;
     sleep: (ms: number) => Promise<void>;
     retryMs: number;
@@ -5962,7 +5964,7 @@ export const confirmTeardownRelease = async (
       now: deps.now,
       pidCanStillOwnRun: deps.pidCanStillOwnRun,
       runtimeAbsent: deps.runtimeAbsent,
-      terminalState: "stopped",
+      terminalState: deps.terminalState ?? "stopped",
     });
     if (result.status !== "refused") {
       return {

@@ -239,6 +239,17 @@ test("parseArgs rejects invalid Caveman modes before launch", () => {
   );
 });
 
+test("parseArgs answers Claude's folder trust prompt only on --trust-workspace", () => {
+  clearModelEnv();
+  expect(parseArgs(["--tmux", "-p", "task"]).trustWorkspace).toBeFalsy();
+  expect(
+    parseArgs(["--tmux", "--trust-workspace", "-p", "task"]).trustWorkspace
+  ).toBe(true);
+  expect(parseArgs(["--tmux", "--trust-workspace"]).promptInput).toBe(
+    undefined
+  );
+});
+
 test("parseArgs uses LOOP_CODEX_MODEL when present", () => {
   process.env.LOOP_CODEX_MODEL = "test-model";
   const opts = parseArgs(["--proof", "verify with tests"]);
