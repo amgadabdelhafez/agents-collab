@@ -395,6 +395,8 @@ const compositionFixture = (input: {
   /** Extra a2aV2 config fields and the environment they name. */
   a2aExtra?: Record<string, unknown>;
   envExtra?: Record<string, string>;
+  /** The config identity; the live one carries an `@` (fix8). */
+  identity?: string;
   /** Also configure the run's Claude seat as a peer recipient. */
   peer?: boolean;
   /** The run starts with no Claude pane: the directory has no route to the
@@ -475,7 +477,7 @@ const compositionFixture = (input: {
         },
       ],
       hostname: "127.0.0.1",
-      identity: "orchestration-composition",
+      identity: input.identity ?? "orchestration-composition",
       namespace: "default",
       port,
       schema: "loop-orchestration-server.v1",
@@ -650,6 +652,32 @@ test("the orchestration server enrolls at start and keeps the enrollment current
     stop.abort();
     await running?.catch(() => undefined);
     await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server starts V2 under the live identity shape loop-orchestration@<host> (fix8)", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const fixture = compositionFixture({
+    address: environment.address,
+    identity: "loop-orchestration@sweetmac14",
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(await health(fixture)).toMatchObject({
+      a2aV2: "ready",
+      state: "ready",
+    });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
     fixture.remove();
   }
 }, 120_000);

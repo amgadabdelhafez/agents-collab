@@ -110,6 +110,8 @@ const ENDPOINT_REF_RE = /^endpoint:[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const V2_PRINCIPAL_RE = /^principal:[a-z0-9][a-z0-9._:-]{0,255}$/;
 const ROUTE_PATH_RE = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,255}$/;
 const V2_TENANT_RE = /^tenant:[a-z0-9][a-z0-9._-]{0,127}$/;
+// A V2 dispatch owner and authority reference allow [A-Za-z0-9._:-] only.
+const V2_REFERENCE_INVALID_RE = /[^A-Za-z0-9._:-]/g;
 const SEAT_RE = /^(claude|codex)$/;
 
 interface SupervisorConfig {
@@ -1526,7 +1528,7 @@ const createDefaultRuntimeHost = async (input: {
       ? createGitResultArtifactVerifier(a2aConfig.resultArtifacts)
       : undefined,
     delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
-    dispatchOwner: `v2-dispatcher:${input.config.identity}`,
+    dispatchOwner: `v2-dispatcher:${a2aV2IdentityToken(input.config.identity)}`,
     readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
     workflowIdFormat: a2aConfig.workflowIdFormat,
     notEnrolledBoundMs: a2aConfig.notEnrolledBoundMs,
@@ -1585,7 +1587,7 @@ const createDefaultRuntimeHost = async (input: {
           );
         return {
           allowed,
-          authorityRef: `authority:${input.config.identity}:recipient-v2`,
+          authorityRef: `authority:${a2aV2IdentityToken(input.config.identity)}:recipient-v2`,
           reasonCode: allowed ? "configured-grant" : "grant-denied",
         };
       },
@@ -1661,6 +1663,17 @@ const validateConfiguredRuntimeEnvironment = (
     resolveResultGraphKeys(config.a2aV2, env);
   }
 };
+
+/**
+ * fix8: the config identity as it may appear in a V2 dispatch owner
+ * (`v2-dispatcher:<token>`) and authority reference
+ * (`authority:<token>:recipient-v2`), which allow [A-Za-z0-9._:-] only. The
+ * config allows `@`, and the live identity is `loop-orchestration@<host>`:
+ * used verbatim it refused every V2 start ("dispatch owner is invalid"). Any
+ * other character becomes `-`; an identity already valid is unchanged.
+ */
+export const a2aV2IdentityToken = (identity: string): string =>
+  identity.replace(V2_REFERENCE_INVALID_RE, "-");
 
 /** Whether the configured A2A V2 plane is mounted; see `a2aV2State`. */
 export type A2AV2PlaneState = "disabled" | "off" | "ready";

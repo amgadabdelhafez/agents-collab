@@ -29,6 +29,7 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { serve } from "bun";
 import { withA2AV2EnvFile } from "../../src/loop/a2a-v2-env";
 import {
+  a2aV2IdentityToken,
   decideA2AV2Plane,
   parseLoopOrchestrationConfig,
   runLoopOrchestrationServer,
@@ -241,6 +242,16 @@ describe("decideA2AV2Plane", () => {
     expect(await probeA2AV2Database(UNREACHABLE_URL, 2000)).toBe(false);
     expect(Date.now() - started).toBeLessThan(5000);
   });
+});
+
+test("the V2 identity token keeps a valid identity and replaces what a V2 reference refuses", () => {
+  expect(a2aV2IdentityToken("orchestration-composition")).toBe(
+    "orchestration-composition"
+  );
+  expect(a2aV2IdentityToken("loop-orchestration@sweetmac14")).toBe(
+    "loop-orchestration-sweetmac14"
+  );
+  expect(a2aV2IdentityToken("a b/c")).toBe("a-b-c");
 });
 
 describe("the env file next to the config", () => {
