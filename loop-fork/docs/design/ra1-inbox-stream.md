@@ -50,11 +50,32 @@ mailbox files remain the fallback for sessions on the server's own disk
   writes a comment and re-checks the lease fence; it reads no messages. Bun's
   SQL client has no LISTEN, so a second server process would not be woken:
   the server is a single writer today (see Limits).
+- **The 5 s lease re-check under the no-polling rule.** Each open stream
+  reads its own lease row once per heartbeat. This is not a polling
+  transport: it never reads a message, so no message is ever found by it
+  (messages are read only after a wake); it runs only while a connection is
+  open, one row per open stream, independent of message volume; and it is
+  what bounds how long a stream stays open after a fence that wakes nobody
+  (lease expiry, a row changed by another process or by hand) to one
+  heartbeat. If open streams ever make the reads matter, the check moves to
+  the same LISTEN/NOTIFY seam multi-replica wakeups need (the hub's `wake`).
+  The wakeup wiring is tested end to end through the service
+  (`supervisor-a2a-v2-service-r9.test.ts`): a claim, takeover or release on
+  the session routes wakes that seat's streams, a refused claim wakes
+  nothing.
 - **Slow consumer bounded.** At most `maxBufferedBytes` (256 KiB) plus one
   frame is queued per connection; a consumer that does not drain within
   `stallMs` (30 s) gets an `overflow` event and is disconnected, then resumes
   from its own Last-Event-ID. The client reads the stream only between
   deliveries, so a slow local delivery is what applies the backpressure.
+  Proven over a real Bun.serve socket with a raw client that stops reading
+  (ra2): the server ends the stream while the client is still paused, has
+  read at most one batch beyond what it wrote, and the client resumes the
+  rest exactly once.
+- **No skipped events.** A message event the client cannot parse is never
+  skipped (skipping would move the cursor past it with the next good one):
+  the client drops the connection and resumes from its last delivered
+  sequence (ra2).
 - **ACK is not completion.** Reading the stream is not the ACK. The session
   acknowledges on the existing recipient route (`inbox_ack` tool, or
   `loop a2a ack`), which is the delivery/read ACK; completion stays a
@@ -72,8 +93,9 @@ mailbox files remain the fallback for sessions on the server's own disk
   holder's (expiry alone never fences); the sweep renews it once the holder is
   present again.
 - Locators carry ids only; the server derives no path or URL for this kind.
-- `loop connect` fixes identity before reading stdin (`--as`, its tokenEnv,
-  the fence it claimed with holderRef `connect:<uuid>`); tool input cannot
+- `loop connect` fixes identity before reading stdin (`--as`, its session
+  credential or, on loopback, its tokenEnv, and the fence it claimed with
+  holderRef `connect:<uuid>`); tool input cannot
   name an identity or a server. A fenced stream ends for good; only an
   explicit claim (`--takeover`) takes a lease back (owner decision 9).
 - The lease is kept alive by the server's existing lease sweep observing the
@@ -87,6 +109,7 @@ loop connect --as supervisor:x --deliver claude --session <claude-session-id>
 loop connect --as supervisor:x --deliver codex  --thread <id> --codex-remote ws://127.0.0.1:<port>
 loop connect --as supervisor:x --deliver seat   --run <run-id> --seat claude|codex
              [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env]
+             [--enroll-code-file <path>] [--trust-file <ca.pem>]   (ra2)
 ```
 
 Delivery by kind reuses existing paths: the bridge's
@@ -97,10 +120,12 @@ and the run's bridge queue through `SupervisorMessageV2BridgeDeliveryPort`
 
 ## Limits and open items
 
-- The client resolves the server from the orchestration config, which the
-  r9 client accepts only on loopback. Reaching `https://loop.home.lab` over
-  the tailnet needs the tokens/identity group to extend
-  `resolveA2AClientEndpoint` to an https origin; not done here.
+- ~~The client resolves the server from the orchestration config, which the
+  r9 client accepts only on loopback.~~ Done in ra2
+  (`claude/ra2-connect-anywhere`): the client follows the config's https
+  origin with an enrolled session token (`loop connect --enroll-code-file`,
+  refreshed before expiry, `--trust-file` for a private CA); a static token
+  is only sent on loopback. See RUNBOOK-LOOP.md, "ra2".
 - Wakeups are in-process. A multi-replica server needs LISTEN/NOTIFY (a
   client that supports it) or one writer per tenant; the hub's `wake` is the
   seam.

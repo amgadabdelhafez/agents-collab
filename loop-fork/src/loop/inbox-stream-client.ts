@@ -25,9 +25,14 @@ import {
  *   server's queue for this connection.
  * - Reconnects follow a dropped stream only, with exponential backoff (the
  *   server's `retry` as the floor): this is not a polling loop.
+ * - A message event that does not parse is never skipped: the connection is
+ *   dropped and the next one resumes from the last event delivered
+ *   (`Last-Event-ID`), so the server sends it again. Skipping it would move
+ *   the cursor past it with the next good event, and it would be lost.
  * - A fenced lease (a takeover, a release) or a refused identity ends the
  *   stream for good: identity is fixed per session, and only an explicit
- *   claim takes a lease back.
+ *   claim takes a lease back. A refused session token that another process
+ *   of this session has since refreshed is retried with the current one.
  * - Reading is not the ACK: the session acknowledges on the recipient route.
  */
 
@@ -304,16 +309,29 @@ export class InboxStreamClient {
     connectionSignal: AbortSignal
   ): Promise<ConnectionOutcome | Response> {
     const { endpoint, fence } = this.#options;
+    let token: string;
+    try {
+      token = await endpoint.token();
+    } catch (error) {
+      // A session that must enroll again: no reconnect can fix it.
+      return {
+        end: {
+          detail: error instanceof Error ? error.message : "no credential",
+          reason: "refused",
+        },
+        kind: "end",
+      };
+    }
     let response: Response;
     try {
-      response = await (this.#options.fetchImpl ?? fetch)(
+      response = await endpoint.fetch(this.#options.fetchImpl ?? fetch)(
         endpoint.url(
           a2aV2SessionInboxPath(endpoint.routePath, endpoint.supervisorId)
         ),
         {
           headers: {
             accept: "text/event-stream",
-            authorization: endpoint.authorization(),
+            authorization: `Bearer ${token}`,
             [A2A_V2_LEASE_EPOCH_HEADER]: String(fence.epoch),
             [A2A_V2_LEASE_HOLDER_HEADER]: fence.holderRef,
             ...(this.#cursor > 0
@@ -330,6 +348,9 @@ export class InboxStreamClient {
     }
     if (response.status === 401 || response.status === 403) {
       await response.body?.cancel().catch(() => undefined);
+      if (response.status === 401 && (await endpoint.superseded(token))) {
+        return { kind: "retry", progressed: false };
+      }
       return {
         end: { detail: `HTTP ${response.status}`, reason: "refused" },
         kind: "end",
@@ -370,6 +391,10 @@ export class InboxStreamClient {
         };
       }
       const event = this.#newEvent(frame);
+      if (event === "invalid") {
+        // Never skip it: resync from the last event delivered.
+        return { kind: "retry", progressed: progress.made };
+      }
       if (!event) {
         continue;
       }
@@ -383,8 +408,13 @@ export class InboxStreamClient {
     return this.#dropped(progress.made);
   }
 
-  /** A message event past the cursor, or undefined. */
-  #newEvent(frame: InboxStreamFrame): SupervisorInboxEvent | undefined {
+  /**
+   * A message event past the cursor; undefined for another event or one
+   * already delivered; "invalid" for a message event that does not parse.
+   */
+  #newEvent(
+    frame: InboxStreamFrame
+  ): SupervisorInboxEvent | "invalid" | undefined {
     if (frame.event !== "message") {
       return undefined;
     }
@@ -392,8 +422,10 @@ export class InboxStreamClient {
     try {
       event = parseInboxStreamEvent(frame);
     } catch {
-      this.#options.log?.("[loop connect] ignored an invalid inbox event");
-      return undefined;
+      this.#options.log?.(
+        `[loop connect] an inbox event did not parse; resyncing after ${this.#cursor}`
+      );
+      return "invalid";
     }
     return event.seq > this.#cursor ? event : undefined;
   }

@@ -14,6 +14,7 @@ import {
   test,
 } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { connect } from "node:net";
 import { SQL, serve, sleep } from "bun";
 import { A2AClientEndpoint } from "../../src/loop/a2a-session-client";
 import {
@@ -271,6 +272,28 @@ const readMessages = async (
     }
   }
   return { ended: false, events, other };
+};
+
+/** An HTTP/1.1 chunked body, decoded (a raw socket sees the framing). */
+const dechunk = (bytes: Buffer): string => {
+  const parts: Buffer[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const lineEnd = bytes.indexOf("\r\n", offset);
+    if (lineEnd === -1) {
+      break;
+    }
+    const size = Number.parseInt(
+      bytes.subarray(offset, lineEnd).toString("latin1"),
+      16
+    );
+    if (!(size > 0)) {
+      break;
+    }
+    parts.push(bytes.subarray(lineEnd + 2, lineEnd + 2 + size));
+    offset = lineEnd + 2 + size + 2;
+  }
+  return Buffer.concat(parts).toString("utf8");
 };
 
 const appendAll = async (
@@ -640,66 +663,139 @@ describe("ra1 inbox stream route", () => {
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
   });
 
-  test("a slow consumer is bounded, disconnected, and resumes without loss", async () => {
+  test("a slow consumer over a real socket is bounded, disconnected, and resumes without loss", async () => {
     const { inbox } = await freshStores();
-    const hub = new SupervisorInboxStreamHub();
-    hub.attach(inbox);
-    const recipient = freshRecipient();
-    const maxBufferedBytes = 4096;
-    const { handler } = routeFor(recipient, hub, {
-      maxBufferedBytes,
-      stallMs: 50,
+    // Entries read from the store, and when the server ended the stream.
+    let entriesRead = 0;
+    const counting: SupervisorInboxStore = {
+      append: (envelope) => inbox.append(envelope),
+      close: () => Promise.resolve(),
+      read: async (input) => {
+        const entries = await inbox.read(input);
+        entriesRead += entries.length;
+        return entries;
+      },
+    };
+    // No grace: presence is exactly "a stream is open on the server".
+    const hub = new SupervisorInboxStreamHub({
+      presence: new SupervisorInboxPresence({ graceMs: -1 }),
     });
-    const keys = Array.from({ length: 30 }, (_, index) => `slow-${index}`);
+    hub.attach(counting);
+    const recipient = freshRecipient();
+    const readBatch = 4;
+    const { handler } = routeFor(recipient, hub, {
+      maxBufferedBytes: 4096,
+      readBatch,
+      stallMs: 200,
+    });
+    // ~2.6 MiB: more than the loopback socket buffers hold, so a reader that
+    // stops reading is felt by the server as backpressure.
+    const keys = Array.from({ length: 90 }, (_, index) => `slow-${index}`);
     await appendAll(
       hub,
       recipient,
       keys,
-      (key) => `${key} ${"x".repeat(1000)}`
+      (key) => `${key} ${"x".repeat(30 * 1024)}`
     );
-    const response = await handler(streamRequest(recipient), recipient);
-    // The consumer reads nothing while the server fills the queue and waits.
-    await sleep(300);
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    let bytes = 0;
-    const chunks: Uint8Array[] = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
+    const server = serve({
+      fetch: (request) => handler(request, recipient),
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const fence = { epoch: 3, holderRef: "connect:holder-a" };
+    try {
+      // A raw HTTP/1.1 client that sends the request and then reads nothing.
+      const socket = connect({
+        host: "127.0.0.1",
+        port: server.port as number,
+      });
+      await new Promise((resolve) => socket.once("connect", resolve));
+      socket.pause();
+      socket.write(
+        [
+          `GET ${a2aV2SessionInboxPath(ROUTE, recipient)} HTTP/1.1`,
+          `host: 127.0.0.1:${server.port}`,
+          "authorization: Bearer token-r",
+          `${A2A_V2_LEASE_EPOCH_HEADER}: 3`,
+          `${A2A_V2_LEASE_HOLDER_HEADER}: connect:holder-a`,
+          "accept: text/event-stream",
+          // The socket ends with the response, not at the idle timeout.
+          "connection: close",
+          "",
+          "",
+        ].join("\r\n")
+      );
+      for (
+        let index = 0;
+        index < 50 && !hub.presence.isPresent(TENANT, recipient, fence);
+        index++
+      ) {
+        await sleep(10);
       }
-      bytes += value.byteLength;
-      chunks.push(value);
+      expect(hub.presence.isPresent(TENANT, recipient, fence)).toBe(true);
+      // The server, not the client, ends a stalled stream.
+      for (
+        let index = 0;
+        index < 300 && hub.presence.isPresent(TENANT, recipient, fence);
+        index++
+      ) {
+        await sleep(20);
+      }
+      expect(hub.presence.isPresent(TENANT, recipient, fence)).toBe(false);
+      // Bounded: it stopped reading the inbox once the socket and its queue
+      // were full; at most one batch was read and not written.
+      expect(entriesRead).toBeLessThan(keys.length);
+      // The reader drains what was already sent: the events, then overflow.
+      const chunks: Buffer[] = [];
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      const ended = new Promise((resolve) => socket.once("end", resolve));
+      socket.resume();
+      await ended;
+      socket.destroy();
+      const raw = Buffer.concat(chunks);
+      const head = raw.indexOf("\r\n\r\n");
+      const headers = raw.subarray(0, head).toString("latin1");
+      expect(headers).toStartWith("HTTP/1.1 200");
+      const body = /transfer-encoding: chunked/i.test(headers)
+        ? dechunk(raw.subarray(head + 4))
+        : raw.subarray(head + 4).toString("utf8");
+      expect(body).toContain("event: overflow");
+      const got = await readMessages(
+        parseInboxStreamFrames(
+          new Response(body).body as ReadableStream<Uint8Array>
+        ),
+        keys.length
+      );
+      expect(got.ended).toBe(true);
+      expect(got.other).toContain("overflow");
+      const events = got.events;
+      expect(events.length).toBeGreaterThan(0);
+      expect(events.length).toBeLessThan(keys.length);
+      expect(entriesRead - events.length).toBeLessThanOrEqual(readBatch);
+      // It reconnects over the socket from its own Last-Event-ID and gets the
+      // rest exactly once.
+      const resumed = await fetch(
+        `http://127.0.0.1:${server.port}${a2aV2SessionInboxPath(ROUTE, recipient)}`,
+        {
+          headers: {
+            authorization: "Bearer token-r",
+            "last-event-id": String(events.at(-1)?.seq),
+            [A2A_V2_LEASE_EPOCH_HEADER]: "3",
+            [A2A_V2_LEASE_HOLDER_HEADER]: "connect:holder-a",
+          },
+        }
+      );
+      const rest = await readMessages(
+        parseInboxStreamFrames(resumed.body as ReadableStream<Uint8Array>),
+        keys.length - events.length
+      );
+      await resumed.body?.cancel().catch(() => undefined);
+      expect(
+        [...events, ...rest.events].map((event) => event.envelope.messageId)
+      ).toEqual(keys.map((key) => `message-${key}`));
+    } finally {
+      server.stop(true);
     }
-    const largestFrame = 2048;
-    // Bounded: the queue never held more than the bound plus one frame.
-    expect(bytes).toBeLessThanOrEqual(maxBufferedBytes + largestFrame);
-    const text = new TextDecoder().decode(Buffer.concat(chunks));
-    expect(text).toContain("event: overflow");
-    const got = await readMessages(
-      parseInboxStreamFrames(
-        new Response(text).body as ReadableStream<Uint8Array>
-      ),
-      keys.length
-    );
-    expect(got.ended).toBe(true);
-    expect(got.events.length).toBeGreaterThan(0);
-    expect(got.events.length).toBeLessThan(keys.length);
-    // It reconnects from its own Last-Event-ID and gets the rest exactly once.
-    const resumed = await handler(
-      streamRequest(recipient, {
-        "last-event-id": String(got.events.at(-1)?.seq),
-      }),
-      recipient
-    );
-    const rest = await readMessages(
-      parseInboxStreamFrames(resumed.body as ReadableStream<Uint8Array>),
-      keys.length - got.events.length
-    );
-    await resumed.body?.cancel().catch(() => undefined);
-    expect(
-      [...got.events, ...rest.events].map((event) => event.envelope.messageId)
-    ).toEqual(keys.map((key) => `message-${key}`));
   });
 
   test("a takeover fences the open stream", async () => {
@@ -861,6 +957,59 @@ describe("ra1 inbox stream client", () => {
     expect(await client.run()).toEqual({ reason: "aborted" });
     expect(delivered).toEqual([1, 2, 3]);
     expect(client.cursor).toBe(3);
+  });
+
+  test("an unparseable event is never skipped: the client resyncs from its Last-Event-ID", async () => {
+    const recipient = freshRecipient();
+    const frame = (seq: number) =>
+      supervisorInboxEventFrame({
+        appendedAt: "2026-10-11T00:00:00.000Z",
+        envelope: envelopeFor(inputFor(`resync-${seq}`, recipient)),
+        seq,
+      });
+    // The first connection garbles event 2 in transit; the next one, asked
+    // to resume after 1, carries it intact.
+    const connections = [
+      `retry: 1\n\n${frame(1)}id: 2\nevent: message\ndata: {"schema":"garbled\n\n${frame(3)}`,
+      `${frame(2)}${frame(3)}`,
+    ];
+    const lastEventIds: (null | string)[] = [];
+    const abort = new AbortController();
+    const delivered: number[] = [];
+    const logged: string[] = [];
+    const client = new InboxStreamClient({
+      deliver: (event) => {
+        delivered.push(event.seq);
+        if (event.seq === 3) {
+          abort.abort();
+        }
+        return Promise.resolve(true);
+      },
+      endpoint: new A2AClientEndpoint({
+        baseUrl: "http://127.0.0.1:1",
+        routePath: ROUTE,
+        supervisorId: recipient,
+        token: "token-r",
+      }),
+      fence: { epoch: 3, holderRef: "connect:holder-a" },
+      fetchImpl: ((_input: RequestInfo | URL, init?: RequestInit) => {
+        lastEventIds.push(
+          new Headers(init?.headers).get("last-event-id") ?? null
+        );
+        return Promise.resolve(
+          new Response(connections.shift() ?? "", {
+            headers: { "content-type": "text/event-stream" },
+          })
+        );
+      }) as unknown as typeof fetch,
+      log: (line) => logged.push(line),
+      minBackoffMs: 1,
+      signal: abort.signal,
+    });
+    expect(await client.run()).toEqual({ reason: "aborted" });
+    expect(delivered).toEqual([1, 2, 3]);
+    expect(lastEventIds).toEqual([null, "1"]);
+    expect(logged.join("\n")).toContain("resyncing after 1");
   });
 
   test("a fenced lease ends the client for good", async () => {

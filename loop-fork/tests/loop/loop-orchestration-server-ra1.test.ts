@@ -8,6 +8,7 @@ import {
   orchestrationAuthenticator,
   orchestrationGrantAllows,
   parseLoopOrchestrationConfig,
+  v2RecipientGrantRequest,
 } from "../../src/loop/loop-orchestration-server";
 import {
   OrchestrationTokenService,
@@ -248,6 +249,48 @@ describe("RA1 grants by role subtree", () => {
     expect(allows("principal:harness", sup, worker, "claim")).toBe(false);
     expect(allows("principal:harness-w1", sup, worker, "receive")).toBe(false);
     expect(allows("principal:harness-w1", sup, worker, "cancel")).toBe(false);
+  });
+
+  test("ra2: a V2 claim or ACK names the message's (sender's) principal; the role policy decides it as the authenticated claimant", () => {
+    const sup = "supervisor:harness";
+    const worker = "supervisor:harness-w1";
+    const v2 = (
+      operation: "acknowledge" | "claim" | "receive",
+      claimant: string | undefined,
+      principal = "principal:harness"
+    ) =>
+      orchestrationGrantAllows(
+        parsed,
+        v2RecipientGrantRequest(parsed, {
+          ...(claimant ? { claimant } : {}),
+          from: sup,
+          operation,
+          principal,
+          to: worker,
+        })
+      );
+    expect(v2("claim", worker)).toBe(true);
+    expect(v2("acknowledge", worker)).toBe(true);
+    // Asked as V2 names it, the recipient could never consume its message.
+    expect(allows("principal:harness", sup, worker, "claim", worker)).toBe(
+      false
+    );
+    // Another subtree's worker, or the sender itself, is never the actor.
+    expect(v2("claim", "supervisor:aicur-w1")).toBe(false);
+    expect(v2("claim", sup)).toBe(false);
+    // Receive is untouched: the sender is the actor.
+    expect(v2("receive", undefined)).toBe(true);
+    // A message not scoped to its role-bound sender is asked as given.
+    expect(v2("claim", worker, "principal:legacy")).toBe(false);
+    // A role-less sender keeps its configured grants, keyed as before.
+    const legacy = {
+      claimant: sup,
+      from: "supervisor:legacy",
+      operation: "claim" as const,
+      principal: "principal:legacy",
+      to: sup,
+    };
+    expect(v2RecipientGrantRequest(parsed, legacy)).toEqual(legacy);
   });
 
   test("a claimant other than the actor is refused (no confused deputy)", () => {

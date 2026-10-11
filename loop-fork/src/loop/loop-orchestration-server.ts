@@ -1600,6 +1600,38 @@ export const orchestrationA2AReceive = (
 };
 
 /**
+ * ra2: the grant question for a V2 recipient claim or acknowledge. V2
+ * governance names the message's scope principal (the sender's: the
+ * workflow is scoped to it) and the authenticated claimant; RA1's role
+ * policy finds the actor by principal. For a role-bound sender whose message
+ * is scoped to its own principal, the question is asked as the claimant's
+ * own configured principal, so the actor is the claimant (who must also be
+ * the recipient) and never the sender. A role-less sender keeps its
+ * configured grants exactly, keyed by the message principal as before.
+ */
+export const v2RecipientGrantRequest = (
+  config: Pick<ServerConfig, "supervisors">,
+  request: GrantRequest
+): GrantRequest => {
+  if (
+    !(request.operation === "claim" || request.operation === "acknowledge") ||
+    request.claimant == null
+  ) {
+    return request;
+  }
+  const sender = config.supervisors.find(
+    (entry) => entry.supervisorId === request.from
+  );
+  if (!sender?.role || sender.principal !== request.principal) {
+    return request;
+  }
+  const claimant = config.supervisors.find(
+    (entry) => entry.supervisorId === request.claimant
+  );
+  return claimant ? { ...request, principal: claimant.principal } : request;
+};
+
+/**
  * RA1: the principal the deadline driver ticks a role-bound pair under (its
  * recipient's, else its sender's); undefined when the role policy grants no
  * one, so the pair is left to the configured grants.
@@ -2769,7 +2801,10 @@ const createDefaultRuntimeHost = async (input: {
         decide: (request) => {
           const allowed =
             request.claimant === request.to &&
-            orchestrationGrantAllows(input.config, request);
+            orchestrationGrantAllows(
+              input.config,
+              v2RecipientGrantRequest(input.config, request)
+            );
           return {
             allowed,
             authorityRef: `authority:${a2aV2IdentityToken(input.config.identity)}:recipient-v2`,
