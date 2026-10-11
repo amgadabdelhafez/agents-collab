@@ -461,6 +461,12 @@ const runMailboxCliCommand = async (argv: string[]): Promise<boolean> => {
       ? runMailboxSweep(argv)
       : await runMailboxCommandWithV2Ack(argv);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  const deferred = "v2" in result ? result.v2?.deferred : undefined;
+  if (deferred && deferred.length > 0) {
+    console.error(
+      `[loop] ${deferred.length} V2 message(s) acknowledged in the mailbox cursor only (${deferred[0]?.reason}); the orchestration server records the recipient ACK from the cursor`
+    );
+  }
   const held = "heldKeys" in result ? result.heldKeys : undefined;
   if (held && held.length > 0) {
     throw new Error(

@@ -250,6 +250,18 @@ const V2_WORKFLOW_ID_RE =
 export const isSupervisorMessageV2WorkflowId = (value: unknown): boolean =>
   typeof value === "string" && V2_WORKFLOW_ID_RE.test(value);
 
+/**
+ * The one request id of a recipient's read acknowledgement of a V2 message,
+ * per operation. `loop a2a ack`, `loop mailbox ack` and the server's mailbox
+ * consumption reconciler all derive it from the workflow id alone, so the
+ * three paths are the SAME command to the workflow port: whichever runs
+ * second replays the first's outcome instead of signalling again.
+ */
+export const recipientAckRequestId = (
+  operation: "acknowledge" | "claim",
+  workflowId: string
+): string => `a2a-ack:${operation}:${workflowId}`;
+
 export interface RecipientAcknowledgement {
   phase: string;
   schema: "supervisor-message-recipient-receipt.v2";
@@ -346,7 +358,7 @@ export const acknowledgeRecipientWorkflow = async (input: {
     callRecipientRoute({
       command: {
         operation,
-        requestId: `a2a-ack:${operation}:${input.workflowId}`,
+        requestId: recipientAckRequestId(operation, input.workflowId),
         workflowId: input.workflowId,
       },
       fetchImpl: input.fetchImpl,

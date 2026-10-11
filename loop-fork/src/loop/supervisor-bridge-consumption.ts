@@ -1,7 +1,7 @@
 import { type BridgeMessage, readBridgeEvents } from "./bridge-store";
 import type { SupervisorBridgeDirectory } from "./bridge-supervisor-message-delivery";
 import type { GovernedWorkflowCommand } from "./supervisor-message-governance";
-import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
+import { ReconcilePassBoard } from "./supervisor-reconcile-board";
 import type { SupervisorThreadBoardProjection } from "./supervisor-thread-store";
 
 export interface SupervisorBridgeConsumerBinding {
@@ -30,14 +30,6 @@ export interface SupervisorBridgeConsumptionOptions {
 const WORKFLOW_ID_RE = /^supervisor-message:[a-f0-9]{64}$/;
 const PULL_ACK_REASON = "read via receive_messages";
 
-const latestPhase = (
-  threads: SupervisorThreadBoardProjection,
-  workflowId: string
-): SupervisorMessagePhase | undefined =>
-  threads.threads
-    .flatMap((thread) => thread.messages)
-    .find((message) => message.item.workflowId === workflowId)?.item.phase;
-
 const isOrchestrationMessage = (
   value: BridgeMessage,
   target: BridgeMessage["target"]
@@ -65,6 +57,8 @@ export class SupervisorBridgeConsumptionReconciler {
       claimed: 0,
       inspected: 0,
     };
+    // One board read per pass, again only after this pass wrote.
+    const board = new ReconcilePassBoard(() => this.#runtime.threads());
     for (const binding of this.#bindings) {
       const route = await this.#directory.resolve(binding.supervisorId);
       if (!route || route.target === "supervisor") {
@@ -90,25 +84,33 @@ export class SupervisorBridgeConsumptionReconciler {
       for (const message of messages) {
         result.inspected += 1;
         const workflowId = message.taskId as string;
-        const phase = latestPhase(this.#runtime.threads(), workflowId);
+        const phase = board.phase(workflowId);
         const command = {
           claimant: binding.supervisorId,
           principal: binding.principal,
           workflowId,
         };
         if (phase === "routed" || phase === "escalated") {
-          await this.#runtime.claim({
-            ...command,
-            requestId: `bridge-consume:${message.id}:claim`,
-          });
+          try {
+            await this.#runtime.claim({
+              ...command,
+              requestId: `bridge-consume:${message.id}:claim`,
+            });
+          } finally {
+            board.changed();
+          }
           result.claimed += 1;
         }
-        const afterClaim = latestPhase(this.#runtime.threads(), workflowId);
+        const afterClaim = board.phase(workflowId);
         if (afterClaim === "claimed") {
-          await this.#runtime.acknowledge({
-            ...command,
-            requestId: `bridge-consume:${message.id}:acknowledge`,
-          });
+          try {
+            await this.#runtime.acknowledge({
+              ...command,
+              requestId: `bridge-consume:${message.id}:acknowledge`,
+            });
+          } finally {
+            board.changed();
+          }
           result.acknowledged += 1;
         }
       }

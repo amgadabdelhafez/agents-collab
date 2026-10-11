@@ -60,7 +60,10 @@ import {
   type SupervisorA2AV2Service,
   type SupervisorA2AV2ServiceDependencies,
 } from "./supervisor-a2a-v2-service";
-import { SupervisorBridgeConsumptionReconciler } from "./supervisor-bridge-consumption";
+import {
+  SupervisorBridgeConsumptionReconciler,
+  type SupervisorBridgeConsumptionRuntime,
+} from "./supervisor-bridge-consumption";
 import { SupervisorDeadlineDriver } from "./supervisor-deadline-driver";
 import {
   createSupervisorEndpointLocatorResolver,
@@ -82,6 +85,10 @@ import {
   FirstAvailableDeliveryPort,
   MailboxSupervisorMessageDeliveryPort,
 } from "./supervisor-mailbox-delivery";
+import {
+  SupervisorMailboxV2AcknowledgementReconciler,
+  type SupervisorMailboxV2Lifecycle,
+} from "./supervisor-mailbox-v2-acknowledgement";
 import {
   JsonlSupervisorMessageReceiptPort,
   type SupervisorMessageAuthorityPort,
@@ -2147,6 +2154,13 @@ export const createOrchestrationSweep = (input: {
   enrollment?: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">;
   log: (line: string) => void;
   reconcilers: readonly { reconcile(): Promise<unknown> }[];
+  /**
+   * ra2: V2 reconcilers (the mailbox recipient ACK). Each rides the same tick
+   * under its own in-flight guard and is not awaited by it, like enrollment:
+   * no V2 fault, hang or rejection may delay V1 reconciliation or change the
+   * health verdict. A rejected pass is reported once per change.
+   */
+  v2Reconcilers?: readonly { reconcile(): Promise<unknown> }[];
   setHealthy: (healthy: boolean) => void;
   /**
    * Receives the seats not enrolled now, sorted, after the start-time pass
@@ -2218,9 +2232,48 @@ export const createOrchestrationSweep = (input: {
         enrolling = false;
       });
   };
+  const v2Running = new Set<number>();
+  const v2Failures = new Map<number, string>();
+  const runV2 = (
+    index: number,
+    reconciler: { reconcile(): Promise<unknown> }
+  ) => {
+    v2Running.add(index);
+    let pass: Promise<unknown>;
+    try {
+      pass = reconciler.reconcile();
+    } catch (error) {
+      pass = Promise.reject(error);
+    }
+    pass
+      .then(
+        () => {
+          if (v2Failures.delete(index)) {
+            input.log("orchestration A2A V2 mailbox ACK pass recovered");
+          }
+        },
+        (error: unknown) => {
+          const message = failureMessage(error);
+          if (v2Failures.get(index) !== message) {
+            v2Failures.set(index, message);
+            input.log(
+              `orchestration A2A V2 mailbox ACK pass failed: ${message}`
+            );
+          }
+        }
+      )
+      .finally(() => {
+        v2Running.delete(index);
+      });
+  };
   return async () => {
     if (input.enrollment && !enrolling) {
       enroll(input.enrollment);
+    }
+    for (const [index, reconciler] of (input.v2Reconcilers ?? []).entries()) {
+      if (!v2Running.has(index)) {
+        runV2(index, reconciler);
+      }
     }
     if (reconciling) {
       return;
@@ -2239,6 +2292,67 @@ export const createOrchestrationSweep = (input: {
     } finally {
       reconciling = false;
     }
+  };
+};
+
+/**
+ * The mailbox recipients' own acknowledgements, carried to their workflows.
+ * A mailbox recipient has no pane, so the bridge reconciler skips it and its
+ * reader's acknowledgment would never reach the workflow: `v1` carries it for
+ * V1 messages. ra2: `v2` carries the same reader's acknowledgement of a V2
+ * envelope on the recipient route as that recipient (never as the operator),
+ * only while the V2 plane is up, and the sweep runs it beside V1, not in it.
+ */
+export const createMailboxReconcilers = (input: {
+  log: (line: string) => void;
+  runtime: SupervisorBridgeConsumptionRuntime;
+  supervisors: readonly {
+    mailbox?: string;
+    principal: string;
+    supervisorId: string;
+  }[];
+  /** The V2 plane's state; nothing V2 runs while it is disabled. */
+  v2PlaneState: A2AV2PlaneState;
+  v2Service?: Pick<SupervisorA2AV2Service, "recipientRoute">;
+}): {
+  v1: SupervisorMailboxConsumptionReconciler;
+  v2: SupervisorMailboxV2AcknowledgementReconciler[];
+} => {
+  const bindings = input.supervisors.flatMap((entry) =>
+    entry.mailbox
+      ? [
+          {
+            mailbox: entry.mailbox,
+            principal: entry.principal,
+            supervisorId: entry.supervisorId,
+          },
+        ]
+      : []
+  );
+  const route =
+    input.v2PlaneState === "disabled"
+      ? undefined
+      : input.v2Service?.recipientRoute;
+  const lifecycle: SupervisorMailboxV2Lifecycle | undefined = route?.lifecycle
+    ? (identity, command) =>
+        (route.lifecycle as SupervisorMailboxV2Lifecycle)(identity, command)
+    : undefined;
+  return {
+    v1: new SupervisorMailboxConsumptionReconciler({
+      bindings,
+      log: input.log,
+      runtime: input.runtime,
+    }),
+    v2:
+      lifecycle && bindings.length > 0
+        ? [
+            new SupervisorMailboxV2AcknowledgementReconciler({
+              bindings,
+              lifecycle,
+              log: input.log,
+            }),
+          ]
+        : [],
   };
 };
 
@@ -3136,27 +3250,18 @@ export const runLoopOrchestrationServer = async (
       directory,
       runtime: host.runtime,
     });
-    // A mailbox recipient has no pane, so the bridge reconciler skips it and
-    // its own acknowledgment would never reach the workflow. This carries it.
-    const mailboxReconciler = new SupervisorMailboxConsumptionReconciler({
-      bindings: config.supervisors.flatMap((entry) =>
-        entry.mailbox
-          ? [
-              {
-                mailbox: entry.mailbox,
-                principal: entry.principal,
-                supervisorId: entry.supervisorId,
-              },
-            ]
-          : []
-      ),
+    const mailbox = createMailboxReconcilers({
       log: (line) => console.error(line),
       runtime: host.runtime,
+      supervisors: config.supervisors,
+      v2PlaneState: plane.state,
+      v2Service: a2aV2Service,
     });
     const reconcile = createOrchestrationSweep({
       enrollment: a2aV2Enrollment,
       log: (line) => console.error(line),
-      reconcilers: [reconciler, mailboxReconciler],
+      reconcilers: [reconciler, mailbox.v1],
+      v2Reconcilers: mailbox.v2,
       setHealthy: (healthy) => {
         reconciliationHealthy = healthy;
       },

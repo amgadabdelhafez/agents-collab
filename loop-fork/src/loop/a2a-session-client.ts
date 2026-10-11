@@ -140,6 +140,19 @@ export class A2AClientError extends Error {
 }
 
 /**
+ * fix9's one-identity refusal: the environment also holds another configured
+ * supervisor's token. Its own class so a caller can tell it from "the route
+ * cannot be resolved here" (ra2: `loop mailbox ack` defers the latter to the
+ * server and still refuses this one). Names variables, never values.
+ */
+export class A2AMultiTokenEnvironmentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "A2AMultiTokenEnvironmentError";
+  }
+}
+
+/**
  * The acting supervisor's connection to its own orchestration server. The
  * token is a private field, so `JSON.stringify`, `inspect` and string
  * conversion never render it.
@@ -360,7 +373,7 @@ export const resolveA2AClientEndpoint = (
   // supervisor is refused unless the caller opted in. Names only, never values.
   const others = otherSupervisorTokenEnvs(config, tokenEnv, env);
   if (others.length > 0 && deps.allowMultiTokenEnv !== true) {
-    throw new Error(
+    throw new A2AMultiTokenEnvironmentError(
       `the environment also holds other supervisors' token variables (${others.join(", ")}); run each session with only ${tokenEnv} set, or pass --allow-multi-token-env`
     );
   }

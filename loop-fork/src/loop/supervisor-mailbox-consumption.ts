@@ -6,8 +6,7 @@ import {
 } from "./supervisor-mailbox-cursor";
 import type { MailboxEnvelope } from "./supervisor-mailbox-delivery";
 import type { SupervisorMessageBoardItem } from "./supervisor-message-read-model";
-import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
-import type { SupervisorThreadBoardProjection } from "./supervisor-thread-store";
+import { ReconcilePassBoard } from "./supervisor-reconcile-board";
 
 /**
  * Carries a mailbox recipient's own acknowledgment back into the workflow.
@@ -100,19 +99,6 @@ export interface SupervisorMailboxConsumptionOptions {
   runtime: SupervisorBridgeConsumptionRuntime;
 }
 
-const boardItem = (
-  threads: SupervisorThreadBoardProjection,
-  workflowId: string
-): SupervisorMessageBoardItem | undefined =>
-  threads.threads
-    .flatMap((thread) => thread.messages)
-    .find((message) => message.item.workflowId === workflowId)?.item;
-
-const latestPhase = (
-  threads: SupervisorThreadBoardProjection,
-  workflowId: string
-): SupervisorMessagePhase | undefined => boardItem(threads, workflowId)?.phase;
-
 /**
  * An envelope only speaks for the message whose identity it carries whole.
  * Matching the workflow id alone would let a handled envelope advance a
@@ -148,6 +134,7 @@ export class SupervisorMailboxConsumptionReconciler {
       unmatched: 0,
       unreadable: 0,
     };
+    const board = new ReconcilePassBoard(() => this.#runtime.threads());
     for (const binding of this.#bindings) {
       const outcome = readMailbox(binding.mailbox);
       if (outcome.kind === "unavailable") {
@@ -181,7 +168,7 @@ export class SupervisorMailboxConsumptionReconciler {
           result.unmatched += 1;
           continue;
         }
-        const item = boardItem(this.#runtime.threads(), envelope.workflowId);
+        const item = board.item(envelope.workflowId);
         if (!(item && isSameMessage(item, envelope))) {
           // Either no such message, or an envelope whose identity does not
           // match the one it names. Never advance on a partial match.
@@ -192,7 +179,7 @@ export class SupervisorMailboxConsumptionReconciler {
           continue;
         }
         result.inspected += 1;
-        await this.#advance(binding, envelope, result);
+        await this.#advance(binding, envelope, result, board);
       }
     }
     return result;
@@ -206,28 +193,35 @@ export class SupervisorMailboxConsumptionReconciler {
   async #advance(
     binding: SupervisorMailboxConsumerBinding,
     envelope: MailboxEnvelope,
-    result: SupervisorMailboxConsumptionResult
+    result: SupervisorMailboxConsumptionResult,
+    board: ReconcilePassBoard
   ): Promise<void> {
     const command = {
       claimant: binding.supervisorId,
       principal: binding.principal,
       workflowId: envelope.workflowId,
     };
-    const phase = latestPhase(this.#runtime.threads(), envelope.workflowId);
+    const phase = board.phase(envelope.workflowId);
     if (phase === "routed" || phase === "escalated") {
-      await this.#runtime.claim({
-        ...command,
-        requestId: `mailbox-consume:${envelope.idempotencyKey}:claim`,
-      });
+      try {
+        await this.#runtime.claim({
+          ...command,
+          requestId: `mailbox-consume:${envelope.idempotencyKey}:claim`,
+        });
+      } finally {
+        board.changed();
+      }
       result.claimed += 1;
     }
-    if (
-      latestPhase(this.#runtime.threads(), envelope.workflowId) === "claimed"
-    ) {
-      await this.#runtime.acknowledge({
-        ...command,
-        requestId: `mailbox-consume:${envelope.idempotencyKey}:acknowledge`,
-      });
+    if (board.phase(envelope.workflowId) === "claimed") {
+      try {
+        await this.#runtime.acknowledge({
+          ...command,
+          requestId: `mailbox-consume:${envelope.idempotencyKey}:acknowledge`,
+        });
+      } finally {
+        board.changed();
+      }
       result.acknowledged += 1;
     }
   }
