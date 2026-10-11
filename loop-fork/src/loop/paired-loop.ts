@@ -1,4 +1,9 @@
 import { createInterface } from "node:readline/promises";
+import {
+  type A2ALeaseReleaseOutcome,
+  describeA2ALeaseRelease,
+  releaseRecordedA2ALease,
+} from "./a2a-session-client";
 import { defaultPeerAgent, isPersistentAgent } from "./agents";
 import {
   type AgentBridgeMessage,
@@ -71,11 +76,14 @@ interface PairedState {
 
 interface PairedLoopDependencies {
   closeGovernessBeat: typeof closeGovernessBeatForTerminalRun;
+  /** Release the A2A lease recorded in the run dir. Never throws. */
+  releaseRunA2ALease: (runDir: string) => Promise<A2ALeaseReleaseOutcome>;
   startPersistentAgentSession: typeof startPersistentAgentSession;
 }
 
 const pairedLoopDefaultDeps: PairedLoopDependencies = {
   closeGovernessBeat: closeGovernessBeatForTerminalRun,
+  releaseRunA2ALease: (runDir) => releaseRecordedA2ALease(runDir),
   startPersistentAgentSession,
 };
 
@@ -581,6 +589,26 @@ const closeFinishedRunBeat = async (state: PairedState): Promise<void> => {
   }
 };
 
+// A finished run serves no supervisor: hand back an A2A endpoint it holds (a
+// run resumed from an `--a2a-as` tmux launch keeps its lease record). Never
+// fails the run or masks its error; a failed release lapses by the TTL.
+const releaseFinishedRunA2ALease = async (
+  state: PairedState
+): Promise<void> => {
+  try {
+    const line = describeA2ALeaseRelease(
+      await pairedLoopDeps.releaseRunA2ALease(state.storage.runDir)
+    );
+    if (line) {
+      console.error(line);
+    }
+  } catch (error) {
+    console.error(
+      `[loop] A2A endpoint release failed for run ${state.storage.runId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+};
+
 export const runPairedLoop = async (
   task: string,
   opts: Options
@@ -641,5 +669,6 @@ export const runPairedLoop = async (
     finishRun(state, finalState);
     rl?.close();
     await closeFinishedRunBeat(state);
+    await releaseFinishedRunA2ALease(state);
   }
 };

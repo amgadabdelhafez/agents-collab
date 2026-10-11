@@ -52,7 +52,32 @@ export const callRecipientApi = async (input: {
   if (!recipientApiConfigured(input.runDir, input.seat, env)) {
     throw new Error("Recipient API is not enrolled for this seat and run");
   }
-  const url = loopbackUrl(env.LOOP_RECIPIENT_API_URL ?? "");
+  return await callRecipientRoute({
+    command: input.command,
+    fetchImpl: input.fetchImpl,
+    token: env.LOOP_RECIPIENT_API_TOKEN ?? "",
+    url: env.LOOP_RECIPIENT_API_URL ?? "",
+  });
+};
+
+/**
+ * The recipient route (`{routePath}/recipient`) with an explicit loopback URL
+ * and bearer token, for callers that resolved both themselves: `loop a2a ack`
+ * and `loop mailbox ack` for V2 envelopes read the token from the
+ * supervisor's own `tokenEnv`. The same refusals as the run-bound client:
+ * loopback only, no redirect, a strict command, no response or error detail
+ * propagated, and no token in any result or error.
+ */
+export const callRecipientRoute = async (input: {
+  command: RecipientApiCommand;
+  fetchImpl?: typeof fetch;
+  token: string;
+  url: string;
+}): Promise<Record<string, unknown>> => {
+  const url = loopbackUrl(input.url);
+  if (!input.token) {
+    throw new Error("Recipient API token is not available");
+  }
   const command = input.command;
   if (
     Object.keys(command).some(
@@ -75,7 +100,7 @@ export const callRecipientApi = async (input: {
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
       headers: {
-        authorization: `Bearer ${env.LOOP_RECIPIENT_API_TOKEN}`,
+        authorization: `Bearer ${input.token}`,
         "content-type": "application/json",
       },
       body: JSON.stringify(command),
@@ -124,4 +149,65 @@ export const callRecipientApi = async (input: {
       "Recipient API refused or is unavailable; no completion is claimed"
     );
   }
+};
+
+/**
+ * A V2 message workflow id (legacy or deployment format). V1 ids
+ * (`supervisor-message:<hex>`) never match, so the V1 mailbox reconciler and
+ * the recipient route never both act on one message.
+ */
+const V2_WORKFLOW_ID_RE =
+  /^supervisor-message-workflow:v2:(?:deployment:)?[a-f0-9]{64}$/u;
+
+export const isSupervisorMessageV2WorkflowId = (value: unknown): boolean =>
+  typeof value === "string" && V2_WORKFLOW_ID_RE.test(value);
+
+export interface RecipientAcknowledgement {
+  phase: string;
+  schema: "supervisor-message-recipient-receipt.v2";
+  workflowId: string;
+  /** Always false: a read acknowledgement is never work completion. */
+  workResultCompleted: false;
+}
+
+/**
+ * The recipient's delivery/read acknowledgement of one V2 message: claim, then
+ * acknowledge, on the recipient route. Request ids are derived from the
+ * workflow id, so a retry repeats the same commands instead of minting new
+ * ones. A refused claim is not final (this recipient may have claimed it
+ * already); a refused acknowledge is. Never publishes a result.
+ */
+export const acknowledgeRecipientWorkflow = async (input: {
+  fetchImpl?: typeof fetch;
+  token: string;
+  url: string;
+  workflowId: string;
+}): Promise<RecipientAcknowledgement> => {
+  if (!isSupervisorMessageV2WorkflowId(input.workflowId)) {
+    throw new Error("workflow id is not a V2 message workflow id");
+  }
+  const call = (operation: "acknowledge" | "claim") =>
+    callRecipientRoute({
+      command: {
+        operation,
+        requestId: `a2a-ack:${operation}:${input.workflowId}`,
+        workflowId: input.workflowId,
+      },
+      fetchImpl: input.fetchImpl,
+      token: input.token,
+      url: input.url,
+    });
+  try {
+    await call("claim");
+  } catch {
+    // Already claimed by this recipient, or refused: the acknowledge below
+    // decides, and its refusal is the one reported.
+  }
+  const receipt = await call("acknowledge");
+  return {
+    phase: String(receipt.phase),
+    schema: "supervisor-message-recipient-receipt.v2",
+    workResultCompleted: false,
+    workflowId: input.workflowId,
+  };
 };

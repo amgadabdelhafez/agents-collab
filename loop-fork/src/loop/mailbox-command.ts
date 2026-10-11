@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  acknowledgeA2AWorkflows,
+  resolveA2AClientEndpoint,
+} from "./a2a-session-client";
+import { isSupervisorMessageV2WorkflowId } from "./recipient-api-client";
+import {
   consumeMailbox,
+  type MailboxReadOutcome,
   type MailboxStatus,
   mailboxCursorPathFor,
   mailboxStatus,
@@ -10,7 +16,10 @@ import {
   readMailboxCursor,
   writeMailboxCursor,
 } from "./supervisor-mailbox-cursor";
-import { mailboxPathFor } from "./supervisor-mailbox-delivery";
+import {
+  type MailboxEnvelope,
+  mailboxPathFor,
+} from "./supervisor-mailbox-delivery";
 
 /**
  * The receive, acknowledge and status path for a session that no Loop pane can
@@ -41,11 +50,22 @@ export interface MailboxCommandResult {
   cursorPath: string;
   // send only: what was written, so a caller can acknowledge or find it later.
   delivered?: { idempotencyKey: string; target: string; workflowId: string };
+  // ack only: named V2 keys left unread because their recipient ACK was refused.
+  heldKeys?: string[];
   mailboxPath: string;
   messages?: unknown[];
   // Identifies the exact set a receive returned; an ack may verify against it.
   receipt?: string;
   status: MailboxStatus;
+  // ack only, when it named V2 envelopes: the recipient route's answers. A
+  // read acknowledgement, never completion.
+  v2?: MailboxV2Acknowledgement;
+}
+
+export interface MailboxV2Acknowledgement {
+  acknowledged: { phase: string; workflowId: string }[];
+  refused: { reason: string; workflowId: string }[];
+  workResultCompleted: false;
 }
 
 // A receipt is a function of the recipient and the exact key set, so a partial
@@ -177,9 +197,65 @@ const sendPeerMessage = (
   };
 };
 
+/**
+ * The envelopes an ack names, after every refusal: no keys, an unreadable
+ * mailbox, an unknown key, or a receipt that does not match the exact set.
+ * Writes nothing.
+ */
+const namedAckEntries = (
+  rest: string[],
+  supervisorId: string,
+  mailboxPath: string,
+  outcome: MailboxReadOutcome,
+  consumedKeys: ReadonlySet<string>
+): MailboxEnvelope[] => {
+  const requestedKeys = flags(rest, "--key");
+  if (requestedKeys.length === 0) {
+    throw new Error(
+      "ack requires the keys it received: --key <idempotencyKey> (repeatable). Run receive first."
+    );
+  }
+  // An unreadable mailbox is not an empty one: refusing here keeps ack from
+  // reporting "not in <path>" about a file it could not read.
+  if (outcome.kind === "unavailable") {
+    throw new Error(
+      `ack refused: ${mailboxPath} is unavailable (${outcome.reason}); nothing was acknowledged`
+    );
+  }
+  const present = new Map(
+    outcome.kind === "read"
+      ? outcome.entries.map((entry) => [entry.idempotencyKey, entry] as const)
+      : []
+  );
+  // An unknown key is a mistake, not a no-op: acknowledging it would claim
+  // receipt of something this mailbox never held.
+  const unknown = requestedKeys.filter(
+    (key) => !(present.has(key) || consumedKeys.has(key))
+  );
+  if (unknown.length > 0) {
+    throw new Error(`ack refused: ${unknown.join(", ")} not in ${mailboxPath}`);
+  }
+  const expectedReceipt = flag(rest, "--receipt");
+  if (
+    expectedReceipt &&
+    receiptFor(supervisorId, requestedKeys) !== expectedReceipt
+  ) {
+    throw new Error("ack refused: the keys do not match the receipt");
+  }
+  return requestedKeys
+    .map((key) => present.get(key))
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+};
+
+export interface MailboxCommandOptions {
+  /** Named keys to leave unread (their V2 recipient ACK was refused). */
+  holdKeys?: ReadonlySet<string>;
+}
+
 export const runMailboxCommand = (
   argv: string[],
-  now: () => string = () => new Date().toISOString()
+  now: () => string = () => new Date().toISOString(),
+  options: MailboxCommandOptions = {}
 ): MailboxCommandResult => {
   const [, requested = "status", ...rest] = argv;
   const action = requested as MailboxAction;
@@ -256,44 +332,16 @@ export const runMailboxCommand = (
       status: statusOf(),
     };
   }
-  const requestedKeys = flags(rest, "--key");
-  if (requestedKeys.length === 0) {
-    throw new Error(
-      "ack requires the keys it received: --key <idempotencyKey> (repeatable). Run receive first."
-    );
-  }
-  // An unreadable mailbox is not an empty one: refusing here keeps ack from
-  // reporting "not in <path>" about a file it could not read.
-  if (outcome.kind === "unavailable") {
-    throw new Error(
-      `ack refused: ${mailboxPath} is unavailable (${outcome.reason}); nothing was acknowledged`
-    );
-  }
-  const present = new Map(
-    outcome.kind === "read"
-      ? outcome.entries.map((entry) => [entry.idempotencyKey, entry] as const)
-      : []
-  );
-  // An unknown key is a mistake, not a no-op: acknowledging it would claim
-  // receipt of something this mailbox never held.
-  const unknown = requestedKeys.filter(
-    (key) => !(present.has(key) || consumedKeys.has(key))
-  );
-  if (unknown.length > 0) {
-    throw new Error(`ack refused: ${unknown.join(", ")} not in ${mailboxPath}`);
-  }
-  const expectedReceipt = flag(rest, "--receipt");
-  if (
-    expectedReceipt &&
-    receiptFor(supervisorId, requestedKeys) !== expectedReceipt
-  ) {
-    throw new Error("ack refused: the keys do not match the receipt");
-  }
   // Only the named keys move, so anything that arrived after the receive stays
-  // unread rather than being consumed unseen.
-  const named = requestedKeys
-    .map((key) => present.get(key))
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+  // unread rather than being consumed unseen. A held key (a V2 envelope whose
+  // recipient-route ACK was refused) stays unread too, so a retry re-acks it.
+  const named = namedAckEntries(
+    rest,
+    supervisorId,
+    mailboxPath,
+    outcome,
+    consumedKeys
+  ).filter((entry) => !options.holdKeys?.has(entry.idempotencyKey));
   const { consumed, cursor: advanced } = consumeMailbox({
     at,
     cursor,
@@ -310,5 +358,107 @@ export const runMailboxCommand = (
     cursorPath,
     mailboxPath,
     status: statusOf(advanced),
+  };
+};
+
+export interface MailboxCommandDeps {
+  /**
+   * The recipient route ACK of V2 workflows as `supervisorId` (default: the
+   * orchestration config's server and the supervisor's own tokenEnv).
+   */
+  acknowledgeV2?: (
+    supervisorId: string,
+    workflowIds: readonly string[]
+  ) => Promise<MailboxV2Acknowledgement>;
+  now?: () => string;
+}
+
+const defaultAcknowledgeV2 = async (
+  supervisorId: string,
+  workflowIds: readonly string[]
+): Promise<MailboxV2Acknowledgement> =>
+  await acknowledgeA2AWorkflows(
+    resolveA2AClientEndpoint(supervisorId),
+    workflowIds
+  );
+
+/**
+ * `loop mailbox` with V2 envelopes acknowledged on the recipient route. The
+ * cursor alone never tells a V2 workflow anything (V2 ids do not match the V1
+ * reconciler), so an ack that names a V2 envelope first acknowledges its
+ * workflow on the recipient route, and only an acknowledged envelope's key
+ * moves the cursor; a refused one stays unread for the retry. Every refusal of
+ * the plain ack (unknown key, receipt mismatch, unreadable mailbox) happens
+ * before any route call. Acknowledgement is never completion.
+ */
+export const runMailboxCommandWithV2Ack = async (
+  argv: string[],
+  deps: MailboxCommandDeps = {}
+): Promise<MailboxCommandResult> => {
+  const now = deps.now ?? (() => new Date().toISOString());
+  const [, requested, ...rest] = argv;
+  if (requested !== "ack") {
+    return runMailboxCommand(argv, now);
+  }
+  const supervisorId = flag(rest, "--id") ?? "";
+  const root = flag(rest, "--root") ?? "";
+  if (
+    !(
+      SUPERVISOR_ID_RE.test(supervisorId) &&
+      root &&
+      isAbsolute(root) &&
+      resolve(root) === root
+    )
+  ) {
+    // The plain command reports the precise usage error.
+    return runMailboxCommand(argv, now);
+  }
+  const mailboxPath = mailboxPathFor(root, supervisorId);
+  const consumedKeys = new Set(
+    readMailboxCursor(cursorPathFor(root, supervisorId)).consumedIdempotencyKeys
+  );
+  const v2Entries = namedAckEntries(
+    rest,
+    supervisorId,
+    mailboxPath,
+    readMailbox(mailboxPath),
+    consumedKeys
+  ).filter(
+    (entry) =>
+      !consumedKeys.has(entry.idempotencyKey) &&
+      isSupervisorMessageV2WorkflowId(entry.workflowId)
+  );
+  if (v2Entries.length === 0) {
+    return runMailboxCommand(argv, now);
+  }
+  const workflowIds = [...new Set(v2Entries.map((entry) => entry.workflowId))];
+  let v2: MailboxV2Acknowledgement;
+  try {
+    v2 = await (deps.acknowledgeV2 ?? defaultAcknowledgeV2)(
+      supervisorId,
+      workflowIds
+    );
+  } catch (error) {
+    const reason =
+      error instanceof Error ? error.message : "recipient route unavailable";
+    v2 = {
+      acknowledged: [],
+      refused: workflowIds.map((workflowId) => ({ reason, workflowId })),
+      workResultCompleted: false,
+    };
+  }
+  const acknowledged = new Set(
+    v2.acknowledged.map((entry) => entry.workflowId)
+  );
+  const holdKeys = new Set(
+    v2Entries
+      .filter((entry) => !acknowledged.has(entry.workflowId))
+      .map((entry) => entry.idempotencyKey)
+  );
+  const result = runMailboxCommand(argv, now, { holdKeys });
+  return {
+    ...result,
+    ...(holdKeys.size > 0 ? { heldKeys: [...holdKeys] } : {}),
+    v2,
   };
 };

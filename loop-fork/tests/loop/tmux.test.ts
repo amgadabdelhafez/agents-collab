@@ -7407,3 +7407,150 @@ test("a recovered preserved startup that cannot be terminalized records the manu
     rmSync(harness.runDir, { recursive: true, force: true });
   }
 });
+
+// r9 T4: `--a2a-as supervisor:x` claims the run once its manifest is
+// complete, and a failed start hands the endpoint back. Neither ever fails
+// the launch or masks its error.
+const a2aLaunch = (input: {
+  attachGoneAfter?: number;
+  claim?: () => Promise<never> | Promise<unknown>;
+  release?: (runDir: string) => Promise<unknown>;
+}) => {
+  const events: string[] = [];
+  const logs: string[] = [];
+  let sessionProbes = 0;
+  let manifestWrites = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+  const run = (a2aAs?: string) =>
+    runInTmux(
+      ["--tmux"],
+      {
+        attach: () => undefined,
+        claimRunA2AEndpoint: (claim) => {
+          events.push(
+            `claim:${claim.supervisorId}:${claim.manifestPath}:${claim.runDir}:writes=${manifestWrites}`
+          );
+          return (input.claim?.() ??
+            Promise.resolve({
+              dir: claim.runDir,
+              receipt: { epoch: 3, kind: "loop-run" },
+            })) as never;
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => true,
+        log: (line: string): void => {
+          logs.push(line);
+        },
+        releaseRunA2ALease: (runDir) => {
+          events.push(`release:${runDir}:${manifest.state}`);
+          return (input.release?.(runDir) ??
+            Promise.resolve({
+              changed: true,
+              outcome: "released",
+              supervisorId: "supervisor:alice",
+            })) as never;
+        },
+        ...healthyClaudeKickoffDeps(),
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            sessionProbes += 1;
+            return sessionProbes <= (input.attachGoneAfter ?? 1000)
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifestWrites += 1;
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        ...(a2aAs ? { a2aAs } : {}),
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Resume feature",
+      }
+    );
+  return {
+    events,
+    logs,
+    manifest: () => manifest,
+    run,
+    storage,
+    writes: () => manifestWrites,
+  };
+};
+
+test("runInTmux --a2a-as claims the run once its manifest is complete, before attach", async () => {
+  const launch = a2aLaunch({});
+  expect(await launch.run("supervisor:alice")).toBe(true);
+  // After every manifest write of the launch: the session ids are recorded.
+  expect(launch.writes()).toBeGreaterThan(0);
+  expect(launch.events).toEqual([
+    `claim:supervisor:alice:${launch.storage.manifestPath}:${launch.storage.runDir}:writes=${launch.writes()}`,
+  ]);
+  expect(launch.logs).toContain(
+    "[loop] serving supervisor:alice as its A2A V2 endpoint (loop-run, epoch 3)"
+  );
+  const without = a2aLaunch({});
+  expect(await without.run()).toBe(true);
+  expect(without.events).toEqual([]);
+});
+
+test("runInTmux --a2a-as never fails the launch when the claim is refused", async () => {
+  const launch = a2aLaunch({
+    claim: () => Promise.reject(new Error("claim refused: locator-refused")),
+  });
+  expect(await launch.run("supervisor:alice")).toBe(true);
+  expect(launch.manifest().state).toBe("working");
+  expect(launch.logs).toContain(
+    "[loop] could not claim the A2A V2 endpoint of supervisor:alice: claim refused: locator-refused; the run continues and its messages keep the mailbox route."
+  );
+});
+
+test("runInTmux releases the A2A endpoint after a failed handoff, after the run is terminal, without masking it", async () => {
+  const launch = a2aLaunch({ attachGoneAfter: 2 });
+  await expect(launch.run("supervisor:alice")).rejects.toThrow(
+    'tmux session "repo-loop-1" exited before handoff.'
+  );
+  expect(launch.events).toEqual([
+    expect.stringMatching(/^claim:supervisor:alice:/),
+    `release:${launch.storage.runDir}:failed`,
+  ]);
+  expect(launch.logs).toContain(
+    "[loop] released the A2A endpoint of supervisor:alice"
+  );
+  const throwing = a2aLaunch({
+    attachGoneAfter: 2,
+    release: () => Promise.reject(new Error("server down")),
+  });
+  // The launch error is the one reported, not the release's.
+  await expect(throwing.run("supervisor:alice")).rejects.toThrow(
+    'tmux session "repo-loop-1" exited before handoff.'
+  );
+  expect(throwing.manifest().state).toBe("failed");
+  expect(throwing.logs).toContain(
+    "[loop] A2A endpoint release after failed start failed: server down"
+  );
+});

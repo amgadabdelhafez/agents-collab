@@ -313,6 +313,71 @@ test("an unconfirmed session kill ends no group and releases nothing", async () 
   });
 });
 
+// --- A2A endpoint (r9 T4) ---------------------------------------------------------
+
+test("loop stop hands the run's A2A endpoint back once the kill is confirmed", async () => {
+  await withRun({}, async (fixture) => {
+    const { deps, events } = recorder(fixture, {
+      releaseA2ALease: (runDir) => {
+        events.push(`a2a-release:${runDir === fixture.runDir}`);
+        return Promise.resolve({
+          changed: true,
+          outcome: "released",
+          supervisorId: "supervisor:alice",
+        });
+      },
+    });
+    const report = await stopRun(["1", "--yes"], deps);
+    const order = events.filter((event) => !event.startsWith("log:"));
+    expect(order.indexOf("a2a-release:true")).toBeGreaterThan(
+      order.indexOf("kill:true:dummy-loop-1")
+    );
+    expect(report?.a2aRelease).toEqual({
+      changed: true,
+      outcome: "released",
+      supervisorId: "supervisor:alice",
+    });
+    expect(events).toContain(
+      "log:[loop] released the A2A endpoint of supervisor:alice"
+    );
+    expect(report?.released).toBe(true);
+  });
+});
+
+test("loop stop releases no A2A endpoint when the kill is unconfirmed, and a failed release never decides the stop", async () => {
+  await withRun({}, async (fixture) => {
+    const calls: string[] = [];
+    const unconfirmed = recorder(fixture, {
+      killSession: () => ({ detail: "tmux timed out", kind: "failed" }),
+      releaseA2ALease: () => {
+        calls.push("a2a-release");
+        return Promise.resolve({ outcome: "none" });
+      },
+    });
+    await stopRun(["1", "--yes"], unconfirmed.deps);
+    expect(calls).toEqual([]);
+  });
+  await withRun({}, async (fixture) => {
+    const { deps, events } = recorder(fixture, {
+      releaseA2ALease: () => Promise.reject(new Error("server down")),
+    });
+    const report = await stopRun(["1", "--yes"], deps);
+    expect(report?.released).toBe(true);
+    expect(report?.a2aRelease).toBeUndefined();
+    expect(events).toContain(
+      "log:[loop] stop: A2A endpoint release failed: server down"
+    );
+  });
+  await withRun({}, async (fixture) => {
+    const { deps } = recorder(fixture, {
+      releaseA2ALease: () => Promise.resolve({ outcome: "none" }),
+    });
+    const report = await stopRun(["1", "--yes"], deps);
+    // No lease, no field: the report of a run that served no one is unchanged.
+    expect(report && "a2aRelease" in report).toBe(false);
+  });
+});
+
 test("loop stop reports a refused release and the command fails", async () => {
   await withRun({}, async (fixture) => {
     const { deps } = recorder(fixture, {
