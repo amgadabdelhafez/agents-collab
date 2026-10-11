@@ -575,6 +575,18 @@ export class SupervisorMessageV2RecoveryStartupError extends Error {
 
 export interface SupervisorMessageV2RecoveryRunnerOptions {
   coordinator: SupervisorMessageV2RecoveryPort;
+  /**
+   * The first delay before the initial sweep is retried because the engine
+   * could not answer a recorded start's query yet (see
+   * `isSupervisorMessageV2NotAnswerableYet`); doubles per retry, at most 5 s.
+   * Default 500 ms.
+   */
+  initialRetryBaseMs?: number;
+  /**
+   * How long, from the first attempt, the initial sweep keeps retrying such
+   * failures before they refuse startup as any failure does. Default 30 s.
+   */
+  initialTransientBoundMs?: number;
   intervalMs: number;
   log?: (message: string) => void;
   /**
@@ -614,6 +626,56 @@ const SYSTEM_RECOVERY_TIMER: SupervisorMessageV2RecoveryTimer = {
 /** Default upper bound of a failing record's retry delay. */
 const DEFAULT_MAX_RECOVERY_BACKOFF_MS = 600_000;
 
+const DEFAULT_INITIAL_RETRY_BASE_MS = 500;
+const MAX_INITIAL_RETRY_DELAY_MS = 5000;
+const DEFAULT_INITIAL_TRANSIENT_BOUND_MS = 30_000;
+
+/** gRPC DEADLINE_EXCEEDED, FAILED_PRECONDITION and UNAVAILABLE. */
+const NOT_ANSWERABLE_YET_CODES = new Set([4, 9, 14]);
+const NO_POLLER_RE = /no poller|worker may be down/i;
+
+/**
+ * Whether a recovery failure says only that the engine could not answer a
+ * workflow query yet: the Temporal client's `ServiceError` "Failed to query
+ * Workflow" carrying no gRPC code or DEADLINE_EXCEEDED, FAILED_PRECONDITION
+ * or UNAVAILABLE, or any error naming a missing poller. At service start
+ * this is the host's own worker not polling its task queue yet (live
+ * 2026-10-11 08:20Z and 16:54Z: "no poller seen for task queue recently,
+ * worker may be down"; an immediate restart succeeded). Never a workflow
+ * conflict. Structural, so this module stays free of the client package
+ * (the workflow bundle imports it).
+ */
+export const isSupervisorMessageV2NotAnswerableYet = (
+  error: unknown
+): boolean => {
+  if (!(error instanceof Error) || error instanceof WorkflowError) {
+    return false;
+  }
+  const cause = (error as { cause?: unknown }).cause as
+    | { code?: unknown; details?: unknown; message?: unknown }
+    | undefined;
+  const causeText = [cause?.details, cause?.message]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ");
+  if (NO_POLLER_RE.test(`${error.message} ${causeText}`)) {
+    return true;
+  }
+  return (
+    error.name === "ServiceError" &&
+    error.message === "Failed to query Workflow" &&
+    (typeof cause?.code !== "number" ||
+      NOT_ANSWERABLE_YET_CODES.has(cause.code))
+  );
+};
+
+/** A startup refusal made only of failures the engine may yet answer. */
+const notAnswerableYet = (error: unknown): boolean =>
+  error instanceof SupervisorMessageV2RecoveryStartupError &&
+  error.failures.length > 0 &&
+  error.failures.every((failure) =>
+    isSupervisorMessageV2NotAnswerableYet(failure.error)
+  );
+
 /** A record whose recovery failed, waiting for its next attempt. */
 interface SupervisorMessageV2FailingRecovery {
   attempts: number;
@@ -646,6 +708,8 @@ export class SupervisorMessageV2RecoveryRunner
   readonly #coordinator: SupervisorMessageV2RecoveryPort;
   /** workflowId -> the record's failure state, until it recovers. */
   readonly #failing = new Map<string, SupervisorMessageV2FailingRecovery>();
+  readonly #initialRetryBaseMs: number;
+  readonly #initialTransientBoundMs: number;
   readonly #intervalMs: number;
   readonly #log: (message: string) => void;
   readonly #maxBackoffMs: number;
@@ -683,6 +747,10 @@ export class SupervisorMessageV2RecoveryRunner
       throw new Error("V2 recovery backoff bound is invalid");
     }
     this.#coordinator = options.coordinator;
+    this.#initialRetryBaseMs =
+      options.initialRetryBaseMs ?? DEFAULT_INITIAL_RETRY_BASE_MS;
+    this.#initialTransientBoundMs =
+      options.initialTransientBoundMs ?? DEFAULT_INITIAL_TRANSIENT_BOUND_MS;
     this.#intervalMs = options.intervalMs;
     this.#log = options.log ?? ((message) => console.error(message));
     this.#maxBackoffMs = maxBackoffMs;
@@ -780,16 +848,60 @@ export class SupervisorMessageV2RecoveryRunner
     }
   }
 
-  /** The startup refusal, logged as well: a host may wrap the error. */
+  /**
+   * The initial sweep, retried while its only failures are queries the
+   * engine cannot answer yet, with backoff, until `initialTransientBoundMs`
+   * from the first attempt. Then, or on any other failure, the refusal is
+   * logged once (a host may wrap it) and thrown. False when closed meanwhile.
+   */
+  async #initialSweep(): Promise<boolean> {
+    const firstAttemptAt = Date.now();
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await this.#sweep(true);
+        return !this.#closed;
+      } catch (error) {
+        const delayMs = Math.min(
+          MAX_INITIAL_RETRY_DELAY_MS,
+          this.#initialRetryBaseMs * 2 ** (attempt - 1)
+        );
+        const withinBound =
+          Date.now() - firstAttemptAt + delayMs <=
+          this.#initialTransientBoundMs;
+        if (this.#closed || !(notAnswerableYet(error) && withinBound)) {
+          if (error instanceof SupervisorMessageV2RecoveryStartupError) {
+            this.#log(error.message);
+          }
+          throw error;
+        }
+        const failures = (error as SupervisorMessageV2RecoveryStartupError)
+          .failures;
+        this.#log(
+          `V2 initial recovery: ${plural(failures.length, "recorded start")} not answerable yet (${failures
+            .map(
+              (failure) =>
+                `${recordText(failure)}: ${recoveryFailureText(failure.error)}`
+            )
+            .join(
+              "; "
+            )}); retrying in ${delayMs} ms, its worker may not be polling yet`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        if (this.#closed) {
+          return false;
+        }
+      }
+    }
+  }
+
+  /** The startup refusal; `#initialSweep` logs the one it finally throws. */
   #refuseStart(
     failed: readonly SupervisorMessageV2RecoveryFailure[]
   ): SupervisorMessageV2RecoveryStartupError {
-    const refusal = new SupervisorMessageV2RecoveryStartupError(
+    return new SupervisorMessageV2RecoveryStartupError(
       failed,
       this.#operatorConfigPath
     );
-    this.#log(refusal.message);
-    return refusal;
   }
 
   /**
@@ -890,9 +1002,9 @@ export class SupervisorMessageV2RecoveryRunner
   async #start(): Promise<void> {
     // Any failure but a foreign-held ID refuses startup, including a failure
     // of the whole sweep: the host must not serve while a recorded start it
-    // owns cannot be recovered.
-    await this.#sweep(true);
-    if (this.#closed) {
+    // owns cannot be recovered. A query the engine cannot answer yet (no
+    // worker polls the task queue yet) is retried first, within a bound.
+    if (!(await this.#initialSweep())) {
       return;
     }
     this.#timer = this.#timerPort.setInterval(() => {

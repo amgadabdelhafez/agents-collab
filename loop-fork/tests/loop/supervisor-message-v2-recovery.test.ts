@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ServiceError } from "@temporalio/client";
 import {
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
@@ -1433,6 +1434,199 @@ describe("SupervisorMessage V2 recovery runner", () => {
       }
       // 1s doubling per attempt: 2^9 s = 512000 ms, then capped at 600000.
       expect(delays.slice(-3)).toEqual(["256000", "512000", "600000"]);
+    } finally {
+      await runner.close();
+    }
+  });
+});
+
+// Live 2026-10-11 (08:20Z and 16:54Z): at service start the initial recovery
+// queried a recorded workflow before the service's own worker polled its task
+// queue. Temporal answered "Failed to query Workflow" (it logged "no poller
+// seen for task queue recently, worker may be down"), the refusal disabled V2
+// (start-failed), and an immediate restart succeeded. A query the engine
+// cannot answer yet is retried at start within a bound; only a failure that
+// persists past it, or any other failure, refuses (decision 7).
+describe("SupervisorMessage V2 initial recovery while no worker polls yet", () => {
+  const NO_POLLER =
+    "no poller seen for task queue recently, worker may be down";
+  const noPoller = () =>
+    new ServiceError("Failed to query Workflow", {
+      cause: Object.assign(new Error(`9 FAILED_PRECONDITION: ${NO_POLLER}`), {
+        code: 9,
+        details: NO_POLLER,
+      }),
+    });
+
+  /**
+   * Two recorded starts whose queries fail while `failing(workflowId,
+   * attempt)` names an error; `attempt` counts this record's recovery
+   * attempts (its idempotent recovery starts).
+   */
+  const recoveryWith = (
+    failing: (workflowId: string, call: number) => Error | undefined,
+    startError?: (workflowId: string) => Error | undefined
+  ) => {
+    const workflows = workflowsWith("running", {
+      ...(startError ? { startError } : {}),
+    });
+    const queries = new Map<string, number>();
+    const query = workflows.port.query;
+    workflows.port.query = (command) => {
+      const call = (queries.get(command.workflowId) ?? 0) + 1;
+      queries.set(command.workflowId, call);
+      const failure = failing(
+        command.workflowId,
+        workflows.starts.filter(
+          (start) => start.workflowId === command.workflowId
+        ).length
+      );
+      if (failure) {
+        throw failure;
+      }
+      return query(command);
+    };
+    const { ledger } = ledgerWith(false, [
+      {
+        input: structuredClone(fixture.input),
+        trustedScope: SCOPE,
+        workflowId: WORKFLOW_ID,
+      },
+      {
+        input: structuredClone(OTHER_INPUT),
+        trustedScope: SCOPE,
+        workflowId: OTHER_WORKFLOW_ID,
+      },
+    ]);
+    return {
+      queries,
+      recovery: coordinator(workflows.port, ledger),
+      workflows,
+    };
+  };
+
+  const runnerFor = (
+    recovery: SupervisorMessageV2RecoveryPort,
+    bounds: { initialRetryBaseMs: number; initialTransientBoundMs: number }
+  ) => {
+    const lines: string[] = [];
+    const intervals: (() => void)[] = [];
+    const runner = new SupervisorMessageV2RecoveryRunner({
+      coordinator: recovery,
+      intervalMs: 1000,
+      log: (line) => lines.push(line),
+      ...bounds,
+      timer: {
+        clearInterval: () => undefined,
+        setInterval: (callback) => {
+          intervals.push(callback);
+          return intervals.length;
+        },
+      },
+    });
+    return { intervals, lines, runner };
+  };
+
+  test("a status query refused while no worker polls is retried until it answers; the runner starts and nothing refuses", async () => {
+    const { queries, recovery } = recoveryWith((workflowId, call) =>
+      workflowId === WORKFLOW_ID && call <= 3 ? noPoller() : undefined
+    );
+    const { intervals, lines, runner } = runnerFor(recovery, {
+      initialRetryBaseMs: 20,
+      initialTransientBoundMs: 5000,
+    });
+    try {
+      await runner.start();
+      expect(intervals).toHaveLength(1);
+      expect(queries.get(WORKFLOW_ID)).toBeGreaterThan(3);
+      expect(
+        lines.filter((line) => line.startsWith("V2 initial recovery failed"))
+      ).toEqual([]);
+      expect(lines).toEqual([
+        `V2 initial recovery: 1 recorded start not answerable yet (workflow ${WORKFLOW_ID} for ${fixture.input.to}: ServiceError: Failed to query Workflow); retrying in 20 ms, its worker may not be polling yet`,
+        `V2 initial recovery: 1 recorded start not answerable yet (workflow ${WORKFLOW_ID} for ${fixture.input.to}: ServiceError: Failed to query Workflow); retrying in 40 ms, its worker may not be polling yet`,
+        `V2 initial recovery: 1 recorded start not answerable yet (workflow ${WORKFLOW_ID} for ${fixture.input.to}: ServiceError: Failed to query Workflow); retrying in 80 ms, its worker may not be polling yet`,
+      ]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("a no-poller failure that persists past its bound refuses startup once, naming the record", async () => {
+    const { recovery } = recoveryWith((workflowId) =>
+      workflowId === WORKFLOW_ID ? noPoller() : undefined
+    );
+    const { intervals, lines, runner } = runnerFor(recovery, {
+      initialRetryBaseMs: 40,
+      initialTransientBoundMs: 200,
+    });
+    try {
+      const refused = await runner.start().then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect(refused).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+      expect((refused as Error).message).toStartWith(
+        `V2 initial recovery failed for 1 recorded start: workflow ${WORKFLOW_ID} for ${fixture.input.to}: ServiceError: Failed to query Workflow`
+      );
+      expect(intervals).toEqual([]);
+      // Retries were logged, then the refusal exactly once.
+      expect(lines.at(-1)).toBe((refused as Error).message);
+      expect(
+        lines.filter((line) => line.startsWith("V2 initial recovery failed"))
+      ).toHaveLength(1);
+      expect(lines.length).toBeGreaterThan(1);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("any other failure beside a no-poller one refuses at once, without a retry", async () => {
+    const { recovery, workflows } = recoveryWith(
+      (workflowId) =>
+        workflowId === OTHER_WORKFLOW_ID ? noPoller() : undefined,
+      (workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? new Error("Temporal frontend unavailable")
+          : undefined
+    );
+    const { lines, runner } = runnerFor(recovery, {
+      initialRetryBaseMs: 20,
+      initialTransientBoundMs: 5000,
+    });
+    try {
+      const refused = await runner.start().then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect(refused).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+      expect(lines).toEqual([(refused as Error).message]);
+      expect(workflows.starts.map((start) => start.workflowId)).toEqual([
+        OTHER_WORKFLOW_ID,
+      ]);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("a plain error naming no poller and no query is not mistaken for one", async () => {
+    const { lines, runner } = runnerFor(
+      recoveryWith((workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? new ServiceError("Failed to start Workflow", {
+              cause: Object.assign(new Error("13 INTERNAL: boom"), {
+                code: 13,
+              }),
+            })
+          : undefined
+      ).recovery,
+      { initialRetryBaseMs: 20, initialTransientBoundMs: 5000 }
+    );
+    try {
+      await expect(runner.start()).rejects.toBeInstanceOf(
+        SupervisorMessageV2RecoveryStartupError
+      );
+      expect(lines).toHaveLength(1);
     } finally {
       await runner.close();
     }
