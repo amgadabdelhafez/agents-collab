@@ -833,6 +833,7 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
       notEnrolledCount: 1,
       schema: "loop-orchestration-health.v1",
       state: "ready",
+      unreadableBindingCount: 0,
     });
     expect(JSON.stringify(await health(fixture))).not.toContain(PEER);
     expect(await assignmentStatus(fixture)).toMatchObject({
@@ -879,6 +880,7 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
       notEnrolledCount: 0,
       schema: "loop-orchestration-health.v1",
       state: "ready",
+      unreadableBindingCount: 0,
     });
     expect(await assignmentStatus(fixture)).toMatchObject({
       notEnrolled: [],
@@ -1807,6 +1809,7 @@ test("the orchestration server reports its configured deferral bounds and counte
       notEnrolledCount: 0,
       schema: "loop-orchestration-health.v1",
       state: "ready",
+      unreadableBindingCount: 0,
     });
   } finally {
     stop.abort();

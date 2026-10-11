@@ -76,11 +76,27 @@ export const emptyCursor = (): MailboxCursor => ({
   schema: "supervisor-mailbox-cursor.v1",
 });
 
+/**
+ * Synchronous: for the CLI only. The orchestration server reads cursors
+ * through `MailboxFileAccess` (mailbox-file-access.ts), whose reads are async
+ * and bounded, so an open parked by a macOS privacy prompt cannot freeze its
+ * event loop.
+ */
 export const readMailboxCursor = (path: string): MailboxCursor => {
   try {
-    const parsed = JSON.parse(
-      readFileSync(path, "utf8")
-    ) as Partial<MailboxCursor>;
+    return parseMailboxCursor(readFileSync(path, "utf8"));
+  } catch {
+    return emptyCursor();
+  }
+};
+
+/**
+ * A cursor file's text as a cursor. Anything that is not a v1 cursor reads as
+ * the empty cursor (nothing acknowledged), as an unreadable file always has.
+ */
+export const parseMailboxCursor = (text: string): MailboxCursor => {
+  try {
+    const parsed = JSON.parse(text) as Partial<MailboxCursor>;
     if (parsed.schema !== "supervisor-mailbox-cursor.v1") {
       return emptyCursor();
     }
@@ -123,7 +139,8 @@ export const writeMailboxCursor = (
  * read (permissions, I/O, a directory in its place) is "unavailable": silence
  * there is not evidence of an empty queue and must never read as current.
  * Records that parse but are not envelopes are counted invalid and skipped,
- * and valid records after them are still processed.
+ * and valid records after them are still processed. Synchronous: for the CLI
+ * only (see `readMailboxCursor`).
  */
 export const readMailbox = (path: string): MailboxReadOutcome => {
   let text: string;
@@ -139,6 +156,11 @@ export const readMailbox = (path: string): MailboxReadOutcome => {
       reason: code ?? (error instanceof Error ? error.message : "read failed"),
     };
   }
+  return parseMailboxText(text);
+};
+
+/** A mailbox file's text as its envelopes; see `readMailbox`. */
+export const parseMailboxText = (text: string): MailboxReadOutcome => {
   const entries: MailboxEnvelope[] = [];
   let invalid = 0;
   for (const line of text.split("\n")) {

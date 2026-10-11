@@ -1,5 +1,5 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { MailboxFileAccess } from "./mailbox-file-access";
 import type {
   SupervisorMessageDeliveryOutcome,
   SupervisorMessageDeliveryPort,
@@ -18,6 +18,11 @@ export interface SupervisorMailboxDirectory {
 }
 
 export interface MailboxDeliveryOptions {
+  /**
+   * The bounded, async file access every mailbox write goes through (one per
+   * server, shared with the mailbox readers). Default: a private one.
+   */
+  access?: MailboxFileAccess;
   directory: SupervisorMailboxDirectory;
   now?: () => string;
 }
@@ -34,13 +39,7 @@ export interface MailboxEnvelope {
   workflowId: string;
 }
 
-const alreadyDelivered = (path: string, idempotencyKey: string): boolean => {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    return false;
-  }
+const alreadyDelivered = (text: string, idempotencyKey: string): boolean => {
   for (const line of text.split("\n")) {
     if (!line.trim()) {
       continue;
@@ -60,10 +59,14 @@ const alreadyDelivered = (path: string, idempotencyKey: string): boolean => {
 export class MailboxSupervisorMessageDeliveryPort
   implements SupervisorMessageDeliveryPort
 {
+  readonly #access: MailboxFileAccess;
   readonly #directory: SupervisorMailboxDirectory;
   readonly #now: () => string;
+  /** mailbox path -> the delivery in progress there, so two never interleave. */
+  readonly #inProgress = new Map<string, Promise<unknown>>();
 
   constructor(options: MailboxDeliveryOptions) {
+    this.#access = options.access ?? new MailboxFileAccess();
     this.#directory = options.directory;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
@@ -84,34 +87,81 @@ export class MailboxSupervisorMessageDeliveryPort
         status: "permanent-failure",
       });
     }
-    try {
-      // An identical redelivery must not duplicate the recipient's work.
-      if (alreadyDelivered(mailbox, request.idempotencyKey)) {
-        return Promise.resolve({ status: "accepted" });
+    // The read-then-append below is one step per mailbox: a concurrent
+    // redelivery of the same key must see the first one's append.
+    const previous = this.#inProgress.get(mailbox) ?? Promise.resolve();
+    const delivery = previous.then(() => this.#append(mailbox, request));
+    const tail = delivery.catch(() => undefined);
+    this.#inProgress.set(mailbox, tail);
+    tail.then(() => {
+      if (this.#inProgress.get(mailbox) === tail) {
+        this.#inProgress.delete(mailbox);
       }
-      const envelope: MailboxEnvelope = {
-        artifactRefs: request.artifactRefs,
-        at: this.#now(),
-        body: request.body,
-        delivery: "mailbox",
-        idempotencyKey: request.idempotencyKey,
-        messageId: request.messageId,
-        target: request.target,
-        threadId: request.threadId,
-        workflowId: request.workflowId,
-      };
-      mkdirSync(dirname(mailbox), { mode: 0o700, recursive: true });
-      appendFileSync(mailbox, `${JSON.stringify(envelope)}\n`, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-      return Promise.resolve({ status: "accepted" });
-    } catch (error) {
-      return Promise.resolve({
-        reason: error instanceof Error ? error.message : "mailbox write failed",
-        status: "transient-failure",
-      });
+    });
+    return delivery;
+  }
+
+  /**
+   * Every step is async and bounded (MailboxFileAccess): a mailbox whose open
+   * is parked (a macOS privacy prompt) or refused is a transient failure the
+   * workflow retries, never a frozen server. An append that lands after its
+   * deadline is found by the retry's read, which then adds nothing.
+   */
+  async #append(
+    mailbox: string,
+    request: SupervisorMessageDeliveryRequest
+  ): Promise<SupervisorMessageDeliveryOutcome> {
+    const binding = request.target;
+    const existing = await this.#access.access(binding, mailbox, (fs) =>
+      fs.readFile(mailbox)
+    );
+    if (existing.kind === "unavailable") {
+      return { reason: existing.reason, status: "transient-failure" };
     }
+    // An identical redelivery must not duplicate the recipient's work.
+    if (
+      existing.kind === "ok" &&
+      alreadyDelivered(existing.value, request.idempotencyKey)
+    ) {
+      return { status: "accepted" };
+    }
+    const envelope: MailboxEnvelope = {
+      artifactRefs: request.artifactRefs,
+      at: this.#now(),
+      body: request.body,
+      delivery: "mailbox",
+      idempotencyKey: request.idempotencyKey,
+      messageId: request.messageId,
+      target: request.target,
+      threadId: request.threadId,
+      workflowId: request.workflowId,
+    };
+    const directory = dirname(mailbox);
+    const made = await this.#access.access(binding, directory, (fs) =>
+      fs.mkdir(directory)
+    );
+    if (made.kind !== "ok") {
+      return {
+        reason:
+          made.kind === "unavailable"
+            ? made.reason
+            : `mailbox directory ${directory} could not be created`,
+        status: "transient-failure",
+      };
+    }
+    const appended = await this.#access.access(binding, mailbox, (fs) =>
+      fs.appendFile(mailbox, `${JSON.stringify(envelope)}\n`)
+    );
+    if (appended.kind !== "ok") {
+      return {
+        reason:
+          appended.kind === "unavailable"
+            ? appended.reason
+            : "mailbox write failed",
+        status: "transient-failure",
+      };
+    }
+    return { status: "accepted" };
   }
 }
 

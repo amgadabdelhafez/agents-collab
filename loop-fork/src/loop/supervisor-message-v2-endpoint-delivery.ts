@@ -10,6 +10,7 @@ import {
 import { probeClaudeChannelReadiness } from "./claude-channel-readiness";
 import { probeCodexThread } from "./codex-app-server";
 import { loopRunEndpointRoute } from "./loop-supervisor-directory";
+import type { MailboxFileAccess } from "./mailbox-file-access";
 import {
   type ResolvedSupervisorEndpoint,
   type ResolvedSupervisorEndpointOf,
@@ -773,8 +774,14 @@ export const createSupervisorEndpointKindAdapters = (
 /** The V2 mailbox port: the V1 mailbox writer behind the V2 envelope. */
 export const createSupervisorEndpointMailboxPort = (
   mailboxes: SupervisorMailboxDirectory,
-  now?: () => string
+  now?: () => string,
+  /** The server's bounded, async mailbox access; default a private one. */
+  access?: MailboxFileAccess
 ): SupervisorMessageV2DeliveryPort =>
   new SupervisorMessageV2BridgeDeliveryPort(
-    new MailboxSupervisorMessageDeliveryPort({ directory: mailboxes, now })
+    new MailboxSupervisorMessageDeliveryPort({
+      ...(access ? { access } : {}),
+      directory: mailboxes,
+      now,
+    })
   );

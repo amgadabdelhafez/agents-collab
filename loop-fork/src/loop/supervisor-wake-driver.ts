@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
+import { MailboxFileAccess } from "./mailbox-file-access";
 import {
+  type MailboxCursor,
+  type MailboxReadOutcome,
   type MailboxStatus,
   mailboxCursorPathFor,
   mailboxStatus,
-  readMailbox,
-  readMailboxCursor,
 } from "./supervisor-mailbox-cursor";
 
 /**
@@ -56,6 +57,11 @@ export interface SupervisorWakeTarget {
 }
 
 export interface SupervisorWakeDriverOptions {
+  /**
+   * The bounded, async mailbox reads (one per server, shared with the
+   * reconciler and delivery). Default: a private one.
+   */
+  access?: MailboxFileAccess;
   log?: (line: string) => void;
   // How long to leave a recipient alone after waking it for the same mail. A
   // woken session still has to start, read and acknowledge; waking it again in
@@ -92,8 +98,15 @@ const setIdentity = (keys: readonly string[]): string =>
     .digest("hex")
     .slice(0, 16);
 
+type WakeTargetRead =
+  | { cursor: MailboxCursor; kind: "read"; outcome: MailboxReadOutcome }
+  | { kind: "unavailable"; reason: string };
+
 export class SupervisorWakeDriver {
+  readonly #access: MailboxFileAccess;
   readonly #log: (line: string) => void;
+  /** Recipients whose unreadable mailbox is reported; once per outage. */
+  readonly #reportedUnreadable = new Set<string>();
   readonly #minReWakeMs: number;
   readonly #now: () => string;
   readonly #port: WakePort;
@@ -102,6 +115,7 @@ export class SupervisorWakeDriver {
   readonly #woken = new Map<string, { at: number; key: string }>();
 
   constructor(options: SupervisorWakeDriverOptions) {
+    this.#access = options.access ?? new MailboxFileAccess();
     this.#log = options.log ?? (() => undefined);
     this.#minReWakeMs = options.minReWakeMs ?? DEFAULT_MIN_RE_WAKE_MS;
     this.#now = options.now ?? (() => new Date().toISOString());
@@ -120,17 +134,27 @@ export class SupervisorWakeDriver {
     };
     const at = this.#now();
     const nowMs = Date.parse(at);
-    for (const target of this.#targets) {
-      const outcome = readMailbox(target.mailbox);
-      if (outcome.kind === "unavailable") {
+    // Every target's mailbox and cursor are read at once, each bounded: a
+    // parked mailbox (a macOS privacy prompt) costs its own target only.
+    const reads = await Promise.all(
+      this.#targets.map((target) => this.#read(target))
+    );
+    for (const [index, target] of this.#targets.entries()) {
+      const read = reads[index] as WakeTargetRead;
+      if (read.kind === "unavailable") {
         result.unreadable.push(target.recipient);
-        this.#log(
-          `[loop] mailbox for ${target.recipient} is unreadable: ${outcome.reason}`
-        );
+        if (!this.#reportedUnreadable.has(target.recipient)) {
+          this.#reportedUnreadable.add(target.recipient);
+          this.#log(
+            `[loop] mailbox for ${target.recipient} is unreadable: ${read.reason}`
+          );
+        }
         continue;
       }
+      this.#reportedUnreadable.delete(target.recipient);
+      const { cursor, outcome } = read;
       const status: MailboxStatus = mailboxStatus({
-        cursor: readMailboxCursor(mailboxCursorPathFor(target.mailbox)),
+        cursor,
         mailbox: outcome,
         now: at,
       });
@@ -138,7 +162,7 @@ export class SupervisorWakeDriver {
         result.quiet += 1;
         continue;
       }
-      const unread = this.#unread(target, outcome);
+      const unread = this.#unread(cursor, outcome);
       const oldest = unread.find((entry) => entry.at === status.oldestUnreadAt);
       if (!oldest) {
         result.quiet += 1;
@@ -165,17 +189,33 @@ export class SupervisorWakeDriver {
     return result;
   }
 
+  /** The mailbox, then its cursor; unavailable when either cannot be read. */
+  async #read(target: SupervisorWakeTarget): Promise<WakeTargetRead> {
+    const outcome = await this.#access.readMailbox(
+      target.recipient,
+      target.mailbox
+    );
+    if (outcome.kind === "unavailable") {
+      return outcome;
+    }
+    const cursor = await this.#access.readCursor(
+      target.recipient,
+      mailboxCursorPathFor(target.mailbox)
+    );
+    if (cursor.kind === "unavailable") {
+      return cursor;
+    }
+    return { cursor: cursor.cursor, kind: "read", outcome };
+  }
+
   #unread(
-    target: SupervisorWakeTarget,
-    outcome: ReturnType<typeof readMailbox>
+    cursor: MailboxCursor,
+    outcome: MailboxReadOutcome
   ): { at: string; idempotencyKey: string }[] {
     if (outcome.kind !== "read") {
       return [];
     }
-    const consumed = new Set(
-      readMailboxCursor(mailboxCursorPathFor(target.mailbox))
-        .consumedIdempotencyKeys
-    );
+    const consumed = new Set(cursor.consumedIdempotencyKeys);
     return outcome.entries.filter(
       (entry) => !consumed.has(entry.idempotencyKey)
     );

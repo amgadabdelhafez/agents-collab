@@ -9,7 +9,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import { serve } from "bun";
@@ -36,7 +36,17 @@ import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "./governess-beat-workflow";
 import { HeadlessClaudeWakePort } from "./headless-claude-wake-port";
 import { spawnHeadless } from "./headless-runner";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
+import {
+  MAILBOX_FILE_ACCESS_DEADLINE_MS,
+  MailboxFileAccess,
+  type MailboxFileSystem,
+} from "./mailbox-file-access";
 import { isActiveRunState, readRunManifest } from "./run-state";
+import {
+  retryDelayMs,
+  sleepUnlessAborted,
+  withDeadline,
+} from "./startup-deadline";
 import {
   createSupervisorA2AV2Service,
   defaultSupervisorA2AV2ServiceDependencies,
@@ -295,6 +305,8 @@ export interface A2AV2EndpointFactories {
   endpointDelivery?(input: {
     adapters: SupervisorEndpointKindAdapters;
     leases: SupervisorEndpointLeaseReader;
+    /** The server's bounded, async mailbox access (one per server). */
+    mailboxAccess?: MailboxFileAccess;
     mailboxes: ReadonlyMap<string, string>;
     principalForRecipient(recipient: string): string | undefined;
     /** The server's own resolver: every probe and delivery re-resolves. */
@@ -336,7 +348,11 @@ export const defaultA2AV2EndpointFactories: A2AV2EndpointFactories = {
     return new SupervisorEndpointMessageV2Delivery({
       adapters: input.adapters,
       leases: input.leases,
-      mailbox: createSupervisorEndpointMailboxPort(mailboxes),
+      mailbox: createSupervisorEndpointMailboxPort(
+        mailboxes,
+        undefined,
+        input.mailboxAccess
+      ),
       mailboxes,
       now: () => new Date(),
       principalForRecipient: input.principalForRecipient,
@@ -352,6 +368,8 @@ export interface LoopOrchestrationServerOptions {
   /** r9: replaces `defaultA2AV2EndpointFactories` (a test seam). */
   a2aV2Endpoints?: A2AV2EndpointFactories;
   a2aV2Service?: SupervisorA2AV2Service;
+  /** Test seam: the mailbox filesystem (default: node fs/promises). */
+  mailboxFileSystem?: MailboxFileSystem;
   /** Test seam: the start-time ledger database probe (decideA2AV2Plane). */
   probeA2AV2Database?: (databaseUrl: string) => Promise<boolean>;
   /**
@@ -359,7 +377,75 @@ export interface LoopOrchestrationServerOptions {
    * test driving the whole composition. The signals still stop it.
    */
   signal?: AbortSignal;
+  /** Test seam: replaces some of `DEFAULT_ORCHESTRATION_STARTUP_BOUNDS`. */
+  startupBounds?: Partial<OrchestrationStartupBounds>;
 }
+
+/**
+ * The startup phases after the bind, in order. Each is logged as
+ * `orchestration startup: <phase>` before it begins, and /healthz names the
+ * current one while the server is starting. `a2a-v2-service` runs only when
+ * the A2A V2 plane was decided ready; `runtime-host` is the V1 host (with no
+ * V2, or after V2 failed to start).
+ */
+export type OrchestrationStartupPhase =
+  | "a2a-v2-plane"
+  | "a2a-v2-service"
+  | "first-reconcile"
+  | "path-check"
+  | "runtime-host"
+  | "temporal-connect";
+
+/** How long each startup step that waits on the outside world may wait. */
+export interface OrchestrationStartupBounds {
+  /** The start-time ledger probe (the probe's own bound is 5 s). */
+  a2aV2PlaneMs: number;
+  /** The whole A2A V2 service start; past it V2 is disabled, V1 starts. */
+  a2aV2ServiceMs: number;
+  /** One mailbox, cursor, manifest or run-directory access. */
+  fileAccessMs: number;
+  /** One Temporal connection attempt (client, then worker). */
+  temporalConnectMs: number;
+  /** The first retry delay after a failed attempt; doubles per attempt. */
+  temporalRetryBaseMs: number;
+  /** The longest retry delay. */
+  temporalRetryMaxMs: number;
+}
+
+export const DEFAULT_ORCHESTRATION_STARTUP_BOUNDS: OrchestrationStartupBounds =
+  {
+    a2aV2PlaneMs: 10_000,
+    a2aV2ServiceMs: 60_000,
+    fileAccessMs: MAILBOX_FILE_ACCESS_DEADLINE_MS,
+    temporalConnectMs: 10_000,
+    temporalRetryBaseMs: 1000,
+    temporalRetryMaxMs: 30_000,
+  };
+
+const NO_STORE = { "cache-control": "no-store" };
+
+/**
+ * What the bound server answers until it is up: GET /healthz is 503
+ * `{schema, state: "starting", phase}`, everything else 503
+ * `{error: {code: "starting"}}`. A supervisor (launchd, a probe) can tell a
+ * server that is starting from one that is down, and which step it waits on.
+ */
+export const startingOrchestrationResponse = (
+  request: Request,
+  phase: OrchestrationStartupPhase
+): Response => {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/healthz") {
+    return Response.json(
+      { phase, schema: "loop-orchestration-health.v1", state: "starting" },
+      { headers: NO_STORE, status: 503 }
+    );
+  }
+  return Response.json(
+    { error: { code: "starting" } },
+    { headers: NO_STORE, status: 503 }
+  );
+};
 
 export interface LoopOrchestrationFetchHandlerOptions {
   /**
@@ -402,6 +488,15 @@ export interface LoopOrchestrationFetchHandlerOptions {
    */
   notEnrolledSeats?: () => readonly string[];
   reconciliationHealthy: () => boolean;
+  /**
+   * How many supervisor bindings have a mailbox, cursor, manifest or run
+   * directory that did not answer within its deadline or refused with
+   * EPERM/EACCES (a macOS privacy prompt, or a denial). /healthz reports the
+   * count as `unreadableBindingCount`, never a path; it does not change
+   * `state`. The server always supplies it; the field is left out only when
+   * it is not.
+   */
+  unreadableBindingCount?: () => number;
 }
 
 const planeHealth = (
@@ -424,6 +519,9 @@ const orchestrationHealth = (
     ...(options.a2aV2State ? planeHealth(options.a2aV2State()) : {}),
     ...(options.notEnrolledSeats
       ? { notEnrolledCount: options.notEnrolledSeats().length }
+      : {}),
+    ...(options.unreadableBindingCount
+      ? { unreadableBindingCount: options.unreadableBindingCount() }
       : {}),
     schema: "loop-orchestration-health.v1",
     state:
@@ -1946,13 +2044,18 @@ export const createOrchestrationSweep = (input: {
 };
 
 const createDefaultRuntimeHost = async (input: {
+  /** The bound on the whole V2 service start (startupBounds.a2aV2ServiceMs). */
+  a2aV2ServiceMs: number;
   config: ServerConfig;
   configPath: string;
   connection: Connection;
   directory: LoopSupervisorDirectory;
   endpointRoots: SupervisorEndpointRoots;
   endpoints: A2AV2EndpointFactories;
+  /** Logs and reports the startup phase about to begin. */
+  enter: (phase: OrchestrationStartupPhase) => void;
   env: NodeJS.ProcessEnv;
+  mailboxAccess: MailboxFileAccess;
   mailboxes: ReadonlyMap<string, string>;
   nativeConnection: NativeConnection;
 }): Promise<{
@@ -1966,6 +2069,7 @@ const createDefaultRuntimeHost = async (input: {
   const delivery = new FirstAvailableDeliveryPort([
     new BridgeSupervisorMessageDeliveryPort({ directory: input.directory }),
     new MailboxSupervisorMessageDeliveryPort({
+      access: input.mailboxAccess,
       directory: { resolveMailbox: (id) => input.mailboxes.get(id) },
     }),
   ]);
@@ -1996,14 +2100,18 @@ const createDefaultRuntimeHost = async (input: {
     },
     workflowExecution: "in-process" as const,
   });
-  const v1Only = async () => ({
-    a2aV2Service: undefined,
-    host: await TemporalSupervisorRuntimeHost.create(makeHostOptions()),
-  });
+  const v1Only = async () => {
+    input.enter("runtime-host");
+    return {
+      a2aV2Service: undefined,
+      host: await TemporalSupervisorRuntimeHost.create(makeHostOptions()),
+    };
+  };
   const a2aConfig = input.config.a2aV2;
   if (!a2aConfig) {
     return await v1Only();
   }
+  input.enter("a2a-v2-service");
   const hostOptions = makeHostOptions();
   // fix8: a V2 plane that cannot start is disabled, never fatal: the factory
   // releases what it acquired, and V1 starts on a host of its own.
@@ -2074,7 +2182,11 @@ const createDefaultRuntimeHost = async (input: {
     let r8Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
     let leaseEnrollment: SupervisorEndpointLeaseEnrollment | undefined;
     let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
-    const a2aV2Service = await createSupervisorA2AV2Service({
+    // Bounded as a whole: a ledger that accepts connections and never
+    // answers (or any other stage that hangs) disables V2 at the deadline and
+    // V1 starts on a host of its own. A service that still resolves later is
+    // closed, so its stores and worker never outlive the decision.
+    const starting = createSupervisorA2AV2Service({
       allSupervisors: {
         authenticator: controlAuthenticator,
         ...(endpointDelivery
@@ -2084,6 +2196,7 @@ const createDefaultRuntimeHost = async (input: {
                 return endpointDelivery({
                   adapters: endpointAdapters,
                   leases,
+                  mailboxAccess: input.mailboxAccess,
                   mailboxes: input.mailboxes,
                   principalForRecipient,
                   resolveLocator,
@@ -2277,6 +2390,12 @@ const createDefaultRuntimeHost = async (input: {
       },
       supervisorId: primarySupervisorId,
     });
+    const a2aV2Service = await withDeadline(
+      starting,
+      input.a2aV2ServiceMs,
+      "Supervisor A2A V2 service start",
+      (late) => late.close()
+    );
     const enrollments = [r8Enrollment, leaseEnrollment].filter(
       (entry) => entry !== undefined
     );
@@ -2618,18 +2737,22 @@ export const recoveryQuarantineForConfig = async (
  * fix8: the start-time configuration. Only V1's part of it may refuse start
  * (an invalid V1 config, a missing V1 token). Everything about A2A V2 (the
  * env file, the section, its keys and ledger) decides the plane instead.
+ *
+ * Synchronous and local: it runs before the bind. It reads the config file
+ * and the `a2a-v2.env` beside it, nothing a supervisor binding names.
  */
-const startConfiguration = async (
+const prepareStartConfiguration = (
   configPath: string,
   inputEnv: NodeJS.ProcessEnv,
-  options: LoopOrchestrationServerOptions,
-  log: (line: string) => void
-): Promise<{
+  options: LoopOrchestrationServerOptions
+): {
   env: NodeJS.ProcessEnv;
-  plane: { config: ServerConfig } & A2AV2PlaneStatus;
+  envFileRefusal?: A2AV2EnvFileRefusal;
+  parsed: ServerConfig;
   /** The configured a2aV2.routePath, when the section parsed. */
   routePath?: string;
-}> => {
+  sectionError?: string;
+} => {
   // The secrets `a2a-v2 init` wrote next to the config, under whatever the
   // process environment already sets. A refused file is not read.
   const loaded = loadA2AV2EnvFile(configPath, inputEnv);
@@ -2637,262 +2760,586 @@ const startConfiguration = async (
     readConfigFile(configPath)
   );
   validateConfiguredRuntimeEnvironment(parsed, loaded.env, options);
-  if (options.a2aV2Service) {
-    return { env: loaded.env, plane: { config: parsed, state: "ready" } };
-  }
   return {
     env: loaded.env,
+    ...(loaded.refusal ? { envFileRefusal: loaded.refusal } : {}),
+    parsed,
     ...(parsed.a2aV2 ? { routePath: parsed.a2aV2.routePath } : {}),
-    plane: await decideA2AV2Plane({
-      config: parsed,
-      configPath,
-      env: loaded.env,
-      ...(loaded.refusal ? { envFileRefusal: loaded.refusal } : {}),
-      log,
-      ...(options.probeA2AV2Database
-        ? { probe: options.probeA2AV2Database }
-        : {}),
-      ...(sectionError === undefined ? {} : { sectionError }),
-    }),
+    ...(sectionError === undefined ? {} : { sectionError }),
   };
 };
 
+/**
+ * Clears a manifest-bound binding for the synchronous reads that follow it
+ * (LoopSupervisorDirectory, the bridge files in its run directory) once an
+ * async, bounded probe of its manifest and run directory has answered. A run
+ * can live under a repository in ~/Documents, where a macOS privacy prompt
+ * parks any open; a parked synchronous read would freeze the server. A
+ * binding not cleared routes nowhere and is probed again on the next
+ * reconciliation pass (a probe still parked is not re-entered). Clearing is
+ * kept: macOS privacy decisions hold for the life of the process.
+ */
+export class SupervisorPathGate {
+  readonly #access: MailboxFileAccess;
+  readonly #bindings: readonly { manifestPath: string; supervisorId: string }[];
+  readonly #cleared = new Set<string>();
+
+  constructor(
+    bindings: readonly { manifestPath?: string; supervisorId: string }[],
+    access: MailboxFileAccess
+  ) {
+    this.#access = access;
+    this.#bindings = bindings.flatMap((binding) =>
+      binding.manifestPath
+        ? [
+            {
+              manifestPath: binding.manifestPath,
+              supervisorId: binding.supervisorId,
+            },
+          ]
+        : []
+    );
+  }
+
+  readonly mayAccess = (supervisorId: string): boolean =>
+    this.#cleared.has(supervisorId);
+
+  async refresh(): Promise<void> {
+    await Promise.all(
+      this.#bindings
+        .filter((binding) => !this.#cleared.has(binding.supervisorId))
+        .map(async (binding) => {
+          const [manifest, runDir] = await Promise.all([
+            this.#access.probe(
+              binding.supervisorId,
+              binding.manifestPath,
+              "file"
+            ),
+            this.#access.probe(
+              binding.supervisorId,
+              dirname(binding.manifestPath),
+              "directory"
+            ),
+          ]);
+          if (manifest !== "unavailable" && runDir !== "unavailable") {
+            this.#cleared.add(binding.supervisorId);
+          }
+        })
+    );
+  }
+}
+
+/** What startup acquired, closed in reverse order however startup ends. */
+class StartupTeardown {
+  #closed = false;
+  readonly #log: (line: string) => void;
+  readonly #steps: { close: () => unknown; label: string }[] = [];
+
+  constructor(log: (line: string) => void) {
+    this.#log = log;
+  }
+
+  /**
+   * After `close()` (a stop while startup was still waiting) a resource
+   * acquired late is closed at once instead of leaking.
+   */
+  add(label: string, close: () => unknown): void {
+    if (this.#closed) {
+      this.#run({ close, label }).catch(() => undefined);
+      return;
+    }
+    this.#steps.push({ close, label });
+  }
+
+  async close(): Promise<void> {
+    this.#closed = true;
+    for (const step of this.#steps.splice(0).reverse()) {
+      await this.#run(step);
+    }
+  }
+
+  async #run(step: { close: () => unknown; label: string }): Promise<void> {
+    try {
+      await step.close();
+    } catch (error) {
+      this.#log(
+        `orchestration shutdown: closing ${step.label} failed: ${failureMessage(error)}`
+      );
+    }
+  }
+}
+
+class StartupStoppedError extends Error {
+  constructor() {
+    super("orchestration server stopped during startup");
+    this.name = "StartupStoppedError";
+  }
+}
+
+/**
+ * One Temporal client and worker connection, each attempt bounded and
+ * retried with backoff until it succeeds or the server stops (undefined). A
+ * connection that arrives after its attempt's deadline is closed.
+ */
+const connectTemporal = async (input: {
+  address: string;
+  bounds: OrchestrationStartupBounds;
+  log: (line: string) => void;
+  signal: AbortSignal;
+}): Promise<
+  { connection: Connection; nativeConnection: NativeConnection } | undefined
+> => {
+  const ms = input.bounds.temporalConnectMs;
+  for (let attempt = 1; !input.signal.aborted; attempt += 1) {
+    let connection: Connection | undefined;
+    try {
+      connection = await withDeadline(
+        Connection.connect({ address: input.address, connectTimeout: ms }),
+        ms,
+        "Temporal client connection",
+        (late) => late.close()
+      );
+      const nativeConnection = await withDeadline(
+        NativeConnection.connect({ address: input.address }),
+        ms,
+        "Temporal worker connection",
+        (late) => late.close()
+      );
+      return { connection, nativeConnection };
+    } catch (error) {
+      await connection?.close().catch(() => undefined);
+      if (input.signal.aborted) {
+        break;
+      }
+      const delay = retryDelayMs(
+        attempt,
+        input.bounds.temporalRetryBaseMs,
+        input.bounds.temporalRetryMaxMs
+      );
+      input.log(
+        `orchestration startup: temporal-connect attempt ${attempt} failed (${failureMessage(error)}); retrying in ${delay}ms`
+      );
+      await sleepUnlessAborted(delay, input.signal);
+    }
+  }
+  return undefined;
+};
+
+interface StartupContext {
+  bounds: OrchestrationStartupBounds;
+  configPath: string;
+  enter: (phase: OrchestrationStartupPhase) => void;
+  log: (line: string) => void;
+  options: LoopOrchestrationServerOptions;
+  prepared: ReturnType<typeof prepareStartConfiguration>;
+  signal: AbortSignal;
+  teardown: StartupTeardown;
+}
+
+const throwIfStopped = (signal: AbortSignal): void => {
+  if (signal.aborted) {
+    throw new StartupStoppedError();
+  }
+};
+
+/** The a2a-v2-plane phase: the plane decision, its ledger probe bounded. */
+const decideStartPlane = (
+  context: StartupContext
+): Promise<{ config: ServerConfig } & A2AV2PlaneStatus> => {
+  const { bounds, log, options, prepared } = context;
+  if (options.a2aV2Service) {
+    return Promise.resolve({ config: prepared.parsed, state: "ready" });
+  }
+  const probe = options.probeA2AV2Database ?? probeA2AV2Database;
+  return decideA2AV2Plane({
+    config: prepared.parsed,
+    configPath: context.configPath,
+    env: prepared.env,
+    ...(prepared.envFileRefusal
+      ? { envFileRefusal: prepared.envFileRefusal }
+      : {}),
+    log,
+    probe: (url) =>
+      withDeadline(probe(url), bounds.a2aV2PlaneMs, "A2A V2 ledger probe")
+        // Not answering is unreachable.
+        .catch(() => false),
+    ...(prepared.sectionError === undefined
+      ? {}
+      : { sectionError: prepared.sectionError }),
+  });
+};
+
+interface StartedRuntime {
+  a2aV2Enrollment?: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">;
+  a2aV2Service?: SupervisorA2AV2Service;
+  /** Why a configured V2 plane did not start; V1 runs alone. */
+  a2aV2StartFailure?: string;
+  a2aV2StartOutcomes?: readonly A2AV2EnrollmentOutcome[];
+  host: TemporalSupervisorRuntimeHost;
+}
+
+/**
+ * The temporal-connect phase, then the runtime host (a2a-v2-service and/or
+ * runtime-host). Everything acquired is handed to the teardown as soon as it
+ * exists.
+ */
+const startRuntime = async (
+  context: StartupContext,
+  input: {
+    access: MailboxFileAccess;
+    config: ServerConfig;
+    directory: LoopSupervisorDirectory;
+  }
+): Promise<StartedRuntime> => {
+  const { bounds, enter, log, options, signal, teardown } = context;
+  const injected = options.a2aV2Service;
+  if (injected) {
+    teardown.add("the A2A V2 service", () => injected.close());
+    return { a2aV2Service: injected, host: injected.host };
+  }
+  enter("temporal-connect");
+  const temporal = await connectTemporal({
+    address: input.config.address,
+    bounds,
+    log,
+    signal,
+  });
+  if (!temporal) {
+    throw new StartupStoppedError();
+  }
+  teardown.add("the Temporal client connection", () =>
+    temporal.connection.close()
+  );
+  teardown.add("the Temporal worker connection", () =>
+    temporal.nativeConnection.close()
+  );
+  throwIfStopped(signal);
+  const created = await createDefaultRuntimeHost({
+    a2aV2ServiceMs: bounds.a2aV2ServiceMs,
+    config: input.config,
+    configPath: context.configPath,
+    connection: temporal.connection,
+    directory: input.directory,
+    endpointRoots:
+      options.a2aV2EndpointRoots ?? supervisorEndpointRoots(homedir()),
+    endpoints: options.a2aV2Endpoints ?? defaultA2AV2EndpointFactories,
+    enter,
+    env: context.prepared.env,
+    mailboxAccess: input.access,
+    mailboxes: new Map(
+      input.config.supervisors.flatMap((entry) =>
+        entry.mailbox ? [[entry.supervisorId, entry.mailbox] as const] : []
+      )
+    ),
+    nativeConnection: temporal.nativeConnection,
+  });
+  const service = created.a2aV2Service;
+  teardown.add(
+    service ? "the A2A V2 service" : "the Temporal runtime host",
+    () => (service ? service.close() : created.host.close())
+  );
+  return created;
+};
+
+/** The deadline sweep, when configured; see SupervisorDeadlineDriver. */
+const startDeadlineSweep = (
+  config: ServerConfig,
+  host: TemporalSupervisorRuntimeHost,
+  log: (line: string) => void,
+  teardown: StartupTeardown
+): void => {
+  if (!config.deadlines) {
+    return;
+  }
+  // Authority of record for a tick, keyed by the exact message pair.
+  const tickPrincipals = new Map(
+    config.grants.flatMap((grant) =>
+      grant.operations.includes("tick")
+        ? [[`${grant.from}\n${grant.to}`, grant.principal] as const]
+        : []
+    )
+  );
+  const driver = new SupervisorDeadlineDriver({
+    board: () =>
+      host.runtime
+        .threads()
+        .threads.flatMap((thread) =>
+          thread.messages.map((message) => message.item)
+        ),
+    log,
+    principalFor: (item) => tickPrincipals.get(`${item.from}\n${item.to}`),
+    tick: (input) =>
+      host.runtime.tick({
+        principal: input.principal,
+        requestId: input.requestId,
+        workflowId: input.workflowId,
+      }),
+  });
+  const timer = setInterval(() => {
+    driver.sweep().catch((error) => {
+      log(`orchestration deadline sweep failed: ${failureMessage(error)}`);
+    });
+  }, config.deadlines.intervalMs);
+  teardown.add("the deadline sweep", () => clearInterval(timer));
+};
+
+/** The wake sweep, when configured; see SupervisorWakeDriver. */
+const startWakeSweep = (
+  config: ServerConfig,
+  access: MailboxFileAccess,
+  log: (line: string) => void,
+  teardown: StartupTeardown
+): void => {
+  if (!config.wake) {
+    return;
+  }
+  // Only recipients that declared a session can be woken. One with a
+  // mailbox and no wakeSession is reported once and then left alone: it is
+  // reachable by delivery but has no supported wake on this host, and
+  // guessing a session name would notify the wrong one.
+  const targets = config.supervisors.flatMap((entry) =>
+    entry.mailbox && entry.wakeSession
+      ? [
+          {
+            mailbox: entry.mailbox,
+            recipient: entry.supervisorId,
+            sessionName: entry.wakeSession,
+          },
+        ]
+      : []
+  );
+  for (const entry of config.supervisors) {
+    if (entry.mailbox && !entry.wakeSession) {
+      log(
+        `[loop] ${entry.supervisorId} has a mailbox but no wakeSession: delivery only, no wake`
+      );
+    }
+  }
+  const driver = new SupervisorWakeDriver({
+    access,
+    log,
+    port: new HeadlessClaudeWakePort({ log, run: spawnHeadless }),
+    targets,
+  });
+  const timer = setInterval(() => {
+    driver.sweep().catch((error) => {
+      log(`orchestration wake sweep failed: ${failureMessage(error)}`);
+    });
+  }, config.wake.intervalMs);
+  teardown.add("the wake sweep", () => clearInterval(timer));
+};
+
+/**
+ * Everything after the bind, phase by phase, ending with the request handler
+ * of a server that is up: its host runs and one reconciliation pass has
+ * succeeded. Throws `StartupStoppedError` when the server stops first.
+ */
+const startOrchestrationServices = async (
+  context: StartupContext
+): Promise<(request: Request) => Promise<Response>> => {
+  const { bounds, enter, log, options, prepared, signal, teardown } = context;
+
+  enter("path-check");
+  const access = new MailboxFileAccess({
+    deadlineMs: bounds.fileAccessMs,
+    ...(options.mailboxFileSystem ? { fs: options.mailboxFileSystem } : {}),
+    log,
+  });
+  const gate = new SupervisorPathGate(prepared.parsed.supervisors, access);
+  await gate.refresh();
+  throwIfStopped(signal);
+  // Built after the bind and the probe: its constructor reads manifests
+  // synchronously, and reads only the ones the gate cleared.
+  const directory = new LoopSupervisorDirectory(prepared.parsed.supervisors, {
+    mayAccess: gate.mayAccess,
+  });
+
+  enter("a2a-v2-plane");
+  let plane = await decideStartPlane(context);
+  throwIfStopped(signal);
+  const config = plane.config;
+  const runtime = await startRuntime(context, { access, config, directory });
+  throwIfStopped(signal);
+  const host = runtime.host;
+  if (runtime.a2aV2StartFailure !== undefined) {
+    log(
+      a2aV2DisabledLine(
+        "start-failed",
+        `${runtime.a2aV2StartFailure}. Fix the cause, then restart`
+      )
+    );
+    const { a2aV2: _section, ...v1Config } = plane.config;
+    plane = { config: v1Config, reason: "start-failed", state: "disabled" };
+  }
+
+  enter("first-reconcile");
+  let reconciliationHealthy = false;
+  let notEnrolled: readonly string[] = [];
+  const reconcile = createOrchestrationSweep({
+    enrollment: runtime.a2aV2Enrollment,
+    log,
+    reconcilers: [
+      // The gate first: a binding whose probe answered since the last pass
+      // is routed by the bridge reconciler in this one.
+      { reconcile: () => gate.refresh() },
+      new SupervisorBridgeConsumptionReconciler({
+        bindings: config.supervisors,
+        directory,
+        runtime: host.runtime,
+      }),
+      // A mailbox recipient has no pane, so the bridge reconciler skips it
+      // and its own acknowledgment would never reach the workflow.
+      new SupervisorMailboxConsumptionReconciler({
+        access,
+        bindings: config.supervisors.flatMap((entry) =>
+          entry.mailbox
+            ? [
+                {
+                  mailbox: entry.mailbox,
+                  principal: entry.principal,
+                  supervisorId: entry.supervisorId,
+                },
+              ]
+            : []
+        ),
+        log,
+        runtime: host.runtime,
+      }),
+    ],
+    setHealthy: (healthy) => {
+      reconciliationHealthy = healthy;
+    },
+    setNotEnrolled: (seats) => {
+      notEnrolled = seats;
+    },
+    startOutcomes: runtime.a2aV2StartOutcomes,
+  });
+  await reconcile();
+  throwIfStopped(signal);
+  startDeadlineSweep(config, host, log, teardown);
+  startWakeSweep(config, access, log, teardown);
+  // Debug only (LOOP_A2A_V2_TIMING=1); otherwise every wrap is identity.
+  const timing = a2aV2TimingProbe(prepared.env);
+  teardown.add("the timing probe", () => timing.stop());
+  const timedReconcile = timing.pass("reconcile pass", reconcile);
+  const reconcileTimer = setInterval(() => {
+    timedReconcile().catch((error) => {
+      reconciliationHealthy = false;
+      log(
+        `orchestration bridge reconciliation failed: ${failureMessage(error)}`
+      );
+    });
+  }, 250);
+  teardown.add("the reconciliation sweep", () => clearInterval(reconcileTimer));
+  // Up once one pass has succeeded; the sweep above keeps trying until then.
+  while (!reconciliationHealthy) {
+    throwIfStopped(signal);
+    await sleepUnlessAborted(250, signal);
+  }
+  throwIfStopped(signal);
+  return timing.handler(
+    createLoopOrchestrationFetchHandler({
+      // A configured plane that is disabled answers 503 on its own routes.
+      a2aV2DisabledRoutePath: () =>
+        plane.state === "disabled" ? prepared.routePath : undefined,
+      a2aV2Service: runtime.a2aV2Service,
+      a2aV2State: () => ({
+        state: plane.state,
+        ...(plane.reason ? { reason: plane.reason } : {}),
+      }),
+      authenticator: authenticator(config, prepared.env),
+      host,
+      notEnrolledSeats: () => notEnrolled,
+      reconciliationHealthy: () => reconciliationHealthy,
+      unreadableBindingCount: () => access.unreadableBindingCount(),
+    })
+  );
+};
+
+/**
+ * `loop orchestration serve`. Binds first: after the config is parsed (an
+ * invalid V1 config still refuses start) and the state directory exists, the
+ * listener opens at once and answers 503 `starting` (see
+ * `startingOrchestrationResponse`) while the phases run, each bounded or
+ * retried (see `OrchestrationStartupBounds`). The full surface is switched in
+ * once the host runs and one reconciliation pass has succeeded.
+ *
+ * 2026-10-11: before this, startup ran a reconcile before `serve()`; a
+ * mailbox read parked by a macOS privacy prompt froze the event loop and the
+ * port never opened.
+ */
 export const runLoopOrchestrationServer = async (
   configPath: string,
   inputEnv: NodeJS.ProcessEnv = process.env,
   options: LoopOrchestrationServerOptions = {}
 ): Promise<void> => {
   const log = (line: string) => console.error(line);
-  const start = await startConfiguration(configPath, inputEnv, options, log);
-  const env = start.env;
-  let plane = start.plane;
-  const config = plane.config;
-  mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
-  const directory = new LoopSupervisorDirectory(config.supervisors);
-  const mailboxes = new Map(
-    config.supervisors.flatMap((entry) =>
-      entry.mailbox ? [[entry.supervisorId, entry.mailbox] as const] : []
-    )
-  );
-  let connection: Connection | undefined;
-  let nativeConnection: NativeConnection | undefined;
-  let host: TemporalSupervisorRuntimeHost | undefined;
-  let deadlineTimer: ReturnType<typeof setInterval> | undefined;
-  let wakeTimer: ReturnType<typeof setInterval> | undefined;
-  let a2aV2Service = options.a2aV2Service;
-  let a2aV2Enrollment:
-    | Pick<ConfiguredA2AV2SessionEnrollment, "maintain">
-    | undefined;
-  let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
-  let reconcileTimer: ReturnType<typeof setInterval> | undefined;
-  let reconciliationHealthy = false;
-  let notEnrolled: readonly string[] = [];
+  const bounds = {
+    ...DEFAULT_ORCHESTRATION_STARTUP_BOUNDS,
+    ...options.startupBounds,
+  };
+  const prepared = prepareStartConfiguration(configPath, inputEnv, options);
+  mkdirSync(prepared.parsed.stateDir, { mode: 0o700, recursive: true });
+  let phase: OrchestrationStartupPhase = "path-check";
+  let handler: ((request: Request) => Promise<Response>) | undefined;
+  const server = serve({
+    fetch: (request) =>
+      handler
+        ? handler(request)
+        : Promise.resolve(startingOrchestrationResponse(request, phase)),
+    hostname: prepared.parsed.hostname,
+    port: prepared.parsed.port,
+  });
+  const stopping = new AbortController();
+  const stopped = new Promise<void>((resolve) => {
+    const stop = () => {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+      options.signal?.removeEventListener("abort", stop);
+      stopping.abort();
+      resolve();
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    if (options.signal?.aborted) {
+      stop();
+    } else {
+      options.signal?.addEventListener("abort", stop, { once: true });
+    }
+  });
+  const teardown = new StartupTeardown(log);
+  const starting = startOrchestrationServices({
+    bounds,
+    configPath,
+    enter: (next) => {
+      phase = next;
+      log(`orchestration startup: ${next}`);
+    },
+    log,
+    options,
+    prepared,
+    signal: stopping.signal,
+    teardown,
+  });
+  // A stop during startup leaves it to wind down on its own.
+  starting.catch(() => undefined);
   try {
-    if (a2aV2Service) {
-      host = a2aV2Service.host;
-    } else {
-      connection = await Connection.connect({ address: config.address });
-      nativeConnection = await NativeConnection.connect({
-        address: config.address,
-      });
-      const created = await createDefaultRuntimeHost({
-        config,
-        configPath,
-        connection,
-        directory,
-        endpointRoots:
-          options.a2aV2EndpointRoots ?? supervisorEndpointRoots(homedir()),
-        endpoints: options.a2aV2Endpoints ?? defaultA2AV2EndpointFactories,
-        env,
-        mailboxes,
-        nativeConnection,
-      });
-      a2aV2Enrollment = created.a2aV2Enrollment;
-      a2aV2StartOutcomes = created.a2aV2StartOutcomes;
-      a2aV2Service = created.a2aV2Service;
-      host = created.host;
-      if (created.a2aV2StartFailure !== undefined) {
-        log(
-          a2aV2DisabledLine(
-            "start-failed",
-            `${created.a2aV2StartFailure}. Fix the cause, then restart`
-          )
-        );
-        const { a2aV2: _section, ...v1Config } = plane.config;
-        plane = { config: v1Config, reason: "start-failed", state: "disabled" };
-      }
+    const started = await Promise.race([
+      starting,
+      stopped.then(() => undefined),
+    ]);
+    if (started) {
+      handler = started;
+      log("orchestration startup: ready");
+      await stopped;
     }
-    // Authority of record for a tick, keyed by the exact message pair.
-    const tickPrincipals = new Map(
-      config.grants.flatMap((grant) =>
-        grant.operations.includes("tick")
-          ? [[`${grant.from}\n${grant.to}`, grant.principal] as const]
-          : []
-      )
-    );
-    const reconciler = new SupervisorBridgeConsumptionReconciler({
-      bindings: config.supervisors,
-      directory,
-      runtime: host.runtime,
-    });
-    // A mailbox recipient has no pane, so the bridge reconciler skips it and
-    // its own acknowledgment would never reach the workflow. This carries it.
-    const mailboxReconciler = new SupervisorMailboxConsumptionReconciler({
-      bindings: config.supervisors.flatMap((entry) =>
-        entry.mailbox
-          ? [
-              {
-                mailbox: entry.mailbox,
-                principal: entry.principal,
-                supervisorId: entry.supervisorId,
-              },
-            ]
-          : []
-      ),
-      log: (line) => console.error(line),
-      runtime: host.runtime,
-    });
-    const reconcile = createOrchestrationSweep({
-      enrollment: a2aV2Enrollment,
-      log: (line) => console.error(line),
-      reconcilers: [reconciler, mailboxReconciler],
-      setHealthy: (healthy) => {
-        reconciliationHealthy = healthy;
-      },
-      setNotEnrolled: (seats) => {
-        notEnrolled = seats;
-      },
-      startOutcomes: a2aV2StartOutcomes,
-    });
-    await reconcile();
-    if (config.deadlines) {
-      const driver = new SupervisorDeadlineDriver({
-        board: () =>
-          host?.runtime
-            .threads()
-            .threads.flatMap((thread) =>
-              thread.messages.map((message) => message.item)
-            ) ?? [],
-        log: (line) => console.error(line),
-        principalFor: (item) => tickPrincipals.get(`${item.from}\n${item.to}`),
-        tick: (input) =>
-          (host as TemporalSupervisorRuntimeHost).runtime.tick({
-            principal: input.principal,
-            requestId: input.requestId,
-            workflowId: input.workflowId,
-          }),
-      });
-      deadlineTimer = setInterval(() => {
-        driver.sweep().catch((error) => {
-          console.error(
-            `orchestration deadline sweep failed: ${error instanceof Error ? error.message : "unknown error"}`
-          );
-        });
-      }, config.deadlines.intervalMs);
+  } catch (error) {
+    if (!(error instanceof StartupStoppedError)) {
+      throw error;
     }
-    if (config.wake) {
-      // Only recipients that declared a session can be woken. One with a
-      // mailbox and no wakeSession is reported once and then left alone: it is
-      // reachable by delivery but has no supported wake on this host, and
-      // guessing a session name would notify the wrong one.
-      const targets = config.supervisors.flatMap((entry) =>
-        entry.mailbox && entry.wakeSession
-          ? [
-              {
-                mailbox: entry.mailbox,
-                recipient: entry.supervisorId,
-                sessionName: entry.wakeSession,
-              },
-            ]
-          : []
-      );
-      for (const entry of config.supervisors) {
-        if (entry.mailbox && !entry.wakeSession) {
-          console.error(
-            `[loop] ${entry.supervisorId} has a mailbox but no wakeSession: delivery only, no wake`
-          );
-        }
-      }
-      const wakeDriver = new SupervisorWakeDriver({
-        log: (line) => console.error(line),
-        port: new HeadlessClaudeWakePort({
-          log: (line) => console.error(line),
-          run: spawnHeadless,
-        }),
-        targets,
-      });
-      wakeTimer = setInterval(() => {
-        wakeDriver.sweep().catch((error) => {
-          console.error(
-            `orchestration wake sweep failed: ${error instanceof Error ? error.message : "unknown error"}`
-          );
-        });
-      }, config.wake.intervalMs);
-    }
-    // Debug only (LOOP_A2A_V2_TIMING=1); otherwise every wrap is identity.
-    const timing = a2aV2TimingProbe(env);
-    const timedReconcile = timing.pass("reconcile pass", reconcile);
-    reconcileTimer = setInterval(() => {
-      timedReconcile().catch((error) => {
-        reconciliationHealthy = false;
-        console.error(
-          `orchestration bridge reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}`
-        );
-      });
-    }, 250);
-    const untimedHandler = createLoopOrchestrationFetchHandler({
-      // A configured plane that is disabled answers 503 on its own routes.
-      a2aV2DisabledRoutePath: () =>
-        plane.state === "disabled" ? start.routePath : undefined,
-      a2aV2Service,
-      a2aV2State: () => ({
-        state: plane.state,
-        ...(plane.reason ? { reason: plane.reason } : {}),
-      }),
-      authenticator: authenticator(config, env),
-      host,
-      notEnrolledSeats: () => notEnrolled,
-      reconciliationHealthy: () => reconciliationHealthy,
-    });
-    const handler = timing.handler(untimedHandler);
-    const server = serve({
-      fetch: handler,
-      hostname: config.hostname,
-      port: config.port,
-    });
-    await new Promise<void>((resolve) => {
-      const stop = () => {
-        timing.stop();
-        process.off("SIGINT", stop);
-        process.off("SIGTERM", stop);
-        options.signal?.removeEventListener("abort", stop);
-        server.stop(true);
-        resolve();
-      };
-      process.once("SIGINT", stop);
-      process.once("SIGTERM", stop);
-      if (options.signal?.aborted) {
-        stop();
-      } else {
-        options.signal?.addEventListener("abort", stop, { once: true });
-      }
-    });
   } finally {
-    if (reconcileTimer) {
-      clearInterval(reconcileTimer);
-    }
-    if (deadlineTimer) {
-      clearInterval(deadlineTimer);
-    }
-    if (wakeTimer) {
-      clearInterval(wakeTimer);
-    }
-    if (a2aV2Service) {
-      await a2aV2Service.close();
-    } else {
-      await host?.close();
-    }
-    await nativeConnection?.close();
-    await connection?.close();
+    stopping.abort();
+    server.stop(true);
+    await teardown.close();
   }
 };

@@ -213,3 +213,54 @@ test("r9: a lease-resolved endpoint whose manifest became a symlink routes nowhe
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test("a binding its path gate has not cleared is never read: it routes nowhere until the gate clears it (startup bind-first)", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "loop-supervisors-")));
+  const runDir = join(root, "1");
+  const manifestPath = join(runDir, "manifest.json");
+  try {
+    writeRunManifest(
+      manifestPath,
+      createRunManifest(
+        {
+          cwd: root,
+          mode: "paired",
+          pid: process.pid,
+          primaryAgent: "codex",
+          repoId: "repo-1",
+          runId: "1",
+          state: "working",
+          tmuxPaneRight: "%2",
+          tmuxPaneRightAgent: "codex",
+        },
+        "2026-08-30T10:00:00.000Z"
+      )
+    );
+    // A manifest under ~/Documents may sit behind a privacy prompt: until an
+    // async probe answered for it, no synchronous read may touch it.
+    const cleared = new Set<string>();
+    const asked: string[] = [];
+    const directory = new LoopSupervisorDirectory(
+      [
+        { manifestPath, seat: "codex", supervisorId: "supervisor:harness" },
+        { supervisorId: "supervisor:mailbox-only" },
+      ],
+      {
+        mayAccess: (supervisorId) => {
+          asked.push(supervisorId);
+          return cleared.has(supervisorId);
+        },
+      }
+    );
+    expect(directory.resolve("supervisor:harness")).toBeUndefined();
+    cleared.add("supervisor:harness");
+    expect(directory.resolve("supervisor:harness")).toEqual({
+      runDir,
+      target: "codex",
+    });
+    // A binding with no manifest has nothing to gate.
+    expect(asked).not.toContain("supervisor:mailbox-only");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

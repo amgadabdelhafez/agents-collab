@@ -1,8 +1,9 @@
+import { MailboxFileAccess } from "./mailbox-file-access";
 import type { SupervisorBridgeConsumptionRuntime } from "./supervisor-bridge-consumption";
 import {
+  type MailboxCursor,
+  type MailboxReadOutcome,
   mailboxCursorPathFor,
-  readMailbox,
-  readMailboxCursor,
 } from "./supervisor-mailbox-cursor";
 import type { MailboxEnvelope } from "./supervisor-mailbox-delivery";
 import type { SupervisorMessageBoardItem } from "./supervisor-message-read-model";
@@ -95,6 +96,11 @@ export interface SupervisorMailboxConsumptionResult {
 }
 
 export interface SupervisorMailboxConsumptionOptions {
+  /**
+   * The bounded, async mailbox reads (one per server, shared with the wake
+   * driver and delivery). Default: a private one.
+   */
+  access?: MailboxFileAccess;
   bindings: readonly SupervisorMailboxConsumerBinding[];
   log?: (line: string) => void;
   runtime: SupervisorBridgeConsumptionRuntime;
@@ -127,15 +133,45 @@ const isSameMessage = (
   item.to === envelope.target &&
   isIssuedDeliveryKey(item, envelope.idempotencyKey);
 
+type BindingRead =
+  | { cursor: MailboxCursor; kind: "read"; outcome: MailboxReadOutcome }
+  | { kind: "unavailable"; reason: string };
+
 export class SupervisorMailboxConsumptionReconciler {
+  readonly #access: MailboxFileAccess;
   readonly #bindings: readonly SupervisorMailboxConsumerBinding[];
   readonly #log: (line: string) => void;
+  /** Bindings whose unreadable mailbox is reported; once per outage. */
+  readonly #reportedUnreadable = new Set<string>();
   readonly #runtime: SupervisorBridgeConsumptionRuntime;
 
   constructor(options: SupervisorMailboxConsumptionOptions) {
+    this.#access = options.access ?? new MailboxFileAccess();
     this.#bindings = options.bindings.map((binding) => ({ ...binding }));
     this.#log = options.log ?? (() => undefined);
     this.#runtime = options.runtime;
+  }
+
+  /**
+   * The mailbox, then its cursor, both async and bounded; unavailable when
+   * either cannot be read (an unreadable cursor is not an empty one).
+   */
+  async #read(binding: SupervisorMailboxConsumerBinding): Promise<BindingRead> {
+    const outcome = await this.#access.readMailbox(
+      binding.supervisorId,
+      binding.mailbox
+    );
+    if (outcome.kind === "unavailable") {
+      return outcome;
+    }
+    const cursor = await this.#access.readCursor(
+      binding.supervisorId,
+      mailboxCursorPathFor(binding.mailbox)
+    );
+    if (cursor.kind === "unavailable") {
+      return cursor;
+    }
+    return { cursor: cursor.cursor, kind: "read", outcome };
   }
 
   async reconcile(): Promise<SupervisorMailboxConsumptionResult> {
@@ -148,54 +184,76 @@ export class SupervisorMailboxConsumptionReconciler {
       unmatched: 0,
       unreadable: 0,
     };
-    for (const binding of this.#bindings) {
-      const outcome = readMailbox(binding.mailbox);
-      if (outcome.kind === "unavailable") {
+    // Every binding is read at once, each bounded: a mailbox whose open is
+    // parked (a macOS privacy prompt) costs that binding alone, and the rest
+    // reconcile in the same pass.
+    const reads = await Promise.all(
+      this.#bindings.map((binding) => this.#read(binding))
+    );
+    for (const [index, binding] of this.#bindings.entries()) {
+      const read = reads[index] as BindingRead;
+      if (read.kind === "unavailable") {
         result.unreadable += 1;
+        this.#reportUnreadable(binding.supervisorId, read.reason);
+        continue;
+      }
+      this.#reportedUnreadable.delete(binding.supervisorId);
+      await this.#reconcileBinding(binding, read, result);
+    }
+    return result;
+  }
+
+  /** Logged once per outage, not once per pass (a pass runs every 250 ms). */
+  #reportUnreadable(supervisorId: string, reason: string): void {
+    if (this.#reportedUnreadable.has(supervisorId)) {
+      return;
+    }
+    this.#reportedUnreadable.add(supervisorId);
+    this.#log(`[loop] mailbox for ${supervisorId} is unreadable: ${reason}`);
+  }
+
+  async #reconcileBinding(
+    binding: SupervisorMailboxConsumerBinding,
+    read: Extract<BindingRead, { kind: "read" }>,
+    result: SupervisorMailboxConsumptionResult
+  ): Promise<void> {
+    const { cursor, outcome } = read;
+    const envelopes = new Map(
+      (outcome.kind === "read" ? outcome.entries : []).map(
+        (entry) => [entry.idempotencyKey, entry] as const
+      )
+    );
+    for (const key of cursor.consumedIdempotencyKeys) {
+      const envelope = envelopes.get(key);
+      if (!envelope) {
+        // The cursor claims an acknowledgment this mailbox cannot support.
+        result.unmatched += 1;
+        continue;
+      }
+      if (envelope.target !== binding.supervisorId) {
+        result.misaddressed += 1;
         this.#log(
-          `[loop] mailbox for ${binding.supervisorId} is unreadable: ${outcome.reason}`
+          `[loop] ${binding.supervisorId} acknowledged ${key}, addressed to ${envelope.target}`
         );
         continue;
       }
-      const envelopes = new Map(
-        (outcome.kind === "read" ? outcome.entries : []).map(
-          (entry) => [entry.idempotencyKey, entry] as const
-        )
-      );
-      const cursor = readMailboxCursor(mailboxCursorPathFor(binding.mailbox));
-      for (const key of cursor.consumedIdempotencyKeys) {
-        const envelope = envelopes.get(key);
-        if (!envelope) {
-          // The cursor claims an acknowledgment this mailbox cannot support.
-          result.unmatched += 1;
-          continue;
-        }
-        if (envelope.target !== binding.supervisorId) {
-          result.misaddressed += 1;
-          this.#log(
-            `[loop] ${binding.supervisorId} acknowledged ${key}, addressed to ${envelope.target}`
-          );
-          continue;
-        }
-        if (!WORKFLOW_ID_RE.test(envelope.workflowId)) {
-          result.unmatched += 1;
-          continue;
-        }
-        const item = boardItem(this.#runtime.threads(), envelope.workflowId);
-        if (!(item && isSameMessage(item, envelope))) {
-          // Either no such message, or an envelope whose identity does not
-          // match the one it names. Never advance on a partial match.
-          result.misidentified += 1;
-          this.#log(
-            `[loop] ${binding.supervisorId} acknowledged ${key}, which does not identify ${envelope.workflowId}`
-          );
-          continue;
-        }
-        result.inspected += 1;
-        await this.#advance(binding, envelope, result);
+      if (!WORKFLOW_ID_RE.test(envelope.workflowId)) {
+        result.unmatched += 1;
+        continue;
       }
+      const item = boardItem(this.#runtime.threads(), envelope.workflowId);
+      if (!(item && isSameMessage(item, envelope))) {
+        // Either no such message, or an envelope whose identity does not
+        // match the one it names. Never advance on a partial match.
+        result.misidentified += 1;
+        this.#log(
+          `[loop] ${binding.supervisorId} acknowledged ${key}, which does not identify ${envelope.workflowId}`
+        );
+        continue;
+      }
+      result.inspected += 1;
+      await this.#advance(binding, envelope, result);
     }
-    return result;
   }
 
   /**

@@ -547,6 +547,7 @@ describe("serve on a real Temporal dev server", () => {
         notEnrolledCount: 0,
         schema: "loop-orchestration-health.v1",
         state: "ready",
+        unreadableBindingCount: 0,
       });
       // The V2 route is not mounted.
       expect(
@@ -587,6 +588,7 @@ describe("serve on a real Temporal dev server", () => {
         notEnrolledCount: 0,
         schema: "loop-orchestration-health.v1",
         state: "ready",
+        unreadableBindingCount: 0,
       });
       await sendV1(f, `fix8-${reason}-${randomUUID().slice(0, 8)}`);
       const lines = errors.mock.calls.map(([line]) => String(line));

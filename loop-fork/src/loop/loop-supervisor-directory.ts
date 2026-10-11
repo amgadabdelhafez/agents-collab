@@ -37,7 +37,21 @@ const isMissing = (error: unknown): boolean => {
   return code === "ENOENT" || code === "ENOTDIR";
 };
 
+export interface LoopSupervisorDirectoryOptions {
+  /**
+   * Whether a binding's manifest and run directory may be read synchronously
+   * now. The orchestration server answers it from an async, bounded probe
+   * (a path under ~/Documents can park any open behind a macOS privacy
+   * prompt, and a parked synchronous read freezes the whole server). A
+   * binding not cleared is checked neither at construction nor on resolve:
+   * it routes nowhere, as a stopped run does, until it is cleared. Absent:
+   * every binding may be read (the CLI and tests).
+   */
+  mayAccess?: (supervisorId: string) => boolean;
+}
+
 export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
+  readonly #mayAccess: (supervisorId: string) => boolean;
   readonly #manifests = new Map<string, string>();
   /**
    * fix8: bindings whose manifest did not exist when the directory was built
@@ -50,7 +64,11 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
   readonly #unverified = new Set<string>();
   readonly #seats = new Map<string, "claude" | "codex">();
 
-  constructor(bindings: readonly LoopSupervisorBinding[]) {
+  constructor(
+    bindings: readonly LoopSupervisorBinding[],
+    options: LoopSupervisorDirectoryOptions = {}
+  ) {
+    this.#mayAccess = options.mayAccess ?? (() => true);
     for (const binding of bindings) {
       if (binding.seat !== undefined) {
         if (binding.seat !== "claude" && binding.seat !== "codex") {
@@ -69,21 +87,29 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
         this.#manifests.set(binding.supervisorId, "");
         continue;
       }
-      try {
-        this.#manifests.set(
-          binding.supervisorId,
-          exactManifest(binding.manifestPath)
-        );
-      } catch (error) {
-        if (!isMissing(error)) {
-          throw error;
-        }
-        this.#manifests.set(binding.supervisorId, binding.manifestPath);
-        this.#unverified.add(binding.supervisorId);
-      }
+      this.#registerManifest(binding.supervisorId, binding.manifestPath);
     }
     if (this.#manifests.size === 0) {
       throw new Error("at least one supervisor binding is required");
+    }
+  }
+
+  #registerManifest(supervisorId: string, manifestPath: string): void {
+    if (!this.#mayAccess(supervisorId)) {
+      // Checked on its first resolve after it is cleared, as a manifest that
+      // did not exist yet is.
+      this.#manifests.set(supervisorId, manifestPath);
+      this.#unverified.add(supervisorId);
+      return;
+    }
+    try {
+      this.#manifests.set(supervisorId, exactManifest(manifestPath));
+    } catch (error) {
+      if (!isMissing(error)) {
+        throw error;
+      }
+      this.#manifests.set(supervisorId, manifestPath);
+      this.#unverified.add(supervisorId);
     }
   }
 
@@ -91,7 +117,7 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
     // "" is a registered recipient with no run: unroutable over the bridge,
     // which is the same answer as unknown for routing purposes.
     const manifestPath = this.#manifests.get(supervisorId);
-    if (!manifestPath) {
+    if (!(manifestPath && this.#mayAccess(supervisorId))) {
       return undefined;
     }
     if (this.#unverified.has(supervisorId)) {
