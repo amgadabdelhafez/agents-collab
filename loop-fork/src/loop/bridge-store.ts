@@ -3,13 +3,16 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  constants as fsConstants,
   fstatSync,
   fsyncSync,
   linkSync,
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -746,8 +749,106 @@ const countPendingMessages = (runDir: string): BridgeStatus["pending"] => {
   return pending;
 };
 
+/**
+ * r9: a standalone Claude Code session directory
+ * (`<home>/.loop/sessions/<supervisor slug>/<sessionId>`) has no run manifest.
+ * Its channel identity is this file, written by whoever starts
+ * `__bridge-mcp <sessionDir> claude` for it, so the bridge's own channel
+ * readiness (publish and probe) works there unchanged. It carries the Claude
+ * session id and the channel server name only: no path, URL, credential or
+ * message. Read only when the directory has no manifest.
+ */
+export const BRIDGE_SESSION_FILE = "session.json" as const;
+export const BRIDGE_SESSION_SCHEMA = "loop-bridge-session.v1" as const;
+const BRIDGE_SESSION_MAX_BYTES = 16_384;
+const BRIDGE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const BRIDGE_CHANNEL_SERVER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+export interface BridgeSessionRecord {
+  claudeChannelServer: string;
+  claudeSessionId: string;
+  schema: typeof BRIDGE_SESSION_SCHEMA;
+}
+
+const parseBridgeSessionRecord = (
+  value: unknown
+): BridgeSessionRecord | undefined => {
+  if (
+    !(
+      isRecord(value) &&
+      value.schema === BRIDGE_SESSION_SCHEMA &&
+      typeof value.claudeSessionId === "string" &&
+      BRIDGE_SESSION_ID_RE.test(value.claudeSessionId) &&
+      typeof value.claudeChannelServer === "string" &&
+      BRIDGE_CHANNEL_SERVER_RE.test(value.claudeChannelServer)
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    claudeChannelServer: value.claudeChannelServer,
+    claudeSessionId: value.claudeSessionId,
+    schema: BRIDGE_SESSION_SCHEMA,
+  };
+};
+
+/**
+ * The session record of a directory, or undefined when it is absent,
+ * malformed, oversized, not a regular file, or a symlink (opened with
+ * O_NOFOLLOW, so a link cannot point the read anywhere else).
+ */
+export const readBridgeSessionRecord = (
+  dir: string
+): BridgeSessionRecord | undefined => {
+  let fd: number | undefined;
+  try {
+    fd = openSync(
+      join(dir, BRIDGE_SESSION_FILE),
+      // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags require bitwise composition.
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    );
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > BRIDGE_SESSION_MAX_BYTES) {
+      return undefined;
+    }
+    return parseBridgeSessionRecord(JSON.parse(readFileSync(fd, "utf8")));
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) {
+      closeSync(fd);
+    }
+  }
+};
+
+/** Atomically (re)write a session directory's record, owner-only. */
+export const writeBridgeSessionRecord = (
+  dir: string,
+  identity: Pick<BridgeSessionRecord, "claudeChannelServer" | "claudeSessionId">
+): void => {
+  const record = parseBridgeSessionRecord({
+    claudeChannelServer: identity.claudeChannelServer,
+    claudeSessionId: identity.claudeSessionId,
+    schema: BRIDGE_SESSION_SCHEMA,
+  });
+  if (!record) {
+    throw new Error("bridge session identity is invalid");
+  }
+  mkdirSync(dir, { mode: 0o700, recursive: true });
+  const destination = join(dir, BRIDGE_SESSION_FILE);
+  const temporary = `${destination}.${process.pid}.${randomUUID()}`;
+  writeFileSync(temporary, `${JSON.stringify(record)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  renameSync(temporary, destination);
+};
+
 export const readBridgeStatus = (runDir: string): BridgeStatus => {
   const manifest = readRunManifest(join(runDir, "manifest.json"));
+  // A run directory always answers from its manifest; only a directory with
+  // no manifest (a standalone session) falls back to its session record.
+  const session = manifest ? undefined : readBridgeSessionRecord(runDir);
   const runId = manifest?.runId ?? "";
   const codexRemoteUrl = manifest?.codexRemoteUrl ?? "";
   const codexThreadId = manifest?.codexThreadId ?? "";
@@ -762,8 +863,9 @@ export const readBridgeStatus = (runDir: string): BridgeStatus => {
           manifest?.repoId,
           manifest?.claudeChannelServer
         )
-      : BRIDGE_SERVER,
-    claudeSessionId: manifest?.claudeSessionId ?? "",
+      : (session?.claudeChannelServer ?? BRIDGE_SERVER),
+    claudeSessionId:
+      manifest?.claudeSessionId ?? session?.claudeSessionId ?? "",
     codexRemoteUrl,
     codexThreadId,
     hasCodexRemote: Boolean(codexRemoteUrl && codexThreadId),
