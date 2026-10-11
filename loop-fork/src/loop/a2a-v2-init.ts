@@ -60,6 +60,7 @@ import {
   readA2AV2EnvFile,
 } from "./a2a-v2-env";
 import { parseLoopOrchestrationConfig } from "./loop-orchestration-server";
+import { isLoopbackPublishedPort } from "./orchestration-origin-policy";
 import { readRunManifest } from "./run-state";
 
 export const A2A_V2_LEDGER_CONTAINER = "loop-a2a-ledger";
@@ -389,12 +390,15 @@ const publishedPort = async (
       `ledger container ${name} does not publish 5432 on 127.0.0.1 only`
     );
   }
-  // Refuse a container also published beyond loopback.
+  // RA1's origin policy: the ledger port is plaintext, so every binding it
+  // is published on must be a loopback IP literal. Refuse a container also
+  // published beyond loopback.
   if (
     result.stdout
       .split("\n")
+      .map((line) => line.trim())
       .filter(Boolean)
-      .some((line) => !line.startsWith("127.0.0.1:"))
+      .some((line) => !isLoopbackPublishedPort(line))
   ) {
     throw new Error(
       `ledger container ${name} is published beyond 127.0.0.1; refusing to use it`

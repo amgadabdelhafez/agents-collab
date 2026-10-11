@@ -254,6 +254,39 @@ test("the endpoint comes from the orchestration config, loopback only, and never
   expect(() => resolveA2AClientEndpoint("alice", { env: h.env })).toThrow();
 });
 
+test("RA1: a configured origin passes the origin policy and the token goes only there", () => {
+  const h = harness();
+  const withConfig = (patch: Record<string, unknown>) => {
+    writeFileSync(h.configPath, JSON.stringify({ ...h.config, ...patch }));
+    return () => resolveA2AClientEndpoint(ALICE, { env: h.env });
+  };
+  // The configured origin wins over the listener, whatever it binds.
+  const remote = withConfig({
+    hostname: "0.0.0.0",
+    origin: "https://loop.home.lab",
+  })();
+  expect(remote.baseUrl).toBe("https://loop.home.lab");
+  expect(remote.url(`${ROUTE}/sessions/claim`)).toBe(
+    `https://loop.home.lab${ROUTE}/sessions/claim`
+  );
+  expect(() => remote.url("//evil.example/a2a")).toThrow(
+    "not on the configured server"
+  );
+  expect(
+    withConfig({ origin: `http://127.0.0.1:${h.server.port}` })().baseUrl
+  ).toBe(`http://127.0.0.1:${h.server.port}`);
+  for (const origin of [
+    "http://loop.home.lab",
+    "http://localhost:7321",
+    "https://user:pass@loop.home.lab",
+    "https://loop.home.lab/prefix",
+    "https://loop.home.lab?x=1",
+  ]) {
+    expect(withConfig({ origin })).toThrow("orchestration origin");
+  }
+  writeFileSync(h.configPath, JSON.stringify(h.config));
+});
+
 test("--a2a-as claims a run by ids only, after naming the supervisor in the manifest", async () => {
   const h = harness();
   const run = writeRun(h.home);

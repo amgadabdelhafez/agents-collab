@@ -35,6 +35,24 @@ import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "./governess-beat-workflow";
 import { HeadlessClaudeWakePort } from "./headless-claude-wake-port";
 import { spawnHeadless } from "./headless-runner";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
+import {
+  assertListenPolicy,
+  parseServerOrigin,
+  serverOriginFor,
+} from "./orchestration-origin-policy";
+import {
+  createTokenRoutes,
+  loadTokenSigningKey,
+  OrchestrationTokenService,
+  parseRoleBinding,
+  type RoleBinding,
+  roleEpochKey,
+  roleMayMessage,
+  type TokenRevocation,
+  TokenStore,
+  writeOwnerOnlyFile,
+  writeTokenSigningKey,
+} from "./orchestration-token-service";
 import { isActiveRunState, readRunManifest } from "./run-state";
 import {
   createSupervisorA2AV2Service,
@@ -125,7 +143,6 @@ export const LOOP_ORCHESTRATION_WORKFLOW_TYPES = [
 ] as const;
 
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
-const HOST_RE = /^(?:127\.0\.0\.1|::1|localhost)$/;
 const SUPERVISOR_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const OPERATIONS = new Set<SupervisorMessageGovernedOperation>([
   "acknowledge",
@@ -155,6 +172,13 @@ interface SupervisorConfig {
   mailbox?: string;
   manifestPath?: string;
   principal: string;
+  /**
+   * RA1: what this address is in the control hierarchy. A role-bound
+   * sender is governed by its role subtree (`roleMayMessage`), not by the
+   * configured grants, and only a role-bound address can hold a session
+   * token. Its principal is its own: no other supervisor shares it.
+   */
+  role?: RoleBinding;
   seat?: "claude" | "codex";
   supervisorId: string;
   tokenEnv: string;
@@ -249,6 +273,15 @@ interface GrantConfig {
   to: string;
 }
 
+/**
+ * RA1: session tokens. The signing key is an Ed25519 PKCS#8 PEM in a 0600
+ * file this user owns, named here and never inline; the store lives under
+ * `<stateDir>/tokens`.
+ */
+export interface TokensConfig {
+  signingKeyFile: string;
+}
+
 interface ServerConfig {
   a2aV2?: A2AV2Config;
   address: string;
@@ -261,10 +294,17 @@ interface ServerConfig {
   hostname: string;
   identity: string;
   namespace: string;
+  /**
+   * RA1: the origin clients reach this server at (`https://loop.home.lab`
+   * behind Caddy, or an http loopback origin). Absent: the loopback
+   * listener's own `http://<hostname>:<port>`.
+   */
+  origin?: string;
   port: number;
   stateDir: string;
   supervisors: SupervisorConfig[];
   taskQueue: string;
+  tokens?: TokensConfig;
   // Absent means no waking at all: the service behaves exactly as before.
   wake?: WakeConfig;
 }
@@ -401,6 +441,14 @@ export interface LoopOrchestrationFetchHandlerOptions {
    */
   notEnrolledSeats?: () => readonly string[];
   reconciliationHealthy: () => boolean;
+  /**
+   * RA1: the session token routes (`/api/v1/tokens/...`), when the config
+   * has a `tokens` section; see `createTokenRoutes`.
+   */
+  tokenRoutes?: (
+    request: Request,
+    pathname: string
+  ) => Promise<Response | undefined>;
 }
 
 const planeHealth = (
@@ -484,10 +532,14 @@ export const createLoopOrchestrationFetchHandler = (
   const v1Handler = options.host.httpHandler(options.authenticator, {
     resultGraphRoutePath: options.a2aV2Service?.resultGraphRoute?.pathname,
   });
-  return (request: Request): Promise<Response> => {
+  return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
-      return Promise.resolve(orchestrationHealth(options));
+      return orchestrationHealth(options);
+    }
+    const tokenResponse = await options.tokenRoutes?.(request, url.pathname);
+    if (tokenResponse) {
+      return tokenResponse;
     }
     const r9 = allSupervisorsResponse(options, request, url.pathname);
     if (r9) {
@@ -968,13 +1020,75 @@ const readConfigFile = (path: string): unknown => {
   }
 };
 
+const parseSupervisor = (entry: unknown): SupervisorConfig => {
+  if (!isRecord(entry)) {
+    throw new Error("orchestration supervisor is invalid");
+  }
+  const keys = Object.keys(entry).sort();
+  const allowed = new Set([
+    "mailbox",
+    "manifestPath",
+    "principal",
+    "role",
+    "seat",
+    "supervisorId",
+    "tokenEnv",
+    "wakeSession",
+  ]);
+  if (
+    keys.some((key) => !allowed.has(key)) ||
+    !["principal", "supervisorId", "tokenEnv"].every((key) =>
+      keys.includes(key)
+    ) ||
+    // A recipient must be reachable some way: a live pane, a mailbox, or both.
+    !(keys.includes("manifestPath") || keys.includes("mailbox"))
+  ) {
+    throw new Error("orchestration supervisor has invalid fields");
+  }
+  return {
+    ...(entry.seat === undefined
+      ? {}
+      : {
+          seat: required(entry.seat, SEAT_RE, "seat") as "claude" | "codex",
+        }),
+    ...(entry.mailbox === undefined
+      ? {}
+      : { mailbox: required(entry.mailbox, ABSOLUTE_PATH_RE, "mailbox") }),
+    ...(entry.wakeSession === undefined
+      ? {}
+      : {
+          wakeSession: required(
+            entry.wakeSession,
+            SESSION_NAME_RE,
+            "wakeSession"
+          ),
+        }),
+    ...(entry.manifestPath === undefined
+      ? {}
+      : {
+          manifestPath: required(
+            entry.manifestPath,
+            ABSOLUTE_PATH_RE,
+            "manifestPath"
+          ),
+        }),
+    principal: required(entry.principal, NAME_RE, "principal"),
+    ...(entry.role === undefined
+      ? {}
+      : {
+          role: parseRoleBinding(entry.role, "orchestration supervisor role"),
+        }),
+    supervisorId: required(entry.supervisorId, SUPERVISOR_RE, "supervisorId"),
+    tokenEnv: required(entry.tokenEnv, TOKEN_ENV_RE, "tokenEnv"),
+  };
+};
+
 export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
   if (!isRecord(value)) {
     throw new Error("orchestration config must be an object");
   }
-  const topLevel = Object.keys(value).filter(
-    (key) => key !== "a2aV2" && key !== "deadlines" && key !== "wake"
-  );
+  const optional = new Set(["a2aV2", "deadlines", "origin", "tokens", "wake"]);
+  const topLevel = Object.keys(value).filter((key) => !optional.has(key));
   exactKeys(
     Object.fromEntries(topLevel.map((key) => [key, value[key]])),
     [
@@ -998,62 +1112,9 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
   if (!Array.isArray(value.supervisors) || value.supervisors.length === 0) {
     throw new Error("orchestration supervisors are required");
   }
-  const supervisors = value.supervisors.map((entry) => {
-    if (!isRecord(entry)) {
-      throw new Error("orchestration supervisor is invalid");
-    }
-    const keys = Object.keys(entry).sort();
-    const allowed = new Set([
-      "mailbox",
-      "manifestPath",
-      "principal",
-      "seat",
-      "supervisorId",
-      "tokenEnv",
-      "wakeSession",
-    ]);
-    if (
-      keys.some((key) => !allowed.has(key)) ||
-      !["principal", "supervisorId", "tokenEnv"].every((key) =>
-        keys.includes(key)
-      ) ||
-      // A recipient must be reachable some way: a live pane, a mailbox, or both.
-      !(keys.includes("manifestPath") || keys.includes("mailbox"))
-    ) {
-      throw new Error("orchestration supervisor has invalid fields");
-    }
-    return {
-      ...(entry.seat === undefined
-        ? {}
-        : {
-            seat: required(entry.seat, SEAT_RE, "seat") as "claude" | "codex",
-          }),
-      ...(entry.mailbox === undefined
-        ? {}
-        : { mailbox: required(entry.mailbox, ABSOLUTE_PATH_RE, "mailbox") }),
-      ...(entry.wakeSession === undefined
-        ? {}
-        : {
-            wakeSession: required(
-              entry.wakeSession,
-              SESSION_NAME_RE,
-              "wakeSession"
-            ),
-          }),
-      ...(entry.manifestPath === undefined
-        ? {}
-        : {
-            manifestPath: required(
-              entry.manifestPath,
-              ABSOLUTE_PATH_RE,
-              "manifestPath"
-            ),
-          }),
-      principal: required(entry.principal, NAME_RE, "principal"),
-      supervisorId: required(entry.supervisorId, SUPERVISOR_RE, "supervisorId"),
-      tokenEnv: required(entry.tokenEnv, TOKEN_ENV_RE, "tokenEnv"),
-    };
-  });
+  const supervisors: SupervisorConfig[] =
+    value.supervisors.map(parseSupervisor);
+  assertRoleBindings(supervisors);
   if (!Array.isArray(value.grants) || value.grants.length === 0) {
     throw new Error("orchestration grants are required");
   }
@@ -1117,7 +1178,7 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
     buildId: required(value.buildId, NAME_RE, "buildId"),
     ...(deadlineConfig ? { deadlines: deadlineConfig } : {}),
     grants,
-    hostname: required(value.hostname, HOST_RE, "hostname"),
+    ...parseExposure(value),
     identity: required(value.identity, NAME_RE, "identity"),
     namespace: required(value.namespace, NAME_RE, "namespace"),
     port: Number(port),
@@ -1126,6 +1187,79 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
     taskQueue: required(value.taskQueue, NAME_RE, "taskQueue"),
     ...(wakeConfig ? { wake: wakeConfig } : {}),
   };
+};
+
+/**
+ * RA1: where the server listens and how it is reached, under the origin
+ * policy: loopback always; beyond loopback only with an https origin and a
+ * tokens section.
+ */
+const parseExposure = (
+  value: Record<string, unknown>
+): Pick<ServerConfig, "hostname" | "origin" | "tokens"> => {
+  const origin =
+    value.origin === undefined
+      ? undefined
+      : parseServerOrigin(value.origin, "orchestration origin");
+  const tokens = parseTokens(value.tokens);
+  return {
+    hostname: assertListenPolicy({
+      hostname: value.hostname,
+      ...(origin ? { origin } : {}),
+      tokens: tokens !== undefined,
+    }),
+    ...(origin ? { origin } : {}),
+    ...(tokens ? { tokens } : {}),
+  };
+};
+
+/** RA1: `tokens` names the signing key file (absolute), never the key. */
+const parseTokens = (value: unknown): TokensConfig | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("orchestration tokens is invalid");
+  }
+  exactKeys(value, ["signingKeyFile"], "orchestration tokens");
+  return {
+    signingKeyFile: required(
+      value.signingKeyFile,
+      ABSOLUTE_PATH_RE,
+      "orchestration tokens signingKeyFile"
+    ),
+  };
+};
+
+/**
+ * RA1: a role-bound address's principal is its own (the grant decision
+ * finds the actor by it), and a subtree has at most one supervisor address.
+ */
+const assertRoleBindings = (supervisors: readonly SupervisorConfig[]): void => {
+  const subtreeSupervisors = new Set<string>();
+  for (const entry of supervisors) {
+    if (!entry.role) {
+      continue;
+    }
+    if (
+      supervisors.some(
+        (other) => other !== entry && other.principal === entry.principal
+      )
+    ) {
+      throw new Error(
+        `orchestration supervisor ${entry.supervisorId} has a role and shares its principal`
+      );
+    }
+    if (entry.role.role === "supervisor") {
+      const key = roleEpochKey(entry.role);
+      if (subtreeSupervisors.has(key)) {
+        throw new Error(
+          `orchestration supervisor role ${key} is bound to more than one address`
+        );
+      }
+      subtreeSupervisors.add(key);
+    }
+  }
 };
 
 const equalToken = (left: string, right: string): boolean => {
@@ -1137,9 +1271,17 @@ const equalToken = (left: string, right: string): boolean => {
   );
 };
 
-const authenticator = (
-  config: ServerConfig,
-  env: NodeJS.ProcessEnv
+/**
+ * The bearer of a request: a configured supervisor's static token (legacy),
+ * or, with a `tokens` section, a session token. A session token acts only as
+ * the address its session enrolled as (the token subject decides it), with
+ * that address's configured principal, so every downstream sender and
+ * principal check binds to the token subject.
+ */
+export const orchestrationAuthenticator = (
+  config: Pick<ServerConfig, "supervisors">,
+  env: NodeJS.ProcessEnv,
+  tokens?: Pick<OrchestrationTokenService, "verify">
 ): SupervisorControlSurfaceAuthenticator => ({
   authenticate(request): SupervisorControlSurfaceIdentity | undefined {
     const authorization = request.headers.get("authorization") ?? "";
@@ -1156,19 +1298,130 @@ const authenticator = (
         };
       }
     }
-    return undefined;
+    const session = tokens?.verify(token);
+    const supervisor = session
+      ? config.supervisors.find(
+          (entry) => entry.role && entry.supervisorId === session.address
+        )
+      : undefined;
+    return supervisor
+      ? {
+          principal: supervisor.principal,
+          supervisorId: supervisor.supervisorId,
+        }
+      : undefined;
   },
 });
 
+const authenticator = orchestrationAuthenticator;
+
+interface GrantRequest {
+  claimant?: null | string;
+  from: string;
+  operation: SupervisorMessageGovernedOperation;
+  principal: string;
+  to: string;
+}
+
+const configuredGrant = (
+  config: Pick<ServerConfig, "grants">,
+  request: GrantRequest
+): boolean =>
+  config.grants.some(
+    (grant) =>
+      grant.principal === request.principal &&
+      grant.from === request.from &&
+      grant.to === request.to &&
+      grant.operations.includes(request.operation)
+  );
+
+/** The party a role-bound actor must be for each operation on its pair. */
+const roleActorMayOperate = (actor: string, request: GrantRequest): boolean => {
+  switch (request.operation) {
+    case "receive":
+    case "cancel":
+      return actor === request.from;
+    case "claim":
+    case "acknowledge":
+      return actor === request.to;
+    case "tick":
+      return actor === request.from || actor === request.to;
+    default:
+      return false;
+  }
+};
+
+/**
+ * RA1: whether `request.principal` may perform the operation on the pair.
+ * A sender without a role: the configured grants, exactly as before. A
+ * role-bound sender's pair must be one its role subtree allows
+ * (`roleMayMessage`; an owner's is any pair), and no configured grant
+ * widens that. Within it, a role-bound actor must be the sender (receive,
+ * cancel), the recipient (claim, acknowledge) or either (tick), an owner
+ * actor may do anything, and an actor without a role (a legacy recipient
+ * of an owner's message) still needs its configured grant. A claimant must
+ * be the actor itself.
+ */
+export const orchestrationGrantAllows = (
+  config: Pick<ServerConfig, "grants" | "supervisors">,
+  request: GrantRequest
+): boolean => {
+  const roleOf = (id: string) =>
+    config.supervisors.find((entry) => entry.supervisorId === id)?.role;
+  const sender = roleOf(request.from);
+  if (!sender) {
+    return configuredGrant(config, request);
+  }
+  const actor = config.supervisors.find(
+    (entry) => entry.role && entry.principal === request.principal
+  );
+  if (actor?.role?.role === "owner") {
+    return request.claimant == null || request.claimant === actor.supervisorId;
+  }
+  if (!roleMayMessage(sender, roleOf(request.to))) {
+    return false;
+  }
+  if (!actor) {
+    return configuredGrant(config, request);
+  }
+  return (
+    (request.claimant == null || request.claimant === actor.supervisorId) &&
+    roleActorMayOperate(actor.supervisorId, request)
+  );
+};
+
+/**
+ * RA1: the principal the deadline driver ticks a role-bound pair under (its
+ * recipient's, else its sender's); undefined when the role policy grants no
+ * one, so the pair is left to the configured grants.
+ */
+const roleTickPrincipal = (
+  config: Pick<ServerConfig, "grants" | "supervisors">,
+  from: string,
+  to: string
+): string | undefined => {
+  for (const id of [to, from]) {
+    const entry = config.supervisors.find(
+      (candidate) => candidate.role && candidate.supervisorId === id
+    );
+    if (
+      entry &&
+      orchestrationGrantAllows(config, {
+        from,
+        operation: "tick",
+        principal: entry.principal,
+        to,
+      })
+    ) {
+      return entry.principal;
+    }
+  }
+  return undefined;
+};
+
 const authority = (config: ServerConfig): SupervisorMessageAuthorityPort => ({
   decide(request) {
-    const allowed = config.grants.some(
-      (grant) =>
-        grant.principal === request.principal &&
-        grant.from === request.from &&
-        grant.to === request.to &&
-        grant.operations.includes(request.operation)
-    );
+    const allowed = orchestrationGrantAllows(config, request);
     return {
       allowed,
       authorityRef: allowed
@@ -1954,6 +2207,7 @@ const createDefaultRuntimeHost = async (input: {
   env: NodeJS.ProcessEnv;
   mailboxes: ReadonlyMap<string, string>;
   nativeConnection: NativeConnection;
+  tokens?: OrchestrationTokenService;
 }): Promise<{
   a2aV2Enrollment?: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">;
   a2aV2Service: SupervisorA2AV2Service | undefined;
@@ -2011,7 +2265,11 @@ const createDefaultRuntimeHost = async (input: {
     if (!databaseUrl) {
       throw new Error("configured A2A V2 database environment is absent");
     }
-    const controlAuthenticator = authenticator(input.config, input.env);
+    const controlAuthenticator = authenticator(
+      input.config,
+      input.env,
+      input.tokens
+    );
     const resultGraphKeys = resolveResultGraphKeys(a2aConfig, input.env);
     const supervisors = input.config.supervisors;
     const principalForRecipient = (recipient: string) =>
@@ -2095,13 +2353,10 @@ const createDefaultRuntimeHost = async (input: {
         legacySeats,
         log: (line) => console.error(line),
         mayReceive: (request) =>
-          input.config.grants.some(
-            (grant) =>
-              grant.principal === request.principal &&
-              grant.from === request.from &&
-              grant.to === request.to &&
-              grant.operations.includes("receive")
-          ),
+          orchestrationGrantAllows(input.config, {
+            ...request,
+            operation: "receive",
+          }),
         principalForRecipient,
         resolveLocator,
         routePath: a2aConfig.routePath,
@@ -2112,7 +2367,7 @@ const createDefaultRuntimeHost = async (input: {
         description:
           "Authenticated Loop supervisor A2A V2 ingress. Provider acceptance is distinct from recipient consumption.",
         supervisorId: primarySupervisorId,
-        url: `http://${input.config.hostname}:${input.config.port}${a2aConfig.routePath}`,
+        url: `${serverOriginFor(input.config)}${a2aConfig.routePath}`,
       },
       databaseUrl,
       ...(connectLeases
@@ -2235,13 +2490,7 @@ const createDefaultRuntimeHost = async (input: {
         decide: (request) => {
           const allowed =
             request.claimant === request.to &&
-            input.config.grants.some(
-              (grant) =>
-                grant.principal === request.principal &&
-                grant.from === request.from &&
-                grant.to === request.to &&
-                grant.operations.includes(request.operation)
-            );
+            orchestrationGrantAllows(input.config, request);
           return {
             allowed,
             authorityRef: `authority:${a2aV2IdentityToken(input.config.identity)}:recipient-v2`,
@@ -2656,6 +2905,100 @@ const startConfiguration = async (
   };
 };
 
+/** RA1: role-bound addresses by supervisor id. */
+const roleBindings = (
+  config: Pick<ServerConfig, "supervisors">
+): Map<string, RoleBinding> =>
+  new Map(
+    config.supervisors.flatMap((entry) =>
+      entry.role ? [[entry.supervisorId, entry.role] as const] : []
+    )
+  );
+
+/**
+ * RA1: the token service a config's `tokens` section names (its store under
+ * `<stateDir>/tokens`), or undefined without one. Shared by the server and
+ * the host token commands, so both act on the same store.
+ */
+export const createConfiguredTokenService = (
+  config: Pick<ServerConfig, "stateDir" | "supervisors" | "tokens">,
+  now?: () => number
+): OrchestrationTokenService | undefined =>
+  config.tokens
+    ? new OrchestrationTokenService({
+        bindings: roleBindings(config),
+        key: loadTokenSigningKey(config.tokens.signingKeyFile),
+        ...(now ? { now } : {}),
+        store: new TokenStore(join(config.stateDir, "tokens")),
+      })
+    : undefined;
+
+/** The service and its routes, both absent without a `tokens` section. */
+const configuredTokenSurface = (
+  config: ServerConfig
+): Pick<LoopOrchestrationFetchHandlerOptions, "tokenRoutes"> & {
+  tokens?: OrchestrationTokenService;
+} => {
+  const tokens = createConfiguredTokenService(config);
+  return tokens ? { tokenRoutes: createTokenRoutes(tokens), tokens } : {};
+};
+
+/** The tick principal of record for a pair: a configured grant's, else RA1's. */
+const deadlineTickPrincipal =
+  (config: ServerConfig, tickPrincipals: ReadonlyMap<string, string>) =>
+  (item: { from: string; to: string }): string | undefined =>
+    tickPrincipals.get(`${item.from}\n${item.to}`) ??
+    roleTickPrincipal(config, item.from, item.to);
+
+/** RA1: the host operator's token commands (`loop orchestration token-*`). */
+export type TokenHostCommand =
+  | { command: "token-keygen" }
+  | { command: "token-code"; out: string; supervisorId: string }
+  | { command: "token-revoke"; target: TokenRevocation };
+
+/**
+ * Runs a host token command against the config's own key and store. Whoever
+ * can read the signing key is the owner already, so the host acts with full
+ * authority. Lines name paths, ids and times only: the code goes to a new
+ * 0600 file, never to the terminal, and the key never leaves its file.
+ */
+export const tokenHostCommandForConfig = (
+  configPath: string,
+  request: TokenHostCommand,
+  now?: () => number
+): string[] => {
+  const { config } = parseLoopOrchestrationServeConfig(
+    readConfigFile(configPath)
+  );
+  if (!config.tokens) {
+    throw new Error(
+      `orchestration config has no tokens section: ${configPath}`
+    );
+  }
+  if (request.command === "token-keygen") {
+    const path = config.tokens.signingKeyFile;
+    const { kid } = writeTokenSigningKey(path);
+    return [`token signing key written: ${path} (kid ${kid})`];
+  }
+  const service = createConfiguredTokenService(
+    config,
+    now
+  ) as OrchestrationTokenService;
+  if (request.command === "token-code") {
+    const { code, expiresAt } = service.issueEnrollmentCode(
+      { kind: "host" },
+      request.supervisorId
+    );
+    writeOwnerOnlyFile(request.out, `${code}\n`);
+    return [
+      `enrollment code for ${request.supervisorId} written to ${request.out} (single use, expires ${new Date(expiresAt * 1000).toISOString()})`,
+    ];
+  }
+  service.revoke({ kind: "host" }, request.target);
+  const [kind, value] = Object.entries(request.target)[0] as [string, string];
+  return [`revoked ${kind} ${value}`];
+};
+
 export const runLoopOrchestrationServer = async (
   configPath: string,
   inputEnv: NodeJS.ProcessEnv = process.env,
@@ -2667,6 +3010,10 @@ export const runLoopOrchestrationServer = async (
   let plane = start.plane;
   const config = plane.config;
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
+  // RA1: a configured key that cannot be loaded refuses start (V1's own
+  // authentication), naming the path, never the key.
+  const tokenSurface = configuredTokenSurface(config);
+  const tokens = tokenSurface.tokens;
   const directory = new LoopSupervisorDirectory(config.supervisors);
   const mailboxes = new Map(
     config.supervisors.flatMap((entry) =>
@@ -2705,6 +3052,7 @@ export const runLoopOrchestrationServer = async (
         env,
         mailboxes,
         nativeConnection,
+        tokens,
       });
       a2aV2Enrollment = created.a2aV2Enrollment;
       a2aV2StartOutcomes = created.a2aV2StartOutcomes;
@@ -2773,7 +3121,7 @@ export const runLoopOrchestrationServer = async (
               thread.messages.map((message) => message.item)
             ) ?? [],
         log: (line) => console.error(line),
-        principalFor: (item) => tickPrincipals.get(`${item.from}\n${item.to}`),
+        principalFor: deadlineTickPrincipal(config, tickPrincipals),
         tick: (input) =>
           (host as TemporalSupervisorRuntimeHost).runtime.tick({
             principal: input.principal,
@@ -2845,10 +3193,11 @@ export const runLoopOrchestrationServer = async (
         state: plane.state,
         ...(plane.reason ? { reason: plane.reason } : {}),
       }),
-      authenticator: authenticator(config, env),
+      authenticator: authenticator(config, env, tokens),
       host,
       notEnrolledSeats: () => notEnrolled,
       reconciliationHealthy: () => reconciliationHealthy,
+      tokenRoutes: tokenSurface.tokenRoutes,
     });
     const server = serve({
       fetch: handler,

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { parseServerEndpointUrl } from "./orchestration-origin-policy";
 
 const reference = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
 export interface RecipientApiCommand {
@@ -8,22 +9,17 @@ export interface RecipientApiCommand {
   workflowId: string;
 }
 
-const loopbackUrl = (value: string): URL => {
+/**
+ * RA1's origin policy: https, or http only on 127.0.0.1 or [::1]; never
+ * credentials, a query or a fragment in the URL.
+ */
+const recipientEndpointUrl = (value: string): URL => {
   try {
-    const url = new URL(value);
-    if (
-      url.protocol !== "http:" ||
-      !["127.0.0.1", "[::1]"].includes(url.hostname) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    ) {
-      throw new Error("invalid endpoint");
-    }
-    return url;
+    return parseServerEndpointUrl(value);
   } catch {
-    throw new Error("Recipient API requires an explicit loopback endpoint");
+    throw new Error(
+      "Recipient API requires an explicit https or loopback endpoint"
+    );
   }
 };
 
@@ -61,11 +57,11 @@ export const callRecipientApi = async (input: {
 };
 
 /**
- * The recipient route (`{routePath}/recipient`) with an explicit loopback URL
+ * The recipient route (`{routePath}/recipient`) with an explicit server URL
  * and bearer token, for callers that resolved both themselves: `loop a2a ack`
  * and `loop mailbox ack` for V2 envelopes read the token from the
  * supervisor's own `tokenEnv`. The same refusals as the run-bound client:
- * loopback only, no redirect, a strict command, no response or error detail
+ * https or loopback http only, no redirect, a strict command, no response or error detail
  * propagated, and no token in any result or error.
  */
 export const callRecipientRoute = async (input: {
@@ -74,7 +70,7 @@ export const callRecipientRoute = async (input: {
   token: string;
   url: string;
 }): Promise<Record<string, unknown>> => {
-  const url = loopbackUrl(input.url);
+  const url = recipientEndpointUrl(input.url);
   if (!input.token) {
     throw new Error("Recipient API token is not available");
   }

@@ -41,6 +41,11 @@ import {
   ORCHESTRATION_CONFIG_PATH_ENV,
   orchestrationConfigPathFromEnv,
 } from "./governess-temporal-journal";
+import {
+  isLoopbackLiteral,
+  parseServerOrigin,
+  serverOriginFor,
+} from "./orchestration-origin-policy";
 import { acknowledgeRecipientWorkflow } from "./recipient-api-client";
 import { readRunManifest, updateRunManifest } from "./run-state";
 import {
@@ -61,9 +66,11 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  * status, and the recipient ACK. Shared by `loop a2a`, the bridge's session
  * mode tools, the `--a2a-as` launch and the teardown hooks.
  *
- * - The server is the orchestration config's own loopback listener
- *   (`hostname` 127.0.0.1 or ::1, `port`, `a2aV2.routePath`); nothing here
- *   takes a server URL from argv or tool input.
+ * - The server is the orchestration config's own: its configured `origin`
+ *   (https, or http on 127.0.0.1 or [::1]; RA1's origin policy), else its
+ *   loopback listener (`hostname` 127.0.0.1 or ::1, `port`), with
+ *   `a2aV2.routePath`; nothing here takes a server URL from argv or tool
+ *   input.
  * - The bearer token is the acting supervisor's `tokenEnv`, read from the
  *   environment and held in a private field: no result, error or log line
  *   carries it. Only that one variable is read, and an environment that also
@@ -90,10 +97,6 @@ export const A2A_LEASE_RECORD_SCHEMA = "loop-a2a-lease-record.v1" as const;
 const REQUEST_TIMEOUT_MS = 10_000;
 const ROUTE_PATH_RE = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,255}$/;
 const TOKEN_ENV_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
-const LOOPBACK_HOSTS: Readonly<Record<string, string>> = {
-  "127.0.0.1": "127.0.0.1",
-  "::1": "[::1]",
-};
 const TASK_STATE_NAME_RE = /^TASK_STATE_[A-Z_]+$/;
 const MESSAGE_PHASES: readonly string[] = [
   "acknowledged",
@@ -275,6 +278,31 @@ export const otherSupervisorTokenEnvs = (
 };
 
 /**
+ * RA1: the server origin a client sends its token to. A configured `origin`
+ * passes the shared origin policy (https, or http on a loopback IP
+ * literal); without one, the loopback listener (127.0.0.1 or ::1 only:
+ * `localhost` could resolve anywhere).
+ */
+const clientServerOrigin = (config: Record<string, unknown>): string => {
+  if (config.origin !== undefined) {
+    return parseServerOrigin(config.origin, "orchestration origin");
+  }
+  const hostname = config.hostname;
+  if (!(typeof hostname === "string" && isLoopbackLiteral(hostname))) {
+    throw new Error(
+      "orchestration hostname must be 127.0.0.1 or ::1 for the A2A client, or the config must name an origin"
+    );
+  }
+  const port = config.port;
+  if (
+    !(Number.isSafeInteger(port) && Number(port) >= 1 && Number(port) <= 65_535)
+  ) {
+    throw new Error("orchestration port is invalid");
+  }
+  return serverOriginFor({ hostname, port: Number(port) });
+};
+
+/**
  * Resolve `supervisorId`'s server and token from the orchestration config
  * (`LOOP_ORCHESTRATION_CONFIG`, default `~/.loop/orchestration/config.json`).
  * Reads only the keys it needs, so it does not depend on which A2A V2 parser
@@ -297,21 +325,7 @@ export const resolveA2AClientEndpoint = (
   if (!isRecord(config)) {
     throw new Error(`orchestration config is invalid: ${configPath}`);
   }
-  const host =
-    typeof config.hostname === "string"
-      ? LOOPBACK_HOSTS[config.hostname]
-      : undefined;
-  if (!host) {
-    throw new Error(
-      "orchestration hostname must be 127.0.0.1 or ::1 for the A2A client"
-    );
-  }
-  const port = config.port;
-  if (
-    !(Number.isSafeInteger(port) && Number(port) >= 1 && Number(port) <= 65_535)
-  ) {
-    throw new Error("orchestration port is invalid");
-  }
+  const baseUrl = clientServerOrigin(config);
   const a2aV2 = config.a2aV2;
   if (!isRecord(a2aV2)) {
     throw new Error("A2A V2 is not configured in the orchestration config");
@@ -347,7 +361,7 @@ export const resolveA2AClientEndpoint = (
     );
   }
   return new A2AClientEndpoint({
-    baseUrl: `http://${host}:${Number(port)}`,
+    baseUrl,
     routePath,
     supervisorId,
     token,

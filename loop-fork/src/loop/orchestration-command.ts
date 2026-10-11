@@ -9,6 +9,16 @@ const QUARANTINE_COMMAND = "v2-quarantine";
 const RELEASE_COMMAND = "v2-quarantine-release";
 const LIST_COMMAND = "v2-quarantine-list";
 const A2A_V2_COMMAND = "a2a-v2";
+const TOKEN_KEYGEN_USAGE = "loop orchestration token-keygen <config-path>";
+const TOKEN_CODE_USAGE =
+  "loop orchestration token-code <config-path> <supervisor-id> --out <new-file>";
+const TOKEN_REVOKE_USAGE =
+  "loop orchestration token-revoke <config-path> (--session <session-id> | --jti <jti> | --epoch <supervisor-id>)";
+const REVOKE_FLAGS: Readonly<Record<string, string>> = {
+  "--epoch": "epochFor",
+  "--jti": "jti",
+  "--session": "sessionId",
+};
 const A2A_V2_INIT_USAGE =
   "loop orchestration a2a-v2 init <config-path> [--control <supervisor-id>] [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]... [--ledger-name <name>] [--ledger-port <port>] [--database-url-env <NAME>]";
 const USAGE = [
@@ -19,10 +29,16 @@ const USAGE = [
   "loop orchestration v2-quarantine <config-path> <workflow-id> --reason <text> [--by <operator>]",
   "loop orchestration v2-quarantine-release <config-path> <workflow-id> --reason <text> [--by <operator>]",
   "loop orchestration v2-quarantine-list <config-path>",
+  TOKEN_KEYGEN_USAGE,
+  TOKEN_CODE_USAGE,
+  TOKEN_REVOKE_USAGE,
 ].join(" | ");
 
 export type OrchestrationCommandRequest =
   | { command: "serve"; configPath: string }
+  | (import("./loop-orchestration-server").TokenHostCommand & {
+      configPath: string;
+    })
   | {
       command: "result-graph-id";
       configPath: string;
@@ -143,6 +159,58 @@ const parseOperatorFlags = (
   return reason === undefined ? undefined : { by: flags.get("--by"), reason };
 };
 
+/** RA1 host token commands; undefined for any other command. */
+const parseTokenCommand = (
+  command: string | undefined,
+  configPath: string | undefined,
+  rest: readonly string[],
+  cwd: string
+): OrchestrationCommandRequest | undefined => {
+  if (!command?.startsWith("token-")) {
+    return undefined;
+  }
+  if (!configPath?.trim() || configPath.startsWith("-")) {
+    throw new Error(USAGE);
+  }
+  const path = resolve(cwd, configPath);
+  if (command === "token-keygen" && rest.length === 0) {
+    return { command, configPath: path };
+  }
+  const [first, flag, value, ...extra] = rest;
+  if (
+    command === "token-code" &&
+    first?.trim() &&
+    !first.startsWith("-") &&
+    flag === "--out" &&
+    value?.trim() &&
+    extra.length === 0
+  ) {
+    return {
+      command,
+      configPath: path,
+      out: resolve(cwd, value),
+      supervisorId: first,
+    };
+  }
+  const key = first === undefined ? undefined : REVOKE_FLAGS[first];
+  if (
+    command === "token-revoke" &&
+    key &&
+    flag?.trim() &&
+    !flag.startsWith("-") &&
+    value === undefined
+  ) {
+    return {
+      command,
+      configPath: path,
+      target: {
+        [key]: flag,
+      } as import("./orchestration-token-service").TokenRevocation,
+    };
+  }
+  throw new Error(USAGE);
+};
+
 export const parseOrchestrationCommand = (
   argv: readonly string[],
   cwd = process.cwd()
@@ -151,6 +219,10 @@ export const parseOrchestrationCommand = (
     return undefined;
   }
   const [command, configPath, ...rest] = argv.slice(1);
+  const token = parseTokenCommand(command, configPath, rest, cwd);
+  if (token) {
+    return token;
+  }
   if (command === A2A_V2_COMMAND) {
     const [initConfig, ...initArgs] = rest;
     if (
@@ -292,6 +364,21 @@ export const runOrchestrationCommand = async (
       io.env ?? process.env
     )) {
       write(`${entry.env} ${entry.role} ${entry.fingerprint}\n`);
+    }
+    return true;
+  }
+  if (
+    request.command === "token-keygen" ||
+    request.command === "token-code" ||
+    request.command === "token-revoke"
+  ) {
+    // Paths, ids and times only: a code goes to its 0600 file.
+    const { tokenHostCommandForConfig } = await import(
+      "./loop-orchestration-server"
+    );
+    const { configPath, ...command } = request;
+    for (const line of tokenHostCommandForConfig(configPath, command)) {
+      write(`${line}\n`);
     }
     return true;
   }
