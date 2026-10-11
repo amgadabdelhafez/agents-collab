@@ -255,11 +255,16 @@ const defaultListRunPanes = (runDir: string): ListedPane[] | undefined => {
   }
 };
 
+// The ownership probes are read at call time, not here: shared-process-ownership
+// imports launch-reservation, which imports this module, so when
+// shared-process-ownership is loaded first `defaultOwnershipProbes` is still in
+// its temporal dead zone while this module initialises.
 const cleanupDeps: RunProcessCleanupDeps = {
   commandForPid: defaultCommandForPid,
-  commandTable: defaultOwnershipProbes.commandTable,
-  cwdOfPid: defaultOwnershipProbes.cwdOfPid,
-  otherRunIndex: defaultOwnershipProbes.otherRunIndex,
+  commandTable: () => defaultOwnershipProbes.commandTable(),
+  cwdOfPid: (pid) => defaultOwnershipProbes.cwdOfPid(pid),
+  otherRunIndex: (runDir, table) =>
+    defaultOwnershipProbes.otherRunIndex(runDir, table),
   listRunPanes: defaultListRunPanes,
   listTmuxSessions: defaultListTmuxSessions,
   listeningPids: defaultListeningPids,

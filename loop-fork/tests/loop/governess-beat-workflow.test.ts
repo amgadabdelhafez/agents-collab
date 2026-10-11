@@ -34,6 +34,7 @@ import {
   type GovernessControlRecord,
 } from "../../src/loop/governess-journal-core";
 import { runGovernessUtilityCommand } from "../../src/loop/governess-replay";
+import { governessHostTaskQueue } from "../../src/loop/governess-temporal-journal";
 import { loadRunState } from "../../src/loop/run-state";
 import { temporalWorkflowBundleBase64 } from "../../src/loop/temporal-workflow-bundle.generated";
 import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
@@ -364,8 +365,27 @@ describe("loop governess history", () => {
     mkdirSync(state.storage.runDir, { recursive: true });
     copyFileSync(GOLDEN, join(state.storage.runDir, "governess-control.jsonl"));
 
+    // fix8: with no journal configured (no LOOP_GOVERNESS_TEMPORAL_*, no
+    // orchestration config) the history names the per-host default queue.
+    const pinned = {
+      LOOP_GOVERNESS_TEMPORAL: undefined,
+      LOOP_GOVERNESS_TEMPORAL_ADDRESS: undefined,
+      LOOP_GOVERNESS_TEMPORAL_NAMESPACE: undefined,
+      LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE: undefined,
+      LOOP_ORCHESTRATION_CONFIG: join(home, "absent-orchestration.json"),
+    } as const;
+    const saved = Object.fromEntries(
+      Object.keys(pinned).map((key) => [key, process.env[key]])
+    );
     const chunks: string[] = [];
     const original = process.stdout.write.bind(process.stdout);
+    for (const [key, value] of Object.entries(pinned)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
     process.stdout.write = ((chunk: string) => {
       chunks.push(String(chunk));
       return true;
@@ -378,6 +398,13 @@ describe("loop governess history", () => {
       );
     } finally {
       process.stdout.write = original;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
     }
 
     const printed = JSON.parse(chunks.join("")) as {
@@ -394,9 +421,12 @@ describe("loop governess history", () => {
 
     expect(printed.workflowType).toBe(GOVERNESS_BEAT_WORKFLOW_TYPE);
     // fix7: the repo-, run- and queue-qualified id, plus the legacy one.
-    expect(printed.taskQueue).toBe("loop-governess");
+    // fix8: the queue is the per-host default, `loop-governess-<host>`.
+    const hostQueue = governessHostTaskQueue();
+    expect(hostQueue).toMatch(/^loop-governess-[a-z0-9-]+$/);
+    expect(printed.taskQueue).toBe(hostQueue);
     expect(printed.workflowId).toBe(
-      `governess-beat:v2:${state.storage.repoId}:gov6-history-test:loop-governess`
+      `governess-beat:v2:${state.storage.repoId}:gov6-history-test:${hostQueue}`
     );
     expect(printed.legacyWorkflowId).toBe(
       governessBeatWorkflowId("gov6-history-test")
