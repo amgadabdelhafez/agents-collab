@@ -521,13 +521,26 @@ const callConnectTool = async (
     return error(MCP_INVALID_PARAMS, "workflow_ids must be 1-100 strings");
   }
   // The endpoint, and so the identity and the token, were fixed at start.
-  return text(
-    await acknowledgeA2AWorkflows(
-      options.state.endpoint,
-      [...new Set(ids as string[])],
-      options.fetchImpl
-    )
-  );
+  try {
+    return text(
+      await acknowledgeA2AWorkflows(
+        options.state.endpoint,
+        [...new Set(ids as string[])],
+        options.fetchImpl
+      )
+    );
+  } catch (failure) {
+    // A session that must enroll again: a tool error, never the server's end.
+    return result({
+      content: [
+        {
+          text: failure instanceof Error ? failure.message : "inbox_ack failed",
+          type: "text",
+        },
+      ],
+      isError: true,
+    });
+  }
 };
 
 /** Newline-delimited JSON-RPC frames from a byte stream. */

@@ -18,7 +18,11 @@ import { join } from "node:path";
 import { inspect } from "node:util";
 import { serve, sleep } from "bun";
 import {
+  type A2ABearerSource,
+  A2AClientEndpoint,
+  a2aIngressFetch,
   a2aMessageStatus,
+  acknowledgeA2AWorkflows,
   resolveA2AClientEndpoint,
 } from "../../src/loop/a2a-session-client";
 import { runA2ACommand } from "../../src/loop/a2a-session-command";
@@ -35,7 +39,11 @@ import {
   A2A_V2_MESSAGE_STATUS_SCHEMA,
   a2aV2MessageStatusPath,
 } from "../../src/loop/a2a-v2-routes-contract";
-import { parseConnectArgs } from "../../src/loop/connect-command";
+import {
+  handleConnectRequest,
+  parseConnectArgs,
+} from "../../src/loop/connect-command";
+import { InboxStreamClient } from "../../src/loop/inbox-stream-client";
 import {
   createTokenRoutes,
   loadTokenSigningKey,
@@ -46,6 +54,12 @@ import {
   writeOwnerOnlyFile,
   writeTokenSigningKey,
 } from "../../src/loop/orchestration-token-service";
+import { supervisorInboxEventFrame } from "../../src/loop/supervisor-inbox-stream";
+import {
+  deriveSupervisorMessageV2DeliveryId,
+  deriveSupervisorMessageV2WorkflowId,
+} from "../../src/loop/supervisor-message-v2-contract";
+import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 
 const ROUTE = "/a2a/v2";
 const PHONE = "supervisor:ra2-phone";
@@ -494,7 +508,13 @@ describe("ra2 refresh", () => {
     const abort = new AbortController();
     const ended: Error[] = [];
     h.source(late).keepFresh(abort.signal, (error) => ended.push(error));
-    for (let index = 0; index < 60 && h.server.counts.refresh === 0; index++) {
+    // The server counts a refresh on arrival; the credential is rewritten
+    // once its answer is back, so wait for that.
+    for (
+      let index = 0;
+      index < 60 && readA2ASessionCredential(h.path)?.token === first;
+      index++
+    ) {
       await sleep(50);
     }
     abort.abort();
@@ -518,5 +538,208 @@ describe("ra2 refresh", () => {
     expect(readA2ASessionCredential(path)?.supervisorId).toBe(PHONE);
     chmodSync(path, 0o640);
     expect(() => readA2ASessionCredential(path)).toThrow("0600");
+  });
+});
+
+describe("ra2 a token replaced mid-request", () => {
+  /** A session source whose token another process may replace. */
+  const rotating = () => {
+    const state = { current: "token-1" };
+    const source: A2ABearerSource = {
+      bearer: () => Promise.resolve(state.current),
+      superseded: (used) => Promise.resolve(used !== state.current),
+    };
+    const endpoint = new A2AClientEndpoint({
+      baseUrl: "http://127.0.0.1:1",
+      credential: source,
+      routePath: ROUTE,
+      supervisorId: PHONE,
+    });
+    return { endpoint, state };
+  };
+  const unauthenticated = () =>
+    Response.json({ error: { code: "unauthenticated" } }, { status: 401 });
+
+  test("the inbox stream retries a refused open with the replaced token; an unreplaced one is refused for good", async () => {
+    const fixture = supervisorMessageV2ReplayFixtures[0];
+    if (!fixture) {
+      throw new Error("missing V2 fixture");
+    }
+    const scope = fixture.expectedScope;
+    const workflowId = deriveSupervisorMessageV2WorkflowId(scope, "k", "q");
+    const deliveryId = deriveSupervisorMessageV2DeliveryId(
+      scope,
+      workflowId,
+      1
+    );
+    const frame = supervisorInboxEventFrame({
+      appendedAt: "2026-10-11T00:00:00.000Z",
+      envelope: {
+        artifactRefs: [],
+        body: "hello",
+        deliveryAttempt: 1,
+        deliveryId,
+        idempotencyKey: deliveryId,
+        messageId: "m-1",
+        principal: scope.principal,
+        schema: "supervisor-message-delivery.v2",
+        target: PHONE,
+        tenantId: scope.tenantId,
+        threadId: "t-1",
+        workflowId,
+      },
+      seq: 1,
+    });
+    const { endpoint, state } = rotating();
+    const authorizations: (null | string)[] = [];
+    const abort = new AbortController();
+    const delivered: number[] = [];
+    const client = new InboxStreamClient({
+      deliver: (event) => {
+        delivered.push(event.seq);
+        abort.abort();
+        return Promise.resolve(true);
+      },
+      endpoint,
+      fence: { epoch: 1, holderRef: "connect:h" },
+      fetchImpl: ((_input: RequestInfo | URL, init?: RequestInit) => {
+        authorizations.push(new Headers(init?.headers).get("authorization"));
+        if (authorizations.length === 1) {
+          // Refreshed elsewhere while this request was in flight.
+          state.current = "token-2";
+          return Promise.resolve(unauthenticated());
+        }
+        return Promise.resolve(
+          new Response(`retry: 1\n\n${frame}`, {
+            headers: { "content-type": "text/event-stream" },
+          })
+        );
+      }) as unknown as typeof fetch,
+      minBackoffMs: 1,
+      signal: abort.signal,
+    });
+    expect(await client.run()).toEqual({ reason: "aborted" });
+    expect(delivered).toEqual([1]);
+    expect(authorizations).toEqual(["Bearer token-1", "Bearer token-2"]);
+    // Refused with the current token: the identity is refused, no retry loop.
+    const refused = new InboxStreamClient({
+      deliver: () => Promise.resolve(true),
+      endpoint: rotating().endpoint,
+      fence: { epoch: 1, holderRef: "connect:h" },
+      fetchImpl: (() =>
+        Promise.resolve(unauthenticated())) as unknown as typeof fetch,
+      minBackoffMs: 1,
+      signal: new AbortController().signal,
+    });
+    expect(await refused.run()).toEqual({
+      detail: "HTTP 401",
+      reason: "refused",
+    });
+  });
+
+  test("an ingress send and an ACK are retried once with the replaced token, the same body re-sent", async () => {
+    const { endpoint, state } = rotating();
+    const seen: { authorization: null | string; body: string }[] = [];
+    const url = endpoint.url(`${ROUTE}/supervisors/ra2-desk`);
+    const ingress = a2aIngressFetch(endpoint, url, (async (
+      input: Parameters<typeof fetch>[0]
+    ) => {
+      const request = input as Request;
+      seen.push({
+        authorization: request.headers.get("authorization"),
+        body: await request.text(),
+      });
+      if (seen.length === 1) {
+        state.current = "token-2";
+        return unauthenticated();
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch);
+    const response = await ingress(url, {
+      body: '{"jsonrpc":"2.0"}',
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    expect(seen).toEqual([
+      { authorization: "Bearer token-1", body: '{"jsonrpc":"2.0"}' },
+      { authorization: "Bearer token-2", body: '{"jsonrpc":"2.0"}' },
+    ]);
+    // The ACK: claim then acknowledge; the acknowledge is refused once.
+    const ack = rotating();
+    const workflowId = `supervisor-message-workflow:v2:${"a".repeat(64)}`;
+    const calls: { authorization: null | string; operation: string }[] = [];
+    const result = await acknowledgeA2AWorkflows(ack.endpoint, [workflowId], ((
+      _input: Parameters<typeof fetch>[0],
+      init?: RequestInit
+    ) => {
+      const command = JSON.parse(String(init?.body)) as {
+        operation: string;
+      };
+      const authorization = new Headers(init?.headers).get("authorization");
+      calls.push({ authorization, operation: command.operation });
+      if (command.operation === "acknowledge" && calls.length === 2) {
+        ack.state.current = "token-2";
+        return Promise.resolve(unauthenticated());
+      }
+      return Promise.resolve(
+        Response.json({
+          phase: command.operation === "claim" ? "claimed" : "acknowledged",
+          schema: "supervisor-message-recipient-receipt.v2",
+          workflowId,
+          workResultCompleted: false,
+        })
+      );
+    }) as typeof fetch);
+    expect(result).toEqual({
+      acknowledged: [{ phase: "acknowledged", workflowId }],
+      refused: [],
+      workResultCompleted: false,
+    });
+    expect(calls.map((call) => call.authorization)).toEqual([
+      "Bearer token-1",
+      "Bearer token-1",
+      "Bearer token-2",
+      "Bearer token-2",
+    ]);
+  });
+
+  test("inbox_ack reports a session that must enroll again as a tool error; loop connect keeps serving", async () => {
+    const endpoint = new A2AClientEndpoint({
+      baseUrl: "http://127.0.0.1:1",
+      credential: {
+        bearer: () =>
+          Promise.reject(
+            new A2ASessionCredentialError(
+              "supervisor:ra2-phone's session token expired; enroll again with a new code"
+            )
+          ),
+        superseded: () => Promise.resolve(false),
+      },
+      routePath: ROUTE,
+      supervisorId: PHONE,
+    });
+    const response = await handleConnectRequest(
+      {
+        id: 7,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: {
+            workflow_ids: [`supervisor-message-workflow:v2:${"b".repeat(64)}`],
+          },
+          name: "inbox_ack",
+        },
+      },
+      {
+        channel: true,
+        state: {
+          cursor: () => 0,
+          endpoint,
+          fence: { epoch: 1, holderRef: "connect:h" },
+        },
+      }
+    );
+    expect(response).toMatchObject({ id: 7, result: { isError: true } });
+    expect(JSON.stringify(response)).toContain("enroll again");
   });
 });
