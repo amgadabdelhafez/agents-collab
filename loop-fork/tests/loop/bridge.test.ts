@@ -7807,3 +7807,55 @@ test("bridge drains pending oss tmux messages through stored pane routing", asyn
 
   rmSync(root, { recursive: true, force: true });
 });
+
+test("a2a session tools are served only by a standalone session's claude bridge", async () => {
+  const home = makeTempDir();
+  try {
+    const sessionDir = join(home, ".loop", "sessions", "alice", "desk-1");
+    const runDir = join(home, ".loop", "runs", "repo-1", "1");
+    mkdirSync(sessionDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    const env = {
+      ...process.env,
+      HOME: home,
+      LOOP_ORCHESTRATION_CONFIG: join(home, "absent-config.json"),
+    };
+    const frames = [
+      // listedTools reads the response with id 6.
+      encodeLine({ id: 6, jsonrpc: "2.0", method: "tools/list", params: {} }),
+      encodeLine({
+        id: 2,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { arguments: { message_id: "m1" }, name: "a2a_status" },
+      }),
+    ].join("");
+    const session = await runBridgeProcess(sessionDir, "claude", frames, env);
+    expect(session.code).toBe(0);
+    expect(
+      listedTools(session.stdout)
+        .map((tool) => tool.name)
+        .filter((name) => String(name).startsWith("a2a_"))
+    ).toEqual(["a2a_enroll", "a2a_release", "a2a_send", "a2a_status"]);
+    // The tool acts as supervisor:alice and finds no server: a fixed refusal.
+    expect(rpcErrorMessage(session.stdout, 2)).toContain(
+      "orchestration config is unavailable"
+    );
+    for (const [dir, source] of [
+      [runDir, "claude"],
+      [sessionDir, "codex"],
+    ] as const) {
+      const other = await runBridgeProcess(dir, source, frames, env);
+      expect(
+        listedTools(other.stdout).some((tool) =>
+          String(tool.name).startsWith("a2a_")
+        )
+      ).toBe(false);
+      expect(rpcErrorMessage(other.stdout, 2)).toBe(
+        "a2a_status is available only in a standalone session bridge"
+      );
+    }
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});

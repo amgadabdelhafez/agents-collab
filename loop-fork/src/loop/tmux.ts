@@ -11,6 +11,13 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
+import {
+  type A2AClaimResult,
+  type A2ALeaseReleaseOutcome,
+  claimRunA2AEndpoint,
+  describeA2ALeaseRelease,
+  releaseRecordedA2ALease,
+} from "./a2a-session-client";
 import { defaultPeerAgent } from "./agents";
 import {
   buildClaudeChannelServerConfig,
@@ -263,6 +270,12 @@ interface TmuxDeps {
   attach: (session: string, launchSocket?: TmuxSocket) => void;
   capturePane: (pane: string, styled?: boolean) => string;
   capturePaneSnapshot: (pane: string) => PaneSnapshot | undefined;
+  /** `--a2a-as`: claim the run as a supervisor's endpoint (ids only). */
+  claimRunA2AEndpoint: (input: {
+    manifestPath: string;
+    runDir: string;
+    supervisorId: string;
+  }) => Promise<A2AClaimResult>;
   // Version banner of the `claude` binary the pane will launch, e.g.
   // "2.1.223 (Claude Code)". Undefined when it cannot be observed, which keeps
   // the kickoff guard in its default-closed profile.
@@ -304,6 +317,8 @@ interface TmuxDeps {
     agentPaneIds: readonly string[]
   ) => void;
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
+  /** Release the A2A lease recorded in the run dir. Never throws. */
+  releaseRunA2ALease: (runDir: string) => Promise<A2ALeaseReleaseOutcome>;
   resolveLaunchSocket: () => TmuxSocket;
   runGit: (cwd: string, args: string[]) => GitResult;
   sendKeys: (pane: string, keys: string[]) => void;
@@ -324,6 +339,8 @@ interface TmuxDeps {
 }
 
 interface PairedTmuxLaunch {
+  /** `--a2a-as supervisor:x`: claim the run's A2A V2 endpoint once started. */
+  a2aAs?: string;
   opts: Options;
   task?: string;
 }
@@ -3674,6 +3691,50 @@ const submitVisibleClaudeKickoff = async (input: {
   return expectedComposerBody;
 };
 
+// A failed start serves no supervisor. The release never throws, so it never
+// masks the launch error; a failed one lapses by the lease TTL.
+const releaseFailedStartA2ALease = async (
+  deps: Pick<TmuxDeps, "log" | "releaseRunA2ALease">,
+  runDir: string
+): Promise<void> => {
+  try {
+    const line = describeA2ALeaseRelease(await deps.releaseRunA2ALease(runDir));
+    if (line) {
+      deps.log(line);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.log(
+      `[loop] A2A endpoint release after failed start failed: ${detail}`
+    );
+  }
+};
+
+// `--a2a-as`: the manifest now has its session ids, so the run can be claimed
+// as the supervisor's endpoint. A refused or failed claim never fails the
+// run: messages to that supervisor keep their mailbox route.
+const claimLaunchA2AEndpoint = async (
+  deps: Pick<TmuxDeps, "claimRunA2AEndpoint" | "log">,
+  supervisorId: string,
+  manifestPath: string
+): Promise<void> => {
+  try {
+    const claimed = await deps.claimRunA2AEndpoint({
+      manifestPath,
+      runDir: dirname(manifestPath),
+      supervisorId,
+    });
+    deps.log(
+      `[loop] serving ${supervisorId} as its A2A V2 endpoint (${claimed.receipt.kind}, epoch ${claimed.receipt.epoch})`
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.log(
+      `[loop] could not claim the A2A V2 endpoint of ${supervisorId}: ${detail}; the run continues and its messages keep the mailbox route.`
+    );
+  }
+};
+
 const createPairedPaneLayout = async (input: {
   claudeStartup: ClaudeStartupContext;
   deps: TmuxDeps;
@@ -4061,6 +4122,7 @@ const startPairedSession = async (
       }
       terminalizationResult = updated.state;
       await closeFailedStartBeat(updated);
+      await releaseFailedStartA2ALease(deps, storage.runDir);
       return terminalizationResult;
     } catch {
       // Preserve the original launch error; startup GC reads durable ownership.
@@ -5122,6 +5184,8 @@ const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
       return waitForCodexTmuxProxy(port);
     },
     stopCodexProxy: stopCodexTmuxProxy,
+    claimRunA2AEndpoint: (input) => claimRunA2AEndpoint(input),
+    releaseRunA2ALease: (runDir) => releaseRecordedA2ALease(runDir),
     closeGovernessBeat: closeGovernessBeatForTerminalRun,
     closePersistentCodexSession,
     releasePersistentCodexSession,
@@ -5322,6 +5386,13 @@ export const runInTmux = async (
     deps.log(
       `[loop] run manifest ${JSON.stringify(launchContext.manifestPath)}`
     );
+    if (launch?.a2aAs) {
+      await claimLaunchA2AEndpoint(
+        deps,
+        launch.a2aAs,
+        launchContext.manifestPath
+      );
+    }
   }
   const attachCommand = launchAttachCommand(launchContext.socket, session);
   deps.log(`[loop] attach with: ${attachCommand}`);

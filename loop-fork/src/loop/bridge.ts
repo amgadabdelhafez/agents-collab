@@ -1,5 +1,11 @@
 import { mkdirSync, watch } from "node:fs";
 import { basename } from "node:path";
+import {
+  A2A_SESSION_TOOL_NAMES,
+  A2A_SESSION_TOOLS,
+  a2aBridgeSession,
+  callA2ASessionTool,
+} from "./a2a-session-command";
 import { retiredBridgeTargetMessage } from "./agents";
 import { claudeChannelServerName } from "./bridge-config";
 import { BRIDGE_SERVER as BRIDGE_SERVER_VALUE } from "./bridge-constants";
@@ -449,6 +455,41 @@ const handlePublishHumanAskTool = (
   }
 };
 
+// Session mode only: a standalone Claude Code session's bridge acting as its
+// supervisor. The token stays in the protected environment; a refusal returns
+// the client's fixed, token-free message.
+const handleA2ASessionTool = async (
+  id: JsonRpcRequest["id"],
+  runDir: string,
+  source: BridgeMcpSource,
+  name: string,
+  args: Record<string, unknown>
+): Promise<void> => {
+  const session = a2aBridgeSession(runDir, source);
+  if (!session) {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      `${name} is available only in a standalone session bridge`
+    );
+    return;
+  }
+  try {
+    const result = await callA2ASessionTool(name, args, session);
+    writeJsonRpc({
+      id,
+      jsonrpc: "2.0",
+      result: toolContent(JSON.stringify(result, null, 2)),
+    });
+  } catch (error) {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      error instanceof Error ? error.message : `${name} failed`
+    );
+  }
+};
+
 const handleToolCall = async (
   id: JsonRpcRequest["id"],
   runDir: string,
@@ -458,6 +499,11 @@ const handleToolCall = async (
   const call = isRecord(params) ? (params as BridgeCallParams) : undefined;
   const name = call?.name;
   const args = isRecord(call?.arguments) ? call.arguments : {};
+
+  if (name && A2A_SESSION_TOOL_NAMES.has(name)) {
+    await handleA2ASessionTool(id, runDir, source, name, args);
+    return;
+  }
 
   if (name === "recipient_task") {
     try {
@@ -592,6 +638,7 @@ const handleBridgeRequest = async (
         result: {
           tools: [
             ...UTILITY_BRIDGE_TOOLS,
+            ...(a2aBridgeSession(runDir, source) ? A2A_SESSION_TOOLS : []),
             ...(source !== "supervisor" && isPublicAskRunActive(runDir)
               ? [
                   {

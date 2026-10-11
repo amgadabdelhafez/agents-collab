@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn } from "bun";
+import { serve, spawn } from "bun";
 import type { ImmediateInfoRequest } from "../src/loop/args";
 import { HELP, RECONCILE_USAGE, STOP_USAGE } from "../src/loop/constants";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
@@ -428,6 +428,59 @@ test("runCli delegates paired tmux after resolving the task", async () => {
     "prepare-world-model",
     "tmux-handoff",
   ]);
+});
+
+test("runCli takes --a2a-as out of the launch argv and hands it to the paired tmux launch", async () => {
+  const opts = { ...makeOptions(), tmux: true };
+  const { parseArgsMock, runCli, runInTmuxMock } = await loadRunCli({
+    parseArgs: () => opts,
+    runInTmux: () => true,
+    resolveTask: async () => "ship feature",
+  });
+
+  await runCli([
+    "--tmux",
+    "--a2a-as",
+    "supervisor:alice",
+    "--proof",
+    "verify with tests",
+  ]);
+
+  expect(parseArgsMock).toHaveBeenCalledWith([
+    "--tmux",
+    "--proof",
+    "verify with tests",
+  ]);
+  expect(runInTmuxMock).toHaveBeenCalledWith(
+    ["--tmux", "--proof", "verify with tests"],
+    undefined,
+    { a2aAs: "supervisor:alice", opts, task: "ship feature" }
+  );
+});
+
+test("runCli refuses --a2a-as on a launch that is not paired tmux, before any side effect", async () => {
+  const opts = makeOnlyOptions("claude", { sessionId: "run-123" });
+  const {
+    maybeEnterWorktreeMock,
+    resolveTaskMock,
+    runCli,
+    runInTmuxMock,
+    runLoopMock,
+  } = await loadRunCli({
+    parseArgs: () => opts,
+    resolveTask: async () => "ship feature",
+  });
+
+  await expect(
+    runCli(["--claude-only", "--a2a-as=supervisor:alice", "--proof", "verify"])
+  ).rejects.toThrow("--a2a-as needs a paired tmux launch");
+  await expect(
+    runCli(["--claude-only", "--a2a-as", "alice", "--proof", "verify"])
+  ).rejects.toThrow("Invalid --a2a-as");
+  expect(maybeEnterWorktreeMock).not.toHaveBeenCalled();
+  expect(resolveTaskMock).not.toHaveBeenCalled();
+  expect(runInTmuxMock).not.toHaveBeenCalled();
+  expect(runLoopMock).not.toHaveBeenCalled();
 });
 
 test("runCli rejects a duplicate workspace before task or agent side effects", async () => {
@@ -1476,6 +1529,135 @@ test("runCli reconciles one synthetic stopped run before startup maintenance", a
       process.env.HOME = undefined;
     } else {
       process.env.HOME = priorHome;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("runCli reconcile hands a reconciled run's A2A endpoint back with its recorded fence", async () => {
+  const prior = {
+    config: process.env.LOOP_ORCHESTRATION_CONFIG,
+    home: process.env.HOME,
+    token: process.env.T4_ALICE_TOKEN,
+  };
+  const home = mkdtempSync(join(tmpdir(), "loop-reconcile-a2a-"));
+  const requests: unknown[] = [];
+  const server = serve({
+    fetch: async (request) => {
+      const body = (await request.json()) as Record<string, unknown>;
+      requests.push({
+        authorization: request.headers.get("authorization"),
+        body,
+        path: new URL(request.url).pathname,
+      });
+      return Response.json({
+        changed: true,
+        descriptorRevision: 1,
+        epoch: body.epoch,
+        expiresAt: "2026-10-11T00:00:00.000Z",
+        holderRef: body.holderRef,
+        kind: "loop-run",
+        operation: "release",
+        releasedAt: "2026-10-10T12:00:00.000Z",
+        schema: "supervisor-endpoint-session-receipt.v2",
+        supervisorId: body.supervisorId,
+      });
+    },
+    hostname: "127.0.0.1",
+    port: 0,
+  });
+  process.env.HOME = home;
+  process.env.LOOP_ORCHESTRATION_CONFIG = join(home, "orchestration.json");
+  process.env.T4_ALICE_TOKEN = "reconcile-test-fixture-token";
+  try {
+    writeFileSync(
+      join(home, "orchestration.json"),
+      JSON.stringify({
+        a2aV2: { routePath: "/a2a/v2" },
+        hostname: "127.0.0.1",
+        port: server.port,
+        supervisors: [
+          {
+            principal: "principal:alice",
+            supervisorId: "supervisor:alice",
+            tokenEnv: "T4_ALICE_TOKEN",
+          },
+        ],
+      })
+    );
+    const storage = resolveRunStorage("23");
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        cwd: process.cwd(),
+        mode: "paired",
+        pid: 999_999,
+        repoId: storage.repoId,
+        runId: "23",
+        state: "stopped",
+        tmuxSession: "synthetic-loop-23",
+        tmuxSocket: join(home, "missing-tmux.sock"),
+        workspaceBinding: {
+          branchRef: "refs/heads/synthetic",
+          repoId: storage.repoId,
+          root: process.cwd(),
+        },
+      })
+    );
+    writeFileSync(
+      join(storage.runDir, "a2a-lease.json"),
+      JSON.stringify({
+        claimedAt: "2026-10-10T00:00:00.000Z",
+        epoch: 5,
+        expiresAt: "2026-10-11T00:00:00.000Z",
+        holderRef: `loop-run:${storage.repoId}:23:claude`,
+        kind: "loop-run",
+        locator: {
+          kind: "loop-run",
+          repoId: storage.repoId,
+          runId: "23",
+          seat: "claude",
+        },
+        releasedAt: null,
+        schema: "loop-a2a-lease-record.v1",
+        supervisorId: "supervisor:alice",
+      })
+    );
+    spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { runCli } = await loadRunCli({
+      closeGovernessBeatForTerminalRun: () => Promise.resolve(undefined),
+    });
+
+    await runCli(["reconcile", "stopped-run", "23"]);
+
+    expect(requests).toEqual([
+      {
+        authorization: "Bearer reconcile-test-fixture-token",
+        body: {
+          epoch: 5,
+          holderRef: `loop-run:${storage.repoId}:23:claude`,
+          schema: "supervisor-endpoint-session-release.v2",
+          supervisorId: "supervisor:alice",
+        },
+        path: "/a2a/v2/sessions/release",
+      },
+    ]);
+    expect(
+      JSON.parse(readFileSync(join(storage.runDir, "a2a-lease.json"), "utf8"))
+        .releasedAt
+    ).toBe("2026-10-10T12:00:00.000Z");
+  } finally {
+    server.stop(true);
+    for (const [key, value] of [
+      ["HOME", prior.home],
+      ["LOOP_ORCHESTRATION_CONFIG", prior.config],
+      ["T4_ALICE_TOKEN", prior.token],
+    ] as const) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
     rmSync(home, { force: true, recursive: true });
   }

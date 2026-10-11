@@ -99,6 +99,8 @@ export interface RunWorldModelBinding {
 }
 
 export interface RunManifest {
+  /** The supervisor this run serves as an A2A V2 endpoint (`--a2a-as`). */
+  a2aSupervisorId?: string;
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
   // Version banner of the `claude` binary observed at launch, recorded for
@@ -1898,11 +1900,25 @@ const optionalWorkspaceReleaseKind = (
     ? { workspaceReleaseKind: "abandoned-never-bound" }
     : {};
 
+// The supervisor a run serves (`--a2a-as`). The A2A V2 server requires it in
+// the manifest before it lets that supervisor claim the run's endpoint, so
+// every manifest rewrite must keep it; anything but a supervisor id is
+// dropped rather than carried.
+const A2A_SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/u;
+const optionalA2ASupervisorId = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "a2aSupervisorId"> | Record<string, never> =>
+  typeof parsed.a2aSupervisorId === "string" &&
+  A2A_SUPERVISOR_ID_RE.test(parsed.a2aSupervisorId)
+    ? { a2aSupervisorId: parsed.a2aSupervisorId }
+    : {};
+
 const readOptionalRunManifestFields = (
   parsed: Record<string, unknown>,
   manifestPath: string
 ): Partial<RunManifest> => {
   const claudeIdentity = {
+    ...optionalA2ASupervisorId(parsed),
     ...optionalManifestString(parsed, "claudeChannelServer", [
       "claudeChannelServer",
       "claude_channel_server",

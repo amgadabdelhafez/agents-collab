@@ -1,5 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "bun";
+import {
+  type A2ALeaseReleaseOutcome,
+  describeA2ALeaseRelease,
+  releaseRecordedA2ALease,
+} from "./a2a-session-client";
 import { STOP_USAGE } from "./constants";
 import {
   confirmTeardownRelease,
@@ -103,6 +108,8 @@ export interface RunStopDeps {
     runId: string,
     terminalState: "failed" | "stopped"
   ) => Promise<TeardownReleaseResult>;
+  /** Releases the A2A lease recorded in the run dir. Never throws. */
+  releaseA2ALease?: (runDir: string) => Promise<A2ALeaseReleaseOutcome>;
   resolveStorage: (runId: string) => RunStorage;
   terminateGroups: (
     runDir: string,
@@ -112,6 +119,8 @@ export interface RunStopDeps {
 }
 
 export interface RunStopReport {
+  /** Present when the run held an A2A lease record. */
+  a2aRelease?: A2ALeaseReleaseOutcome;
   ended: number[];
   /** Verified process groups ended after the kill. */
   groups: number;
@@ -166,6 +175,34 @@ const markStopped = (
     );
   }
   return updated ?? readRunManifest(storage.manifestPath);
+};
+
+/**
+ * The run no longer serves a supervisor: hand back an A2A endpoint it holds.
+ * Never throws and never decides the stop; a failed release lapses by the
+ * lease TTL. Recorded in the report only when the run held a lease.
+ */
+const releaseStoppedRunA2ALease = async (
+  runDir: string,
+  deps: RunStopDeps,
+  report: RunStopReport
+): Promise<void> => {
+  if (!deps.releaseA2ALease) {
+    return;
+  }
+  try {
+    const a2a = await deps.releaseA2ALease(runDir);
+    if (a2a.outcome === "none") {
+      return;
+    }
+    report.a2aRelease = a2a;
+    const line = describeA2ALeaseRelease(a2a);
+    if (line) {
+      deps.log(line);
+    }
+  } catch (error) {
+    deps.log(`[loop] stop: A2A endpoint release failed: ${describe(error)}`);
+  }
 };
 
 const releaseState = (state: string): "failed" | "stopped" | undefined => {
@@ -251,6 +288,7 @@ export const stopRun = async (
     report.releaseDetail = `the session kill was not confirmed (${kill.detail}); no group was ended and nothing was released`;
     return report;
   }
+  await releaseStoppedRunA2ALease(storage.runDir, deps, report);
   if (groups.length > 0) {
     await deps.terminateGroups(storage.runDir, storage.manifestPath, groups);
     report.groups = groups.length;
@@ -393,6 +431,7 @@ export const defaultRunStopDeps = (): RunStopDeps => ({
         }),
       terminalState,
     }),
+  releaseA2ALease: (runDir) => releaseRecordedA2ALease(runDir),
   resolveStorage: (runId) => resolveRunStorage(runId),
   terminateGroups: (runDir, manifestPath, groups) =>
     terminateTargets(groups, {

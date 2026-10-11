@@ -1256,6 +1256,56 @@ test("runPairedLoop closes the beat workflow only after finishRun makes the run 
   }
 });
 
+test("runPairedLoop hands its A2A endpoint back only after finishRun makes the run terminal", async () => {
+  const module = await loadPairedLoop();
+  const seen: string[] = [];
+  module.pairedLoopInternals.setDeps({
+    closeGovernessBeat: () => {
+      seen.push("close-beat");
+      return Promise.resolve(undefined);
+    },
+    releaseRunA2ALease: (runDir) => {
+      seen.push(
+        `a2a-release:${readRunManifest(join(runDir, "manifest.json"))?.state ?? "missing"}`
+      );
+      return Promise.resolve({ outcome: "none" });
+    },
+  });
+  try {
+    await withTempHome("a2a-release-live", async () => {
+      await module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ agent: "codex" })
+      );
+    });
+    expect(seen).toEqual(["close-beat", "a2a-release:stopped"]);
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});
+
+test("runPairedLoop still completes when the A2A endpoint release throws", async () => {
+  const module = await loadPairedLoop();
+  completeOnFirstIteration();
+  module.pairedLoopInternals.setDeps({
+    closeGovernessBeat: () => Promise.resolve(undefined),
+    releaseRunA2ALease: () => Promise.reject(new Error("server down")),
+  });
+  try {
+    await withTempHome("a2a-release-throws", async (runDir) => {
+      await module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ agent: "codex" })
+      );
+      expect(readRunManifest(join(runDir, "manifest.json"))?.state).toBe(
+        "completed"
+      );
+    });
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});
+
 test("runPairedLoop still completes when the governess-beat close throws", async () => {
   const module = await loadPairedLoop();
   completeOnFirstIteration();

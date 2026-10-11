@@ -2,6 +2,15 @@
 import { spawn as spawnChild } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import {
+  describeA2ALeaseRelease,
+  releaseRecordedA2ALease,
+} from "./loop/a2a-session-client";
+import {
+  A2A_COMMAND,
+  extractA2AAsFlag,
+  runA2ACommand,
+} from "./loop/a2a-session-command";
 import { isAgent } from "./loop/agents";
 import { findImmediateInfoRequest } from "./loop/args";
 import { runBridgeMcpServer } from "./loop/bridge";
@@ -42,7 +51,10 @@ import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
 } from "./loop/legacy-governess-compat";
-import { MAILBOX_COMMAND, runMailboxCommand } from "./loop/mailbox-command";
+import {
+  MAILBOX_COMMAND,
+  runMailboxCommandWithV2Ack,
+} from "./loop/mailbox-command";
 import { runMailboxSweep } from "./loop/mailbox-sweep";
 import {
   MEMORY_PROMOTE_SUBCOMMAND,
@@ -427,21 +439,47 @@ const runStoppedRunReconcileCommand = async (
       );
     }
   }
+  // A reconciled run serves no supervisor: hand its A2A endpoint back. Never
+  // throws; a failed release lapses by the lease TTL.
+  const a2aRelease = describeA2ALeaseRelease(
+    await releaseRecordedA2ALease(storage.runDir)
+  );
+  if (a2aRelease) {
+    console.error(a2aRelease);
+  }
   return true;
 };
 
-const runMailboxCliCommand = (argv: string[]): boolean => {
+const runMailboxCliCommand = async (argv: string[]): Promise<boolean> => {
   if (argv[0] !== MAILBOX_COMMAND) {
     return false;
   }
   const result =
-    argv[1] === "sweep" ? runMailboxSweep(argv) : runMailboxCommand(argv);
+    argv[1] === "sweep"
+      ? runMailboxSweep(argv)
+      : await runMailboxCommandWithV2Ack(argv);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  const held = "heldKeys" in result ? result.heldKeys : undefined;
+  if (held && held.length > 0) {
+    throw new Error(
+      `the recipient route did not acknowledge ${held.length} V2 message(s); they stay unread: ${held.join(", ")}`
+    );
+  }
+  return true;
+};
+
+const runA2ACliCommand = async (argv: string[]): Promise<boolean> => {
+  if (argv[0] !== A2A_COMMAND) {
+    return false;
+  }
+  const result = await runA2ACommand(argv);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   return true;
 };
 
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
-  runMailboxCliCommand(argv) ||
+  (await runMailboxCliCommand(argv)) ||
+  (await runA2ACliCommand(argv)) ||
   (await runOrchestrationCommand(argv)) ||
   (await runStoppedRunReconcileCommand(argv)) ||
   (await runStopCommand(argv)) ||
@@ -453,6 +491,8 @@ const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   (await runHiddenSubcommand(argv));
 
 interface PreparedCliLaunch {
+  /** `--a2a-as supervisor:x`: claim the run's A2A V2 endpoint once started. */
+  a2aAs?: string;
   awaitAutoUpdate: boolean;
   launchClaim?: PairedLaunchClaim;
   opts: Options;
@@ -473,9 +513,15 @@ const enterExplicitWorkspace = (opts: Options, invocationCwd: string): void => {
 
 const prepareCliLaunch = async (
   normalizedArgv: string[],
-  invocationCwd: string
+  invocationCwd: string,
+  a2aAs?: string
 ): Promise<PreparedCliLaunch> => {
   const opts = cliDeps.parseArgs(normalizedArgv);
+  if (a2aAs && !(opts.tmux && opts.pairedMode)) {
+    throw new Error(
+      "[loop] --a2a-as needs a paired tmux launch: only a run with its own session ids can serve a supervisor."
+    );
+  }
   preserveRelativePromptPath(opts, invocationCwd);
   enterExplicitWorkspace(opts, invocationCwd);
   const awaitAutoUpdate = shouldAwaitAutoUpdate(opts);
@@ -508,6 +554,7 @@ const prepareCliLaunch = async (
       }
     }
     return {
+      ...(a2aAs ? { a2aAs } : {}),
       awaitAutoUpdate,
       ...(launchClaim ? { launchClaim } : {}),
       opts,
@@ -521,11 +568,14 @@ const prepareCliLaunch = async (
   }
 };
 
+const a2aLaunchField = (a2aAs?: string): { a2aAs?: string } =>
+  a2aAs ? { a2aAs } : {};
+
 const executePreparedLaunch = async (
   normalizedArgv: string[],
   prepared: PreparedCliLaunch
 ): Promise<boolean> => {
-  const { awaitAutoUpdate, launchClaim, opts } = prepared;
+  const { a2aAs, awaitAutoUpdate, launchClaim, opts } = prepared;
   if (awaitAutoUpdate) {
     await updateDeps.awaitAutoUpdateCheck();
   }
@@ -536,7 +586,12 @@ const executePreparedLaunch = async (
     if (launchClaim.reserved) {
       await cliDeps.prepareRunWorldModel(launchClaim);
     }
-    if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts })) {
+    if (
+      await cliDeps.runInTmux(normalizedArgv, undefined, {
+        ...a2aLaunchField(a2aAs),
+        opts,
+      })
+    ) {
       return true;
     }
     throw new Error(INTERACTIVE_TMUX_ERROR);
@@ -549,7 +604,13 @@ const executePreparedLaunch = async (
     }
   }
   if (opts.tmux && opts.pairedMode) {
-    if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts, task })) {
+    if (
+      await cliDeps.runInTmux(normalizedArgv, undefined, {
+        ...a2aLaunchField(a2aAs),
+        opts,
+        task,
+      })
+    ) {
       return true;
     }
     throw new Error(PAIRED_TMUX_HANDOFF_ERROR);
@@ -568,7 +629,9 @@ export const runCli = async (argv: string[]): Promise<void> => {
   let launchHandedOff = false;
   try {
     const invocationCwd = process.cwd();
-    const normalizedArgv = argv.length === 0 ? DEFAULT_TMUX_ARGV : argv;
+    const a2aFlag = extractA2AAsFlag(argv);
+    const normalizedArgv =
+      a2aFlag.argv.length === 0 ? DEFAULT_TMUX_ARGV : a2aFlag.argv;
     // Launching a task does not grant fleet maintenance authority. Explicit
     // maintenance opt-in retains the existing guarded cleanup implementations.
     if (process.env.LOOP_STARTUP_MAINTENANCE === "1") {
@@ -590,7 +653,11 @@ export const runCli = async (argv: string[]): Promise<void> => {
       await cliDeps.runPanel();
       return;
     }
-    const prepared = await prepareCliLaunch(normalizedArgv, invocationCwd);
+    const prepared = await prepareCliLaunch(
+      normalizedArgv,
+      invocationCwd,
+      a2aFlag.supervisorId
+    );
     launchClaim = prepared.launchClaim;
     if (prepared.outerTmuxHandedOff) {
       shouldCloseAgents = false;
