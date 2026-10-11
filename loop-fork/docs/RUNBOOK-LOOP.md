@@ -158,6 +158,122 @@ Rollback:
   loop-a2a-ledger-data`) deletes the ledger's rows and needs explicit owner
   authority.
 
+Limits:
+
+- Docker keeps `POSTGRES_PASSWORD` in the container's configuration
+  (`docker inspect` shows it to anyone who can reach the Docker daemon). Init
+  never puts it in argv or a log; the daemon's own record is outside its
+  control.
+- The V2 dispatch owner and recipient authority reference carry the config
+  identity through `a2aV2IdentityToken` (fix8): characters outside
+  `[A-Za-z0-9._:-]` become `-`, so the live `loop-orchestration@sweetmac14`
+  enters them as `loop-orchestration-sweetmac14`. Before fix8 an identity
+  with `@` failed every V2 start at `governance-store` ("dispatch owner is
+  invalid"); found by the fix8 e2e.
+
+### Enabling fix8 on the live host (owner; nothing here was run)
+
+Production mutation: the owner runs these. `<bin>` is the fix8 build
+installed side by side, for example
+`install -m 0755 <scratch>/r8-build/loop ~/.local/bin/loop-fix8` (check its
+sha256 against the build record first; the old `loop-ed33f43f` and
+`~/.local/bin/loop` stay as they are).
+
+1. Inventory first (read-only): `pgrep -fl 'orchestration serve'`, then
+   `ps -o args= -p <pid>` for its exact command, and note how it is
+   supervised (tmux, launchd) and where its `LOOP_ORCH_TOKEN_*` come from.
+   `curl -s http://127.0.0.1:7321/healthz`.
+2. Init: `<bin> orchestration a2a-v2 init ~/.loop/orchestration/config.json`.
+   With the five mailbox-only supervisors it creates `loop-a2a-ledger`
+   (127.0.0.1:55432) and `~/.loop/orchestration/a2a-v2.env` (0600), changes
+   no config and exits 1 naming them. To turn V2 on, bind the recipient's
+   Loop run: add `--manifest supervisor:<id>=/Users/amgad/.loop/runs/<repoId>/<runId>/manifest.json`
+   (absolute, canonical; `--recipient supervisor:<id>` to choose). Init then
+   backs up `config.json.bak-<UTC stamp>` and replaces the config atomically.
+   Remember the service then refuses to start while that run is not active.
+3. Restart: stop the old process (SIGTERM; it shuts down cleanly), start
+   `<bin> orchestration serve ~/.loop/orchestration/config.json` under the
+   same supervisor with the same `LOOP_ORCH_TOKEN_*` environment. The
+   database URL and result graph key come from the env file.
+4. Verify: `curl -s http://127.0.0.1:7321/healthz` shows `"state":"ready"`
+   and `"a2aV2"`: `off` (no section yet), `ready`, or `disabled` (ledger
+   down: `docker start loop-a2a-ledger`, then restart). The service log has
+   exactly one `A2A V2 ...` line when it is off or disabled.
+5. Roll back: stop `<bin>`, `cp -p ~/.loop/orchestration/config.json.bak-<stamp> ~/.loop/orchestration/config.json`
+   if init wrote a section, and start the previous command recorded in step
+   1 (`loop-ed33f43f orchestration serve <config>`). The ledger container can
+   stay; nothing reads it without the section.
+6. Journal: the default applies to runs launched by a fix8 launcher (the
+   binary `loop` resolves to). Each such paired run journals to
+   192.168.1.18:7233, namespace `harness`, queue `loop-governess-sweetmac14`,
+   one `governess-beat:v2:<repoId>:<runId>:loop-governess-sweetmac14`
+   execution per run, terminated at teardown. Legacy executions on
+   `loop-governess` are left alone (`refused-foreign` at close). If the
+   server is unreachable the run logs `journal-temporal-fallback` and keeps
+   the file journal. Opt out: `export LOOP_GOVERNESS_TEMPORAL=off`. Inventory
+   before and after: `bun run scripts/governess-beat-list.ts --address 192.168.1.18:7233 --namespace harness --all`.
+
+### fix8 end-to-end proof (2026-10-11)
+
+Built binary `loop` from `claude/fix8-defaults-on` (no install), a local
+Temporal dev server (`temporal server start-dev --namespace harness`, the
+SDK's cached CLI 1.9.1 / server 1.32.0) on 127.0.0.1:47233, Docker on colima.
+All state under the session scratchpad (`r8-e2e/`); nothing under `~/.loop`,
+`~/.local/bin`, `~/.config/loop` or `~/.codex`, no live tmux, no live
+Temporal. Everything started was stopped and removed afterwards (ledger
+container and volume, Temporal dev server, private tmux server).
+
+1. Config in the live shape (three mailbox-only supervisors, no `a2aV2`).
+   `a2a-v2 init` created container `loop-a2a-ledger-r8e2e` (label 1,
+   `unless-stopped`, volume `loop-a2a-ledger-r8e2e-data`, published
+   `127.0.0.1:55499` only), wrote the 0600 env file, exited 1 with "a2aV2 not
+   written ... mailbox-only: supervisor:alpha, supervisor:beta,
+   supervisor:dummy", config byte-identical.
+2. `init --manifest supervisor:dummy=<run 1 manifest>`: ledger reused,
+   backup `config.json.bak-20261011T000455Z` byte-identical to the original,
+   section written (`workflowIdFormat` `legacy`, recipient
+   `supervisor:dummy`). A third init: "a2aV2 already configured ...; config
+   unchanged", no new backup.
+3. `orchestration serve`: the first start failed at `governance-store` (the
+   identity defect above); after the fix `/healthz` was
+   `{"a2aV2":"ready","notEnrolledCount":0,...,"state":"ready"}`, the ledger
+   held the enrolled descriptor (`supervisor:dummy|principal:dummy|tenant:loop-orchestration-r8e2e|1`)
+   and recorded `workflow-id-format.v1` `legacy`.
+4. A message `supervisor:alpha` to `supervisor:beta` through
+   `POST /api/v1/supervisor-messages/receive`: delivered to beta's mailbox
+   (`deliveredAt` set), read with `loop mailbox receive`, acknowledged with
+   `loop mailbox ack`, and the service's thread board showed the workflow
+   `acknowledged`. It used the V1 message route: a V2 delivery needs a live
+   provider session (Codex app-server or Claude channel), which stub agents
+   do not provide.
+5. Ledger stopped, service restarted: one line "A2A V2 disabled: the ledger
+   database named by LOOP_A2A_V2_DATABASE_URL is unreachable; V1 continues",
+   `/healthz` `a2aV2` `disabled`, `state` `ready`, V1 GET 200.
+6. The real Governess (`runGoverness` with its default deps) for the dummy
+   project's runs, on a private tmux server with stub Claude and Codex panes,
+   with no `LOOP_GOVERNESS_TEMPORAL_*` set: `journal-temporal-recovered`
+   `governess-beat:v2:dummy-repo-98477ff0862a:<run>:loop-governess-sweetmac14`,
+   the execution RUNNING on queue `loop-governess-sweetmac14` (owner memo
+   v2/repo/run/queue), then keys `x`, `e`: `journal-temporal-closed`
+   `terminated`, session killed, `workspace-released`, manifest `stopped`
+   with `workspaceReleasedAt`. Unreachable server (config address
+   127.0.0.1:1): one `journal-temporal-fallback` line after the 3 s
+   preflight, the run journals to the file and still tears down and releases.
+   `LOOP_GOVERNESS_TEMPORAL=off`: one `journal-temporal-off` line, no
+   execution.
+7. No secret in any evidence file, process argv or container argv.
+
+Not proven end to end: the paired tmux launcher itself (`loop` in the dummy
+repo). The session's worktree-isolation guard refuses any command that sets
+`HOME`, and a launch without a scratch `HOME` would write to the live
+`~/.loop/runs`. The Governess and its teardown were run directly against run
+manifests written as the launcher writes them. To finish that step on the
+owner's machine, from the dummy repo (a short `TMUX_TMPDIR`: socket paths
+are limited to 104 bytes):
+`env HOME=<scratch>/home TMUX_TMPDIR=/tmp/r8t LOOP_ORCHESTRATION_CONFIG=<scratch config> PATH=<fix8 build dir>:<stub dir>:/usr/bin:/bin loop`,
+then `tmux send-keys -t <governess pane> x` and `e` under the same
+`TMUX_TMPDIR`, and check the run's `governess.jsonl` as in step 6.
+
 ## Governess beat (gov-6)
 
 The governess beat runs as a Temporal workflow. Its history is the authoritative,
