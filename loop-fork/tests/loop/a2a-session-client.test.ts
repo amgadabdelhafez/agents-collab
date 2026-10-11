@@ -58,6 +58,7 @@ import {
   runMailboxCommandWithV2Ack,
 } from "../../src/loop/mailbox-command";
 import {
+  IN_REPLY_TO_METADATA_KEY,
   OWNER_NOTIFICATION_PATH,
   OWNER_REPLY_ONLY,
   ownerReplyOnlyResponse,
@@ -762,6 +763,47 @@ test("RA2: an owner-reply-only refusal reaches the sender with the attention-os 
   );
   expect(mismatch.code).toBe("unavailable");
   expect(h.server.seen).toEqual([]);
+});
+
+test("RA2: a reply names its owner message in harness.dev/inReplyTo; a bad id sends nothing", async () => {
+  const h = harness();
+  const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
+  const bodies: unknown[] = [];
+  const capturing = Object.assign(
+    async (
+      resource: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
+      bodies.push(await new Request(resource, init).json());
+      return ownerReplyOnlyResponse();
+    },
+    { preconnect: fetch.preconnect }
+  );
+  const send = (inReplyTo?: string) =>
+    sendA2AMessage(
+      endpoint,
+      {
+        body: "done",
+        ...(inReplyTo === undefined ? {} : { inReplyTo }),
+        messageId: "m-reply",
+        to: BOB,
+      },
+      capturing
+    ).catch((error: unknown) => error);
+  await send("owner-m-1");
+  await send();
+  const metadataOf = (body: unknown) =>
+    (body as { params: { message: { metadata: Record<string, unknown> } } })
+      .params.message.metadata;
+  expect(metadataOf(bodies[0])).toEqual({
+    [FROM_METADATA_KEY]: ALICE,
+    [IN_REPLY_TO_METADATA_KEY]: "owner-m-1",
+  });
+  expect(metadataOf(bodies[1])).toEqual({ [FROM_METADATA_KEY]: ALICE });
+  for (const bad of ["", "../x", "a b"]) {
+    expect(String(await send(bad))).toContain("in-reply-to");
+  }
+  expect(bodies.length).toBe(2);
 });
 
 test("send goes through the SDK client to the recipient's own ingress as the authenticated sender", async () => {
@@ -1828,7 +1870,7 @@ test("each MCP session tool's input schema has exactly its pinned property keys"
     a2a_release: { additionalProperties: false, properties: [], required: [] },
     a2a_send: {
       additionalProperties: false,
-      properties: ["context_id", "message", "message_id", "to"],
+      properties: ["context_id", "in_reply_to", "message", "message_id", "to"],
       required: ["message", "to"],
     },
     a2a_status: {

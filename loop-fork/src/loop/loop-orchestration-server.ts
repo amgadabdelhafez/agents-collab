@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Connection, WorkflowClient } from "@temporalio/client";
@@ -55,10 +56,15 @@ import {
   serverOriginFor,
 } from "./orchestration-origin-policy";
 import {
+  OWNER_REPLY_DEFAULT_MAX_REPLIES,
+  OWNER_REPLY_DEFAULT_WINDOW_MS,
+  OWNER_REPLY_LEDGER_FILE,
   OWNER_REPLY_ONLY,
-  OwnerContextRegistry,
-  type OwnerThreadIndex,
-  ownerThreadsFromBoard,
+  type OwnerMessageAccepted,
+  type OwnerReplyAuthority,
+  OwnerReplyLedger,
+  type OwnerReplyPlane,
+  type OwnerReplyPolicy,
 } from "./orchestration-owner-messaging";
 import {
   createTokenRoutes,
@@ -343,11 +349,23 @@ interface ServerConfig {
    * listener's own `http://<hostname>:<port>`.
    */
   origin?: string;
+  /**
+   * RA2: how many replies each owner message allows a supervisor, and for
+   * how long after the server accepted it. Absent: one reply within 24 h.
+   */
+  ownerReplies?: OwnerReplyPolicy;
   port: number;
   stateDir: string;
   supervisors: SupervisorConfig[];
   taskQueue: string;
   tokens?: TokensConfig;
+  /**
+   * RA2: the peer addresses of the reverse proxy (Caddy) in front of this
+   * server. Only with an https `origin`: a request from one of them is keyed
+   * for the enroll limit by the right-most X-Forwarded-For hop that is not a
+   * trusted proxy. Forwarding headers from any other peer are ignored.
+   */
+  trustedProxies?: string[];
   // Absent means no waking at all: the service behaves exactly as before.
   wake?: WakeConfig;
 }
@@ -548,6 +566,14 @@ export interface LoopOrchestrationFetchHandlerOptions {
    */
   a2aV2State?: () => A2AV2PlaneStatus;
   authenticator: SupervisorControlSurfaceAuthenticator;
+  /**
+   * RA2: the enroll limit's key for a request and its socket peer address
+   * (`enrollmentSource` with the server's config). Absent: the peer address.
+   */
+  enrollSource?: (
+    request: Request,
+    peerAddress: string | undefined
+  ) => string | undefined;
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
   /**
    * RA2: the human routes, when the config has a `humanAuth` section.
@@ -576,7 +602,7 @@ export interface LoopOrchestrationFetchHandlerOptions {
   /**
    * RA1: the session token routes (`/api/v1/tokens/...`), when the config
    * has a `tokens` section; see `createTokenRoutes`. RA2: `source` is the
-   * request's peer address, the key of the enroll rate limit.
+   * enroll rate limit's key (`enrollSource`).
    */
   tokenRoutes?: (
     request: Request,
@@ -728,7 +754,10 @@ export const createLoopOrchestrationFetchHandler = (
     options.tokenRoutes?.(
       request,
       url.pathname,
-      peer?.requestIP(request)?.address
+      (options.enrollSource ?? ((_, address) => address))(
+        request,
+        peer?.requestIP(request)?.address
+      )
     );
   return async (
     request: Request,
@@ -1293,7 +1322,9 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
     "deadlines",
     "humanAuth",
     "origin",
+    "ownerReplies",
     "tokens",
+    "trustedProxies",
     "wake",
   ]);
   const topLevel = Object.keys(value).filter((key) => !optional.has(key));
@@ -1396,12 +1427,112 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
     ...(humanAuth ? { humanAuth } : {}),
     identity: required(value.identity, NAME_RE, "identity"),
     namespace: required(value.namespace, NAME_RE, "namespace"),
+    ...parseOwnerReplies(value.ownerReplies),
     port: Number(port),
     stateDir: required(value.stateDir, ABSOLUTE_PATH_RE, "stateDir"),
     supervisors,
     taskQueue: required(value.taskQueue, NAME_RE, "taskQueue"),
     ...(wakeConfig ? { wake: wakeConfig } : {}),
   };
+};
+
+const OWNER_REPLY_MAX_REPLIES_LIMIT = 20;
+const OWNER_REPLY_MIN_WINDOW_MS = 60_000;
+const OWNER_REPLY_MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * RA2: `ownerReplies` {maxReplies?, windowMs?}: replies per owner message
+ * (1..20, default 1) within a window after the server accepted it (1 min to
+ * 30 days, default 24 h).
+ */
+const parseOwnerReplies = (
+  value: unknown
+): Pick<ServerConfig, "ownerReplies"> => {
+  if (value === undefined) {
+    return {};
+  }
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => key !== "maxReplies" && key !== "windowMs")
+  ) {
+    throw new Error("orchestration ownerReplies is invalid");
+  }
+  const maxReplies = value.maxReplies ?? OWNER_REPLY_DEFAULT_MAX_REPLIES;
+  const windowMs = value.windowMs ?? OWNER_REPLY_DEFAULT_WINDOW_MS;
+  if (
+    !(
+      Number.isSafeInteger(maxReplies) &&
+      Number(maxReplies) >= 1 &&
+      Number(maxReplies) <= OWNER_REPLY_MAX_REPLIES_LIMIT
+    )
+  ) {
+    throw new Error("orchestration ownerReplies maxReplies is invalid");
+  }
+  if (
+    !(
+      Number.isSafeInteger(windowMs) &&
+      Number(windowMs) >= OWNER_REPLY_MIN_WINDOW_MS &&
+      Number(windowMs) <= OWNER_REPLY_MAX_WINDOW_MS
+    )
+  ) {
+    throw new Error("orchestration ownerReplies windowMs is invalid");
+  }
+  return {
+    ownerReplies: {
+      maxReplies: Number(maxReplies),
+      windowMs: Number(windowMs),
+    },
+  };
+};
+
+const TRUSTED_PROXIES_MAX = 16;
+
+/**
+ * An IP literal in the form addresses are compared in (an IPv4-mapped IPv6
+ * address unwrapped, IPv6 lowercased), or undefined when it is not one.
+ */
+export const normalizePeerAddress = (value: string): string | undefined => {
+  const lowered = value.trim().toLowerCase();
+  const unmapped = lowered.startsWith("::ffff:")
+    ? lowered.slice("::ffff:".length)
+    : lowered;
+  if (isIP(unmapped) === 4) {
+    return unmapped;
+  }
+  return isIP(lowered) === 6 ? lowered : undefined;
+};
+
+/**
+ * RA2: `trustedProxies`, the reverse proxy's peer addresses (IP literals).
+ * Only with an https origin: that is the origin a proxy serves, and
+ * forwarding headers mean nothing without one.
+ */
+const parseTrustedProxies = (
+  value: unknown,
+  origin: string | undefined
+): Pick<ServerConfig, "trustedProxies"> => {
+  if (value === undefined) {
+    return {};
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > TRUSTED_PROXIES_MAX
+  ) {
+    throw new Error("orchestration trustedProxies is invalid");
+  }
+  const addresses = value.map((entry) => {
+    const address =
+      typeof entry === "string" ? normalizePeerAddress(entry) : undefined;
+    if (!address) {
+      throw new Error("orchestration trustedProxies entry is invalid");
+    }
+    return address;
+  });
+  if (!origin?.startsWith("https:")) {
+    throw new Error("orchestration trustedProxies requires an https origin");
+  }
+  return { trustedProxies: [...new Set(addresses)] };
 };
 
 /**
@@ -1411,13 +1542,14 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
  */
 const parseExposure = (
   value: Record<string, unknown>
-): Pick<ServerConfig, "hostname" | "origin" | "tokens"> => {
+): Pick<ServerConfig, "hostname" | "origin" | "tokens" | "trustedProxies"> => {
   const origin =
     value.origin === undefined
       ? undefined
       : parseServerOrigin(value.origin, "orchestration origin");
   const tokens = parseTokens(value.tokens);
   return {
+    ...parseTrustedProxies(value.trustedProxies, origin),
     hostname: assertListenPolicy({
       hostname: value.hostname,
       ...(origin ? { origin } : {}),
@@ -1532,6 +1664,59 @@ const assertRoleBindings = (supervisors: readonly SupervisorConfig[]): void => {
   }
 };
 
+/** The headers a reverse proxy adds to what it forwards. */
+const FORWARDING_HEADERS = [
+  "forwarded",
+  "via",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-real-ip",
+] as const;
+
+/**
+ * RA2: whether a request came through a proxy (any forwarding header). A
+ * local client on the loopback listener sends none; Caddy always adds
+ * X-Forwarded-For.
+ */
+export const forwardedRequest = (request: Request): boolean =>
+  FORWARDING_HEADERS.some((name) => request.headers.has(name));
+
+/**
+ * RA2: the key the enroll limit counts a request under. The socket peer,
+ * except when the peer is a configured trusted proxy and an https origin is
+ * configured: then the right-most X-Forwarded-For hop that is not itself a
+ * trusted proxy (the client the proxy saw). Forwarding headers from any
+ * other peer are never read. A trusted proxy that forwards no usable hop is
+ * keyed as itself.
+ */
+export const enrollmentSource = (
+  config: Pick<ServerConfig, "origin" | "trustedProxies">,
+  request: Request,
+  peerAddress: string | undefined
+): string | undefined => {
+  const peer =
+    peerAddress === undefined ? undefined : normalizePeerAddress(peerAddress);
+  if (peer === undefined) {
+    return peerAddress;
+  }
+  const trusted = config.trustedProxies ?? [];
+  if (!(config.origin?.startsWith("https:") && trusted.includes(peer))) {
+    return peer;
+  }
+  const hops = (request.headers.get("x-forwarded-for") ?? "").split(",");
+  for (let index = hops.length - 1; index >= 0; index -= 1) {
+    const hop = normalizePeerAddress(hops[index] ?? "");
+    if (hop === undefined) {
+      return peer;
+    }
+    if (!trusted.includes(hop)) {
+      return hop;
+    }
+  }
+  return peer;
+};
+
 /** RA2: static `tokenEnv` tokens work on a loopback listener only. */
 export const staticTokensAccepted = (
   config: Pick<ServerConfig, "hostname">
@@ -1553,7 +1738,9 @@ const equalToken = (left: string, right: string): boolean => {
  * that address's configured principal, so every downstream sender and
  * principal check binds to the token subject.
  *
- * RA2: a static token is accepted only on a loopback listener. A server
+ * RA2: a static token is accepted only on a loopback listener, and never on
+ * a request that carries forwarding headers (it came through a proxy, such
+ * as Caddy fronting the loopback listener, so from the network). A server
  * listening beyond loopback accepts session tokens alone.
  */
 export const orchestrationAuthenticator = (
@@ -1567,7 +1754,8 @@ export const orchestrationAuthenticator = (
       return undefined;
     }
     const token = authorization.slice("Bearer ".length);
-    const staticTokens = staticTokensAccepted(config);
+    const staticTokens =
+      staticTokensAccepted(config) && !forwardedRequest(request);
     for (const supervisor of staticTokens ? config.supervisors : []) {
       const expected = env[supervisor.tokenEnv];
       if (expected && equalToken(token, expected)) {
@@ -1597,9 +1785,18 @@ const authenticator = orchestrationAuthenticator;
 interface GrantRequest {
   claimant?: null | string;
   from: string;
+  /** RA2: the owner message a reply to the owner answers (its message id). */
+  inReplyTo?: string;
   operation: SupervisorMessageGovernedOperation;
   principal: string;
-  /** The message's thread (V1) or A2A context id; RA2 owner replies. */
+  /** RA2: the reply's own durable identity; see `OwnerReplyQuery.replyKey`. */
+  replyKey?: string;
+  /**
+   * RA2: the plane `replyKey` names a message on (V1 dedupe key or A2A
+   * message id). A reply to the owner without one is refused.
+   */
+  replyPlane?: OwnerReplyPlane;
+  /** The message's thread (V1) or A2A context id. */
   threadId?: string;
   to: string;
 }
@@ -1631,23 +1828,53 @@ const decided = (allowed: boolean): OrchestrationGrantDecision =>
   allowed ? ALLOW : DENY;
 
 /**
+ * RA2: the owner-reply question a receive to the owner asks, or undefined
+ * when the request names no owner message (or no reply identity).
+ */
+const ownerReplyQuery = (request: GrantRequest) =>
+  request.inReplyTo && request.replyKey && request.replyPlane
+    ? {
+        inReplyTo: request.inReplyTo,
+        owner: request.to,
+        plane: request.replyPlane,
+        replier: request.from,
+        replyKey: request.replyKey,
+      }
+    : undefined;
+
+/**
  * RA2: a message to the owner from anyone but the owner is sent (receive)
- * only as a reply on a thread the owner started with that sender. Other
+ * only as a reply to a specific owner message that still awaits one. Other
  * operations on such a message exist only because its receive was allowed.
  */
 const unpromptedOwnerMessage = (
   request: GrantRequest,
-  ownerThreads: OwnerThreadIndex | undefined
-): boolean =>
-  request.operation === "receive" &&
-  !(
-    request.threadId &&
-    ownerThreads?.ownerStarted({
-      owner: request.to,
-      replier: request.from,
-      threadId: request.threadId,
-    })
-  );
+  ownerReplies: OwnerReplyAuthority | undefined
+): boolean => {
+  if (request.operation !== "receive") {
+    return false;
+  }
+  const query = ownerReplyQuery(request);
+  return !(query && ownerReplies?.replyAvailable(query));
+};
+
+/**
+ * RA2: an allowed reply to the owner takes its allowance last, once every
+ * other check passed, so a refused request never spends it.
+ */
+const takeOwnerReply = (
+  request: GrantRequest,
+  ownerReplies: OwnerReplyAuthority | undefined,
+  decision: OrchestrationGrantDecision
+): OrchestrationGrantDecision => {
+  if (!decision.allowed || request.operation !== "receive") {
+    return decision;
+  }
+  const query = ownerReplyQuery(request);
+  return query && ownerReplies?.takeReply(query)
+    ? decision
+    : OWNER_REPLY_REFUSED;
+};
 
 const configuredGrant = (
   config: Pick<ServerConfig, "grants">,
@@ -1690,27 +1917,34 @@ const roleActorMayOperate = (actor: string, request: GrantRequest): boolean => {
  *
  * RA2: a supervisor messages any operator (upward). A message to the owner
  * from a supervisor, or from a sender without a role, is sent only as a
- * reply on a thread the owner started (`ownerThreads`); otherwise it is
- * refused with `owner-reply-only`, whose refusal names the attention-os
- * interaction path. No index means no owner thread is known (fail closed).
+ * reply to a specific owner message (`inReplyTo`) that `ownerReplies` still
+ * holds an allowance for; the allowance is taken only when the decision is
+ * otherwise allowed. Anything else to the owner, and any message a worker
+ * or an operator sends the owner, is refused with `owner-reply-only`, whose
+ * refusal names the attention-os interaction path. No ledger means no owner
+ * message is known (fail closed).
  */
 export const orchestrationGrantDecision = (
   config: Pick<ServerConfig, "grants" | "supervisors">,
   request: GrantRequest,
-  ownerThreads?: OwnerThreadIndex
+  ownerReplies?: OwnerReplyAuthority
 ): OrchestrationGrantDecision => {
   const roleOf = (id: string) =>
     config.supervisors.find((entry) => entry.supervisorId === id)?.role;
   const sender = roleOf(request.from);
   const recipient = roleOf(request.to);
   if (!sender) {
-    if (
-      recipient?.role === "owner" &&
-      unpromptedOwnerMessage(request, ownerThreads)
-    ) {
+    if (recipient?.role !== "owner") {
+      return decided(configuredGrant(config, request));
+    }
+    if (unpromptedOwnerMessage(request, ownerReplies)) {
       return OWNER_REPLY_REFUSED;
     }
-    return decided(configuredGrant(config, request));
+    return takeOwnerReply(
+      request,
+      ownerReplies,
+      decided(configuredGrant(config, request))
+    );
   }
   const actor = config.supervisors.find(
     (entry) => entry.role && entry.principal === request.principal
@@ -1722,61 +1956,108 @@ export const orchestrationGrantDecision = (
   }
   const pair = roleMessagePolicy(sender, recipient);
   if (pair === "denied") {
-    return DENY;
+    return recipient?.role === "owner" && request.operation === "receive"
+      ? OWNER_REPLY_REFUSED
+      : DENY;
   }
-  if (
-    pair === "owner-thread-reply" &&
-    unpromptedOwnerMessage(request, ownerThreads)
-  ) {
+  const ownerReply = pair === "owner-thread-reply";
+  if (ownerReply && unpromptedOwnerMessage(request, ownerReplies)) {
     return OWNER_REPLY_REFUSED;
   }
-  if (!actor) {
-    return decided(configuredGrant(config, request));
-  }
-  return decided(
-    (request.claimant == null || request.claimant === actor.supervisorId) &&
-      roleActorMayOperate(actor.supervisorId, request)
-  );
+  const decision = actor
+    ? decided(
+        (request.claimant == null || request.claimant === actor.supervisorId) &&
+          roleActorMayOperate(actor.supervisorId, request)
+      )
+    : decided(configuredGrant(config, request));
+  return ownerReply
+    ? takeOwnerReply(request, ownerReplies, decision)
+    : decision;
 };
 
 /** Whether the decision allows it; see `orchestrationGrantDecision`. */
 export const orchestrationGrantAllows = (
   config: Pick<ServerConfig, "grants" | "supervisors">,
   request: GrantRequest,
-  ownerThreads?: OwnerThreadIndex
-): boolean => orchestrationGrantDecision(config, request, ownerThreads).allowed;
+  ownerReplies?: OwnerReplyAuthority
+): boolean => orchestrationGrantDecision(config, request, ownerReplies).allowed;
 
 /**
- * RA2: the A2A ingress decision for a message `from` sends `to`, on the
- * A2A context `threadId`. An allowed owner send records the context it
- * opened with that recipient, so the recipient may reply on it; nothing
- * else records. An unprompted message to the owner answers
- * `owner-reply-only` (the ingress names the attention-os path).
+ * RA2: the A2A ingress decision for a message `from` sends `to`. A reply to
+ * the owner names the owner message in `inReplyTo` and is identified by its
+ * own A2A message id (`replyKey`). Nothing here records an owner message:
+ * that happens only after the owner's message is durably accepted
+ * (`recordAcceptedOwnerMessage`). An unprompted message to the owner
+ * answers `owner-reply-only` (the ingress names the attention-os path).
  */
 export const orchestrationA2AReceive = (
   config: Pick<ServerConfig, "grants" | "supervisors">,
-  ownerContexts: OwnerContextRegistry,
-  request: { from: string; principal: string; threadId?: string; to: string }
+  ownerReplies: OwnerReplyAuthority | undefined,
+  request: {
+    from: string;
+    inReplyTo?: string;
+    messageId?: string;
+    principal: string;
+    threadId?: string;
+    to: string;
+  }
 ): boolean | typeof OWNER_REPLY_ONLY => {
   const decision = orchestrationGrantDecision(
     config,
-    { ...request, operation: "receive" },
-    ownerContexts
+    {
+      from: request.from,
+      ...(request.inReplyTo ? { inReplyTo: request.inReplyTo } : {}),
+      operation: "receive",
+      principal: request.principal,
+      ...(request.messageId
+        ? { replyKey: request.messageId, replyPlane: "a2a" as const }
+        : {}),
+      ...(request.threadId ? { threadId: request.threadId } : {}),
+      to: request.to,
+    },
+    ownerReplies
   );
   if (!decision.allowed) {
     return decision.reasonCode === OWNER_REPLY_ONLY ? OWNER_REPLY_ONLY : false;
   }
-  const sender = config.supervisors.find(
-    (entry) => entry.supervisorId === request.from
-  );
-  if (sender?.role?.role === "owner" && request.threadId) {
-    ownerContexts.record({
-      owner: request.from,
-      recipient: request.to,
-      threadId: request.threadId,
-    });
-  }
   return true;
+};
+
+/**
+ * RA2: called once a message is durably accepted (V1: after the governed
+ * receive and its thread-board append; A2A: after the V2 start intent). An
+ * owner's message to anyone opens a reply allowance for its recipient;
+ * nothing else records. Never throws: a ledger that cannot record leaves
+ * the recipient unable to reply (fail closed).
+ */
+export const recordAcceptedOwnerMessage = (
+  config: Pick<ServerConfig, "supervisors">,
+  ledger: Pick<OwnerReplyLedger, "recordOwnerMessage">,
+  accepted: { from: string; messageId: string; to: string },
+  log: (line: string) => void = (line) => console.error(line)
+): void => {
+  const sender = config.supervisors.find(
+    (entry) => entry.supervisorId === accepted.from
+  );
+  if (sender?.role?.role !== "owner") {
+    return;
+  }
+  const record: OwnerMessageAccepted = {
+    messageId: accepted.messageId,
+    owner: accepted.from,
+    recipient: accepted.to,
+  };
+  let recorded = false;
+  try {
+    recorded = ledger.recordOwnerMessage(record);
+  } catch {
+    recorded = false;
+  }
+  if (!recorded) {
+    log(
+      "loop-orchestration: owner reply ledger did not record an accepted owner message; its recipient cannot reply to it"
+    );
+  }
 };
 
 /**
@@ -1841,18 +2122,22 @@ const roleTickPrincipal = (
 };
 
 /**
- * The V1 authority. RA2: owner threads are read from the V1 thread board,
- * which holds accepted messages only.
+ * The V1 authority. RA2: a reply to the owner is resolved against the
+ * server's durable owner reply ledger, which records only owner messages
+ * the server accepted.
  */
 export const orchestrationAuthority = (
   config: Pick<ServerConfig, "grants" | "supervisors">,
-  ownerThreads?: OwnerThreadIndex
+  ownerReplies?: OwnerReplyAuthority
 ): SupervisorMessageAuthorityPort => ({
   decide(request) {
     const { allowed, reasonCode } = orchestrationGrantDecision(
       config,
-      request,
-      ownerThreads
+      // Governance names a V1 reply by its dedupe key.
+      request.replyKey === undefined
+        ? request
+        : { ...request, replyPlane: "v1" },
+      ownerReplies
     );
     return {
       allowed,
@@ -2784,6 +3069,20 @@ export const createMailboxReconcilers = (input: {
   };
 };
 
+/**
+ * RA2: the owner reply ledger, `<stateDir>/owner-replies.json` (0600), with
+ * the configured reply policy (default: one reply within 24 h).
+ */
+export const createOwnerReplyLedger = (
+  config: Pick<ServerConfig, "ownerReplies" | "stateDir">,
+  now?: () => number
+): OwnerReplyLedger =>
+  new OwnerReplyLedger({
+    file: join(config.stateDir, OWNER_REPLY_LEDGER_FILE),
+    ...(now ? { now } : {}),
+    ...(config.ownerReplies ? { policy: config.ownerReplies } : {}),
+  });
+
 const createDefaultRuntimeHost = async (input: {
   /** The bound on the whole V2 service start (startupBounds.a2aV2ServiceMs). */
   a2aV2ServiceMs: number;
@@ -2815,6 +3114,14 @@ const createDefaultRuntimeHost = async (input: {
       directory: { resolveMailbox: (id) => input.mailboxes.get(id) },
     }),
   ]);
+  // RA2: one durable owner reply ledger for both planes (it is a file, so
+  // every host this process builds shares the one instance).
+  const ownerReplies = createOwnerReplyLedger(input.config);
+  const recordOwner = (accepted: {
+    from: string;
+    messageId: string;
+    to: string;
+  }) => recordAcceptedOwnerMessage(input.config, ownerReplies, accepted);
   // Fresh per host: a V2 start that fails closes the host it created, and
   // the V1-only host it falls back to must not share its stores.
   const makeHostOptions = () => {
@@ -2822,11 +3129,10 @@ const createDefaultRuntimeHost = async (input: {
       join(input.config.stateDir, "threads.jsonl")
     );
     return {
-      authority: orchestrationAuthority(
-        input.config,
-        ownerThreadsFromBoard(() => store.read())
-      ),
+      authority: orchestrationAuthority(input.config, ownerReplies),
       buildId: input.config.buildId,
+      // RA2: an owner message opens its reply allowance only once accepted.
+      onReceived: recordOwner,
       delivery,
       identity: input.config.identity,
       namespace: input.config.namespace,
@@ -2868,8 +3174,6 @@ const createDefaultRuntimeHost = async (input: {
     if (!databaseUrl) {
       throw new Error("configured A2A V2 database environment is absent");
     }
-    // RA2: the A2A contexts the owner opened, for supervisor replies.
-    const ownerContexts = new OwnerContextRegistry();
     const controlAuthenticator = authenticator(
       input.config,
       input.env,
@@ -2968,7 +3272,9 @@ const createDefaultRuntimeHost = async (input: {
         legacySeats,
         log: (line) => console.error(line),
         mayReceive: (request) =>
-          orchestrationA2AReceive(input.config, ownerContexts, request),
+          orchestrationA2AReceive(input.config, ownerReplies, request),
+        // RA2: after the V2 start intent is durable, never in the gate.
+        onAccepted: recordOwner,
         principalForRecipient,
         // The lease sweep's renewal, on demand: a recipient whose session is
         // live is not refused while the sweep's renewal lags.
@@ -4012,6 +4318,8 @@ const startOrchestrationServices = async (
         ...(plane.reason ? { reason: plane.reason } : {}),
       }),
       authenticator: authenticator(config, prepared.env, tokens),
+      enrollSource: (request, peerAddress) =>
+        enrollmentSource(config, request, peerAddress),
       host,
       ...configuredHumanRoutes(config),
       notEnrolledSeats: () => notEnrolled,

@@ -23,6 +23,16 @@ import type { SupervisorMessagePolicy } from "./supervisor-message-workflow";
 export interface SupervisorA2AV2AdapterOptions {
   coordinator: SupervisorMessageV2Coordinator;
   now: () => string;
+  /**
+   * RA2: told of each message once its V2 receive returned (the start intent
+   * is durable): the governed sender, the configured recipient and the raw
+   * message id. A throw is swallowed; the message is accepted either way.
+   */
+  onAccepted?: (accepted: {
+    from: string;
+    messageId: string;
+    to: string;
+  }) => void;
   policy: SupervisorMessagePolicy;
   supervisorId: string;
 }
@@ -51,12 +61,14 @@ export const supervisorA2AV2ThreadId = (input: {
 export class SupervisorA2AV2Adapter {
   readonly #coordinator: SupervisorMessageV2Coordinator;
   readonly #now: () => string;
+  readonly #onAccepted: SupervisorA2AV2AdapterOptions["onAccepted"];
   readonly #policy: SupervisorMessagePolicy;
   readonly #supervisorId: string;
 
   constructor(options: SupervisorA2AV2AdapterOptions) {
     this.#coordinator = options.coordinator;
     this.#now = options.now;
+    this.#onAccepted = options.onAccepted;
     this.#policy = options.policy;
     this.#supervisorId = options.supervisorId;
   }
@@ -102,6 +114,15 @@ export class SupervisorA2AV2Adapter {
       },
       identity.requestId
     );
+    try {
+      this.#onAccepted?.({
+        from: received.projection.from,
+        messageId: received.projection.messageId,
+        to: received.projection.to,
+      });
+    } catch {
+      // Accepted either way; the hook owns its own failure.
+    }
     return {
       contextId,
       scopeId: identity.scopeId,

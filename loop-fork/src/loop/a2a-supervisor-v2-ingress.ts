@@ -3,7 +3,10 @@ import type { TaskStore } from "@a2a-js/sdk/server";
 import { agentCardFor } from "./a2a-supervisor-adapter";
 import { SupervisorA2AExecutor } from "./a2a-supervisor-executor";
 import { SupervisorA2ARequestHandler } from "./a2a-supervisor-request-handler";
-import { SupervisorA2AV2Adapter } from "./a2a-supervisor-v2-adapter";
+import {
+  SupervisorA2AV2Adapter,
+  type SupervisorA2AV2AdapterOptions,
+} from "./a2a-supervisor-v2-adapter";
 import type {
   SupervisorMessageV2DeliveryLedger,
   SupervisorMessageV2DeliveryPort,
@@ -48,6 +51,11 @@ export interface SupervisorA2AV2IngressOptions {
    */
   notEnrolled?: SupervisorMessageV2NotEnrolledDeferral;
   now: () => string;
+  /**
+   * RA2: told of each message this ingress durably accepted (its V2 start
+   * intent recorded), with the configured recipient. It must not throw.
+   */
+  onAccepted?: SupervisorA2AV2AdapterOptions["onAccepted"];
   /** The host's config file, for the quarantine commands recovery prints. */
   operatorConfigPath?: string;
   policy: SupervisorMessagePolicy;
@@ -112,6 +120,7 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
         adapter: new SupervisorA2AV2Adapter({
           coordinator,
           now: options.now,
+          ...(options.onAccepted ? { onAccepted: options.onAccepted } : {}),
           policy: options.policy,
           supervisorId: options.supervisorId,
         }),

@@ -181,7 +181,18 @@ const parseMessageReceive = (
   identity: SupervisorControlSurfaceIdentity,
   resolveRecipient?: (recipient: string) => string
 ): SupervisorMessageReceiveCommand => {
-  exactKeys(value, ["input", "messageKind", "requestId"]);
+  // RA2: `inReplyTo` names the owner message a reply to the owner answers;
+  // governance resolves it against the server's own ledger.
+  const inReplyTo =
+    value.inReplyTo === undefined
+      ? undefined
+      : requireString(value.inReplyTo, "inReplyTo", STABLE_ID_RE);
+  exactKeys(value, [
+    "input",
+    "messageKind",
+    "requestId",
+    ...(inReplyTo === undefined ? [] : ["inReplyTo"]),
+  ]);
   if (!isRecord(value.input) || value.input.from !== identity.supervisorId) {
     throw new Error("receive sender is invalid");
   }
@@ -191,6 +202,7 @@ const parseMessageReceive = (
       ? { ...value.input, to: resolveRecipient(to) }
       : value.input;
   return {
+    ...(inReplyTo === undefined ? {} : { inReplyTo }),
     input: input as SupervisorMessageReceiveCommand["input"],
     messageKind: requireString(
       value.messageKind,

@@ -15,6 +15,7 @@ import {
   createTokenRoutes,
   ENROLLMENT_CODE_TTL_SECONDS,
   EnrollmentAttemptLimiter,
+  enrollmentCodeBucket,
   loadTokenSigningKey,
   OrchestrationTokenService,
   type RoleBinding,
@@ -704,74 +705,144 @@ describe("RA2 unauthenticated enrollment", () => {
     expect(() => statSync(join(root, "tokens", "token-store.json"))).toThrow();
   });
 
-  test("failures are limited per source in a bounded window", () => {
+  test("past its free failures a source is slowed by a doubling delay, not locked out", () => {
     const clock = { now: 0 };
     const limiter = new EnrollmentAttemptLimiter({
+      baseDelayMs: 1000,
+      limit: 3,
+      maxSources: 2,
+      now: () => clock.now,
+      windowMs: 10_000,
+    });
+    const attacker = "203.0.113.1";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(limiter.retryAfterSeconds(attacker)).toBe(0);
+      limiter.recordFailure(attacker);
+    }
+    // 1 s, then 2, 4, 8, and capped at the 10 s window.
+    const waits: number[] = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const wait = limiter.retryAfterSeconds(attacker);
+      waits.push(wait);
+      clock.now += wait * 1000;
+      expect(limiter.retryAfterSeconds(attacker)).toBe(0);
+      limiter.recordFailure(attacker);
+    }
+    expect(waits).toEqual([1, 2, 4, 8, 10, 10]);
+    expect(limiter.retryAfterSeconds("203.0.113.2")).toBe(0);
+    // Half way through a wait the rest is what remains.
+    clock.now += 5000;
+    expect(limiter.retryAfterSeconds(attacker)).toBe(5);
+    // Quiet for two windows: forgotten, its free failures back.
+    clock.now += 15_000;
+    expect(limiter.retryAfterSeconds(attacker)).toBe(0);
+    limiter.recordFailure(attacker);
+    expect(limiter.retryAfterSeconds(attacker)).toBe(0);
+  });
+
+  test("a key is remembered until it has been quiet for two windows", () => {
+    const clock = { now: 0 };
+    const limiter = new EnrollmentAttemptLimiter({
+      baseDelayMs: 1000,
+      limit: 1,
+      now: () => clock.now,
+      windowMs: 10_000,
+    });
+    const source = "203.0.113.1";
+    limiter.recordFailure(source);
+    expect(limiter.retryAfterSeconds(source)).toBe(1);
+    // Its delay is over, but it is still remembered: the next failure
+    // doubles the delay.
+    clock.now = 19_999;
+    expect(limiter.retryAfterSeconds(source)).toBe(0);
+    limiter.recordFailure(source);
+    expect(limiter.retryAfterSeconds(source)).toBe(2);
+    // Quiet for two windows: it starts over at the first delay.
+    clock.now += 20_000;
+    limiter.recordFailure(source);
+    expect(limiter.retryAfterSeconds(source)).toBe(1);
+  });
+
+  test("a full limiter shares one overflow key and evicts nobody", () => {
+    const clock = { now: 0 };
+    const limiter = new EnrollmentAttemptLimiter({
+      baseDelayMs: 1000,
       limit: 3,
       maxSources: 2,
       now: () => clock.now,
       windowMs: 10_000,
     });
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(0);
       limiter.recordFailure("203.0.113.1");
     }
-    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(10);
-    expect(limiter.retryAfterSeconds("203.0.113.2")).toBe(0);
+    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(1);
     limiter.recordFailure("203.0.113.2");
-    // Full: new addresses share one overflow window and evict nobody.
     for (let index = 3; index < 50; index += 1) {
       limiter.recordFailure(`203.0.113.${index}`);
     }
     expect(limiter.size).toBe(3);
-    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(10);
+    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(1);
     expect(limiter.retryAfterSeconds("203.0.113.99")).toBe(10);
     expect(limiter.retryAfterSeconds("203.0.113.2")).toBe(0);
-    clock.now = 4000;
-    expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(6);
-    // The windows end. Expired windows are dropped when the map is full, so
-    // a new source gets its own window again, not the shared overflow one.
-    clock.now = 10_000;
+    // The overflow key is slowed too, never closed: it may try again.
+    clock.now += 10_000;
+    expect(limiter.retryAfterSeconds("203.0.113.99")).toBe(0);
+    // Forgotten keys are dropped when the map is full, so a new source gets
+    // its own key again, not the shared overflow one.
+    clock.now += 20_000;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       limiter.recordFailure("198.51.100.1");
     }
-    expect(limiter.retryAfterSeconds("198.51.100.1")).toBe(10);
+    expect(limiter.retryAfterSeconds("198.51.100.1")).toBe(1);
     expect(limiter.retryAfterSeconds("198.51.100.2")).toBe(0);
     expect(limiter.retryAfterSeconds("203.0.113.1")).toBe(0);
-    expect(limiter.retryAfterSeconds("203.0.113.99")).toBe(0);
     expect(limiter.size).toBeLessThanOrEqual(3);
   });
 
-  test("the enroll route refuses a source over its window before reading the code", async () => {
+  test("the code-prefix bucket is the code's first two characters", () => {
+    expect(enrollmentCodeBucket("Ab-rest")).toBe("code:Ab");
+    expect(enrollmentCodeBucket("_9")).toBe("code:_9");
+    for (const malformed of ["", "A", "A.", "..", " A", "é1"]) {
+      expect(enrollmentCodeBucket(malformed)).toBe(enrollmentCodeBucket(".."));
+    }
+    expect(enrollmentCodeBucket("..")).not.toContain("code:");
+  });
+
+  const enrollRequest = (body: string, contentType = "application/json") =>
+    new Request("http://127.0.0.1:7321/api/v1/tokens/enroll", {
+      body,
+      headers: { "content-type": contentType },
+      method: "POST",
+    });
+  const enrollWith = async (
+    routes: ReturnType<typeof createTokenRoutes>,
+    source: string,
+    request: Request
+  ) => {
+    const response = await routes(request, "/api/v1/tokens/enroll", source);
+    if (!response) {
+      throw new Error("not a token route");
+    }
+    return response;
+  };
+
+  test("the enroll route slows a source before reading the code", async () => {
     const { host, service } = setup();
     const limiter = new EnrollmentAttemptLimiter({ limit: 2 });
     const routes = createTokenRoutes(service, limiter);
-    const enrollAs = async (source: string, code: unknown) => {
-      const request = new Request(
-        "http://127.0.0.1:7321/api/v1/tokens/enroll",
-        {
-          body: JSON.stringify({ code }),
-          headers: { "content-type": "application/json" },
-          method: "POST",
-        }
-      );
-      const response = await routes(request, "/api/v1/tokens/enroll", source);
-      if (!response) {
-        throw new Error("not a token route");
-      }
-      return response;
-    };
+    const enrollAs = (source: string, code: unknown) =>
+      enrollWith(routes, source, enrollRequest(JSON.stringify({ code })));
     const attacker = "203.0.113.7";
     expect((await enrollAs(attacker, BOGUS)).status).toBe(401);
     expect((await enrollAs(attacker, 42)).status).toBe(401);
     const { code } = service.issueEnrollmentCode(host, WORKER);
     const blocked = await enrollAs(attacker, code);
     expect(blocked.status).toBe(429);
-    expect(blocked.headers.get("retry-after")).toBe("60");
+    expect(blocked.headers.get("retry-after")).toBe("1");
     expect(await blocked.json()).toEqual({
       error: { code: "too-many-attempts" },
     });
-    // The blocked attempt did not consume the code; another source uses it.
+    // The slowed attempt did not consume the code; another source uses it.
     expect((await enrollAs("198.51.100.2", code)).status).toBe(200);
     // A success counts nothing against its source.
     for (const address of [SUP, OTHER_SUP]) {
@@ -780,5 +851,143 @@ describe("RA2 unauthenticated enrollment", () => {
     }
     expect(limiter.retryAfterSeconds("198.51.100.3")).toBe(0);
     expect(limiter.retryAfterSeconds("198.51.100.2")).toBe(0);
+  });
+
+  test("a body that cannot be read or parsed counts as a failed attempt", async () => {
+    const { service } = setup();
+    // Six attempts below; a limit of six slows the source only if every one
+    // of them counted.
+    const sources = new EnrollmentAttemptLimiter({ limit: 6 });
+    const routes = createTokenRoutes(service, { sources });
+    const unreadable = new Request(
+      "http://127.0.0.1:7321/api/v1/tokens/enroll",
+      {
+        body: new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("connection reset"));
+          },
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }
+    );
+    const attempts: [string, Request][] = [
+      ["not json", enrollRequest("{")],
+      ["not an object", enrollRequest("[1]")],
+      ["wrong type", enrollRequest('{"code":"x"}', "text/plain")],
+      ["too large", enrollRequest(`{"code":"${"A".repeat(70_000)}"}`)],
+      ["extra field", enrollRequest('{"code":"x","more":1}')],
+      ["unreadable", unreadable],
+    ];
+    const statuses: [string, number][] = [];
+    for (const [label, request] of attempts) {
+      expect(sources.retryAfterSeconds("203.0.113.8")).toBe(0);
+      statuses.push([
+        label,
+        (await enrollWith(routes, "203.0.113.8", request)).status,
+      ]);
+    }
+    expect(statuses).toEqual([
+      ["not json", 401],
+      ["not an object", 401],
+      ["wrong type", 401],
+      ["too large", 401],
+      ["extra field", 401],
+      ["unreadable", 500],
+    ]);
+    expect(sources.retryAfterSeconds("203.0.113.8")).toBe(1);
+  });
+
+  test("failures are capped per code-prefix bucket across every source", async () => {
+    const { host, service } = setup();
+    const codePrefixes = new EnrollmentAttemptLimiter({ limit: 3 });
+    const sources = new EnrollmentAttemptLimiter({ limit: 1 });
+    const routes = createTokenRoutes(service, { codePrefixes, sources });
+    const enrollAs = (source: string, code: string) =>
+      enrollWith(routes, source, enrollRequest(JSON.stringify({ code })));
+    const real = service.issueEnrollmentCode(host, WORKER);
+    const realBucket = enrollmentCodeBucket(real.code);
+    const prefix = realBucket === "code:AA" ? "BB" : "AA";
+    // Three sources, one guess each, all in one bucket.
+    for (const source of ["203.0.113.1", "203.0.113.2", "203.0.113.3"]) {
+      expect(
+        (await enrollAs(source, `${prefix}${"x".repeat(41)}`)).status
+      ).toBe(401);
+    }
+    const slowed = await enrollAs("203.0.113.4", `${prefix}${"y".repeat(41)}`);
+    expect(slowed.status).toBe(429);
+    expect(slowed.headers.get("retry-after")).toBe("1");
+    // The refused guess was never evaluated, so its source is not charged.
+    expect(sources.retryAfterSeconds("203.0.113.4")).toBe(0);
+    // Another bucket is untouched: a real code in it is exchanged.
+    expect(codePrefixes.retryAfterSeconds(realBucket)).toBe(0);
+    expect((await enrollAs("203.0.113.4", real.code)).status).toBe(200);
+  });
+
+  test("a code-prefix bucket burned by wrong guesses never refuses a real code", async () => {
+    const { host, service } = setup();
+    const codePrefixes = new EnrollmentAttemptLimiter({ limit: 3 });
+    const routes = createTokenRoutes(service, { codePrefixes });
+    const enrollAs = (source: string, code: string) =>
+      enrollWith(routes, source, enrollRequest(JSON.stringify({ code })));
+    const real = service.issueEnrollmentCode(host, WORKER);
+    const prefix = real.code.slice(0, 2);
+    // An unauthenticated caller burns the real code's bucket from a few
+    // sources, without ever knowing the code.
+    for (const source of ["203.0.113.1", "203.0.113.2", "203.0.113.3"]) {
+      expect(
+        (await enrollAs(source, `${prefix}${"x".repeat(41)}`)).status
+      ).toBe(401);
+    }
+    expect(
+      (await enrollAs("203.0.113.4", `${prefix}${"y".repeat(41)}`)).status
+    ).toBe(429);
+    // The holder of the real code still enrolls.
+    expect((await enrollAs("198.51.100.20", real.code)).status).toBe(200);
+  });
+
+  test("an IPv6 /64 is one enroll source, and a mapped IPv4 is its IPv4", async () => {
+    const { service } = setup();
+    const sources = new EnrollmentAttemptLimiter({ limit: 2 });
+    const routes = createTokenRoutes(service, { sources });
+    const enrollAs = (source: string) =>
+      enrollWith(
+        routes,
+        source,
+        enrollRequest(JSON.stringify({ code: BOGUS }))
+      );
+    // One /64 is one attacker however many addresses it uses.
+    expect((await enrollAs("2001:db8:0:1::1")).status).toBe(401);
+    expect((await enrollAs("2001:db8:0:1::2")).status).toBe(401);
+    expect((await enrollAs("2001:db8:0:1:ffff:ffff:ffff:3")).status).toBe(429);
+    expect((await enrollAs("[2001:DB8:0:1::4]")).status).toBe(429);
+    // Another /64 is another source.
+    expect((await enrollAs("2001:db8:0:2::1")).status).toBe(401);
+    expect((await enrollAs("203.0.113.9")).status).toBe(401);
+    expect((await enrollAs("::ffff:203.0.113.9")).status).toBe(401);
+    expect((await enrollAs("::ffff:cb00:7109")).status).toBe(429);
+  });
+
+  test("a full limiter answers a new key without rescanning every key", () => {
+    let reads = 0;
+    const limiter = new EnrollmentAttemptLimiter({
+      maxSources: 512,
+      now: () => {
+        reads += 1;
+        return 0;
+      },
+    });
+    for (let index = 0; index < 512; index += 1) {
+      limiter.recordFailure(`198.51.${Math.floor(index / 256)}.${index % 256}`);
+    }
+    expect(limiter.size).toBe(512);
+    reads = 0;
+    for (let index = 0; index < 100; index += 1) {
+      limiter.retryAfterSeconds(`203.0.113.${index}`);
+      limiter.recordFailure(`203.0.113.${index}`);
+    }
+    // A constant number of clock reads per attempt, not one per known key.
+    expect(reads).toBeLessThan(100 * 8);
+    expect(limiter.size).toBe(513);
   });
 });

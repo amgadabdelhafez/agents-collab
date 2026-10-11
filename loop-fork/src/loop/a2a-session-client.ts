@@ -61,6 +61,7 @@ import {
   serverOriginFor,
 } from "./orchestration-origin-policy";
 import {
+  IN_REPLY_TO_METADATA_KEY,
   OWNER_NOTIFICATION_PATH,
   OWNER_REPLY_ONLY,
   OWNER_REPLY_ONLY_MESSAGE,
@@ -991,6 +992,11 @@ const MAX_BODY_BYTES = 64 * 1024;
 export interface A2ASendInput {
   body: string;
   contextId?: string;
+  /**
+   * RA2: the owner message this message replies to (its message id). A
+   * message to the owner is accepted only as such a reply.
+   */
+  inReplyTo?: string;
   messageId: string;
   to: string;
 }
@@ -1070,6 +1076,25 @@ export const a2aIngressFetch = (
     { preconnect: fetch.preconnect }
   );
 
+/** The send input checks; a malformed send never reaches the server. */
+const assertSendInput = (input: A2ASendInput): void => {
+  if (!MESSAGE_ID_RE.test(input.messageId)) {
+    throw new Error("message id is invalid");
+  }
+  if (input.contextId !== undefined && !CONTEXT_ID_RE.test(input.contextId)) {
+    throw new Error("context id is invalid");
+  }
+  if (input.inReplyTo !== undefined && !MESSAGE_ID_RE.test(input.inReplyTo)) {
+    throw new Error("in-reply-to message id is invalid");
+  }
+  if (
+    !input.body.trim() ||
+    new TextEncoder().encode(input.body).byteLength > MAX_BODY_BYTES
+  ) {
+    throw new Error("message body must be non-empty and at most 64 KiB");
+  }
+};
+
 /**
  * Send one message to `{routePath}/supervisors/<slug>` through the SDK's own
  * JSON-RPC client, built from a local agent card (no card is fetched). The
@@ -1084,18 +1109,7 @@ export const sendA2AMessage = async (
   options: { timeoutMs?: number } = {}
 ): Promise<A2ASendReceipt> => {
   const to = requireSupervisorEndpointRecipient(input.to);
-  if (!MESSAGE_ID_RE.test(input.messageId)) {
-    throw new Error("message id is invalid");
-  }
-  if (input.contextId !== undefined && !CONTEXT_ID_RE.test(input.contextId)) {
-    throw new Error("context id is invalid");
-  }
-  if (
-    !input.body.trim() ||
-    new TextEncoder().encode(input.body).byteLength > MAX_BODY_BYTES
-  ) {
-    throw new Error("message body must be non-empty and at most 64 KiB");
-  }
+  assertSendInput(input);
   const url = endpoint.url(a2aV2SupervisorIngressPath(endpoint.routePath, to));
   const timeoutMs = options.timeoutMs ?? A2A_SEND_TIMEOUT_MS;
   // RA2: the SDK reports any refusal as a transport error; the ingress's
@@ -1123,7 +1137,12 @@ export const sendA2AMessage = async (
     contextId: input.contextId ?? input.messageId,
     extensions: [],
     messageId: input.messageId,
-    metadata: { [FROM_METADATA_KEY]: endpoint.supervisorId },
+    metadata: {
+      [FROM_METADATA_KEY]: endpoint.supervisorId,
+      ...(input.inReplyTo === undefined
+        ? {}
+        : { [IN_REPLY_TO_METADATA_KEY]: input.inReplyTo }),
+    },
     parts: [
       {
         content: { $case: "text", value: input.body },

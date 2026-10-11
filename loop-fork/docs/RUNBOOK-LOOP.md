@@ -598,35 +598,62 @@ RA2 narrows RA1 where it supersedes the text above (owner decisions of
   session itself). The route answers 403 `authority-denied`.
 - **Unauthenticated enroll.** A code that matches no record is refused from
   a lock-free read: the store lock is never taken and `token-store.json` is
-  never rewritten for it. Failed enrollments are limited per source (the
-  peer address Bun reports for the request): 10 per fixed 60-second window,
-  in memory, at most 1024 sources plus one shared overflow window (a flood
-  of new addresses shares it and evicts nobody). Over the limit the route
-  answers 429 `too-many-attempts` with `retry-after`, before reading the
-  body. Behind a reverse proxy on the same host the peer is the proxy, so
-  every proxied client shares one window (fail closed).
+  never rewritten for it. Failed enrollments are counted per source and per
+  code-prefix bucket (the code's first two characters, across every source;
+  20 free failures each). A source is the peer address Bun reports, except
+  behind a trusted proxy (below). A key's first 10 failures are free; past
+  them it is slowed, not locked out: each further attempt waits 1 s, then
+  2, 4, ... capped at 60 s, and a key quiet for 120 s starts over. In
+  memory, at most 1024 sources plus one shared overflow key (a flood of new
+  addresses shares it, evicts nobody, and is itself only slowed). A slowed
+  source is answered 429 `too-many-attempts` with `retry-after` before its
+  body is read; a slowed bucket before its code is looked up (and that
+  attempt charges nobody). A body that cannot be read or parsed counts as a
+  failed attempt.
+- **Trusted proxy (2026-10-11 fix).** `trustedProxies` (top-level, IP
+  literals, at most 16; only with an https `origin`) names the reverse
+  proxy's peer addresses, e.g. `["127.0.0.1"]` for Caddy on the same host.
+  A request from one of them is keyed by the right-most `X-Forwarded-For`
+  hop that is not itself a trusted proxy (the client Caddy saw); forwarding
+  headers from any other peer are never read. Without it, every proxied
+  client shares the proxy's key.
 - **Static tokens.** `tokenEnv` tokens authenticate only when the listener
-  `hostname` is loopback (`127.0.0.1`, `::1`, `localhost`). A listener
-  beyond loopback accepts session tokens alone, and its start no longer
-  requires the `tokenEnv` variables.
-- **Messaging.** A supervisor messages any operator (upward). A message to
-  the owner from a supervisor (or from a sender without a role, which also
-  needs its configured grant) is sent only as a reply on a thread the owner
-  started with that sender: on V1 the thread board's earliest message on
-  that `threadId` is the owner's and the owner messaged the sender on it;
-  on A2A the message's `contextId` is one the owner opened with that
-  supervisor through this server (in memory, 4096 contexts, 7 days; a
-  restart forgets them, so a later reply is refused). Anything else is
-  refused 403 `owner-reply-only` with a `message` and
+  `hostname` is loopback (`127.0.0.1`, `::1`, `localhost`), and never on a
+  request carrying a forwarding header (`Forwarded`, `Via`,
+  `X-Forwarded-For`/`-Host`/`-Proto`, `X-Real-IP`): such a request came
+  through a proxy, so from the network, even when the listener is loopback.
+  A listener beyond loopback accepts session tokens alone, and its start no
+  longer requires the `tokenEnv` variables.
+- **Messaging (2026-10-11 fix).** A supervisor messages any operator
+  (upward). A message to the owner from a supervisor (or from a sender
+  without a role, which also needs its configured grant) is accepted only as
+  a reply to one specific owner message: one the owner sent to that sender,
+  that the server durably accepted, and that still awaits a reply. The reply
+  names it by message id: V1 `inReplyTo` beside `input` in the receive body;
+  A2A message metadata `harness.dev/inReplyTo` (`loop a2a send
+  --in-reply-to <id>`, MCP `in_reply_to`). Everything else about it is
+  resolved server-side from the owner reply ledger,
+  `<stateDir>/owner-replies.json` (0600, atomic rewrite, survives restarts),
+  never from the caller. Each owner message allows `ownerReplies.maxReplies`
+  replies (default 1, at most 20) within `ownerReplies.windowMs` after the
+  server accepted it (default 24 h); a retry of the same reply (V1 dedupe
+  key, A2A message id) takes no second allowance. An owner message is
+  recorded only after it is durably accepted (V1: governed receive and
+  thread-board append; A2A: V2 start intent), never by the ingress gate. A
+  ledger file that is not a regular 0600 file of the service user, or does
+  not parse, refuses every reply and is left untouched for the operator.
+  Anything else to the owner, and any message a worker or an operator sends
+  the owner, is refused 403 `owner-reply-only` with a `message` and
   `notifyVia: "attention-os:interactions"`: unprompted owner notifications
-  are attention-os interactions delivered with ntfy, never A2A. Workers and
-  operators never message the owner. `loop a2a send` reports that refusal
-  with its code instead of the generic one.
+  are attention-os interactions delivered with ntfy, never A2A. `loop a2a
+  send` reports that refusal with its code instead of the generic one.
 
 Tests: `tests/loop/loop-orchestration-server-ra2.test.ts`,
 `tests/loop/loop-orchestration-server-ra2-serve.test.ts` (real Temporal dev
-server), the RA2 cases in `orchestration-token-service.test.ts` and
-`a2a-session-client.test.ts`.
+server, a restart, the trusted proxy),
+`tests/loop/ra2-owner-reply-a2a-e2e.test.ts` (Temporal and Docker
+PostgreSQL, the A2A plane), the RA2 cases in
+`orchestration-token-service.test.ts` and `a2a-session-client.test.ts`.
 
 ### RA2: role ids on the wire (claude/ra2-role-ids-wire)
 

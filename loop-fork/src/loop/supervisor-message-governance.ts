@@ -21,8 +21,12 @@ export type SupervisorMessageGovernedOperation =
 export interface SupervisorMessageAuthorityRequest {
   claimant?: string;
   from: string;
+  /** RA2: on a receive, the owner message a reply answers (its message id). */
+  inReplyTo?: string;
   operation: SupervisorMessageGovernedOperation;
   principal: string;
+  /** RA2: on a receive, the message's own durable identity (dedupe key). */
+  replyKey?: string;
   threadId: string;
   to: string;
   workflowId?: string;
@@ -135,7 +139,8 @@ export class GovernedSupervisorMessageService {
   async receive(
     principal: string,
     input: SupervisorMessageInput,
-    requestId: string
+    requestId: string,
+    reply: { inReplyTo?: string } = {}
   ): Promise<SupervisorMessageReceiveResult> {
     let parsed: SupervisorMessageInput;
     try {
@@ -157,8 +162,14 @@ export class GovernedSupervisorMessageService {
     }
     await this.#authorize({
       from: parsed.from,
+      ...(reply.inReplyTo === undefined
+        ? {}
+        : { inReplyTo: requireReference(reply.inReplyTo, "inReplyTo") }),
       operation: "receive",
       principal: requireReference(principal, "principal"),
+      // The dedupe key names the durable message: a retry of the same
+      // message is the same reply.
+      replyKey: parsed.dedupeKey,
       threadId: parsed.threadId,
       to: parsed.to,
     });
