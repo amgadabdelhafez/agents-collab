@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import type { SupervisorMessageV2Projection } from "../../src/loop/supervisor-message-v2-contract";
 import { createSupervisorMessageV2RecipientHttpHandler } from "../../src/loop/supervisor-message-v2-http";
+import { SupervisorMessageV2RecipientTooEarlyError } from "../../src/loop/supervisor-message-v2-runtime";
+import { WorkflowError } from "../../src/loop/workflow-port";
 
 test("recipient route binds claimant and original scope outside JSON and never claims work completion", async () => {
   const commands: unknown[] = [];
@@ -172,4 +174,66 @@ test("recipient route caps oversized bodies after auth without buffering them", 
   });
   expect((await send(command)).status).toBe(403);
   expect((await send(`${command}${" ".repeat(8192)}`)).status).toBe(413);
+});
+
+test("recipient route names an early claim or acknowledge, with when to retry, and keeps every other lifecycle refusal opaque", async () => {
+  let refusal: unknown;
+  const handler = createSupervisorMessageV2RecipientHttpHandler({
+    pathname: "/recipient",
+    authenticator: {
+      authenticate: () => ({
+        principal: "principal:seat",
+        supervisorId: "supervisor:seat",
+      }),
+    },
+    resolveAssignment: () =>
+      Promise.resolve({
+        principal: "principal:sender",
+        tenantId: "tenant:owned",
+      }),
+    governance: {
+      acknowledge: () => Promise.reject(refusal),
+      claim: () => Promise.reject(refusal),
+    },
+  });
+  const send = async (operation: "acknowledge" | "claim") => {
+    const response = await handler(
+      new Request("http://local/recipient", {
+        body: JSON.stringify({
+          operation,
+          requestId: `request:${operation}`,
+          workflowId: "workflow:owned",
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      })
+    );
+    return { body: await response.json(), status: response.status };
+  };
+  refusal = new SupervisorMessageV2RecipientTooEarlyError(
+    "delivery-not-recorded",
+    new Date(Date.now() + 20_000).toISOString()
+  );
+  const early = await send("claim");
+  expect(early.status).toBe(409);
+  expect(early.body.code).toBe("delivery-not-recorded");
+  expect(early.body.retryAfterMs).toBeGreaterThan(15_000);
+  expect(early.body.retryAfterMs).toBeLessThanOrEqual(20_000);
+  refusal = new SupervisorMessageV2RecipientTooEarlyError("not-claimed", null);
+  expect(await send("acknowledge")).toEqual({
+    body: { code: "not-claimed" },
+    status: 409,
+  });
+  // Anything else (a workflow refusal, an engine error) stays one code, and
+  // none of its message reaches the response.
+  for (const other of [
+    new WorkflowError("invalid-state", "detail: session:secret"),
+    new Error("engine detail"),
+  ]) {
+    refusal = other;
+    expect(await send("claim")).toEqual({
+      body: { code: "lifecycle-command-refused" },
+      status: 409,
+    });
+  }
 });

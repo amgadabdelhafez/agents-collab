@@ -326,7 +326,7 @@ export const runA2ACommand = async (
   );
   if (result.refused.length > 0) {
     throw new Error(
-      `ack refused for ${result.refused.map((entry) => entry.workflowId).join(", ")}${result.acknowledged.length > 0 ? `; acknowledged ${result.acknowledged.map((entry) => entry.workflowId).join(", ")}` : ""}`
+      `ack refused for ${result.refused.map((entry) => `${entry.workflowId} (${entry.reason})`).join(", ")}${result.acknowledged.length > 0 ? `; acknowledged ${result.acknowledged.map((entry) => entry.workflowId).join(", ")}` : ""}`
     );
   }
   return { action: "ack", ...result };

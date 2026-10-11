@@ -41,7 +41,11 @@ import {
   ORCHESTRATION_CONFIG_PATH_ENV,
   orchestrationConfigPathFromEnv,
 } from "./governess-temporal-journal";
-import { acknowledgeRecipientWorkflow } from "./recipient-api-client";
+import {
+  acknowledgeRecipientWorkflow,
+  isSupervisorMessageV2WorkflowId,
+  RecipientAcknowledgementError,
+} from "./recipient-api-client";
 import { readRunManifest, updateRunManifest } from "./run-state";
 import {
   isSupervisorEndpointKind,
@@ -773,10 +777,24 @@ export const sendA2AMessage = async (
 };
 
 /** The recipient's delivery/read ACK of V2 workflows; never completion. */
+/** A refusal's reason: refusal codes only, never free text from a response. */
+const ackRefusalReason = (error: unknown): string => {
+  if (error instanceof RecipientAcknowledgementError) {
+    return error.reason;
+  }
+  return "refused";
+};
+
 export const acknowledgeA2AWorkflows = async (
   endpoint: A2AClientEndpoint,
   workflowIds: readonly string[],
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
+  /** How early refusals are waited out (acknowledgeRecipientWorkflow). */
+  early: {
+    earlyWaitMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {}
 ): Promise<{
   acknowledged: { phase: string; workflowId: string }[];
   refused: { reason: string; workflowId: string }[];
@@ -785,8 +803,13 @@ export const acknowledgeA2AWorkflows = async (
   const acknowledged: { phase: string; workflowId: string }[] = [];
   const refused: { reason: string; workflowId: string }[] = [];
   for (const workflowId of workflowIds) {
+    if (!isSupervisorMessageV2WorkflowId(workflowId)) {
+      refused.push({ reason: "not-a-v2-workflow-id", workflowId });
+      continue;
+    }
     try {
       const receipt = await acknowledgeRecipientWorkflow({
+        ...early,
         fetchImpl,
         token: endpoint.token(),
         url: endpoint.url(`${endpoint.routePath}/recipient`),
@@ -794,10 +817,7 @@ export const acknowledgeA2AWorkflows = async (
       });
       acknowledged.push({ phase: receipt.phase, workflowId });
     } catch (error) {
-      refused.push({
-        reason: error instanceof Error ? error.message : "refused",
-        workflowId,
-      });
+      refused.push({ reason: ackRefusalReason(error), workflowId });
     }
   }
   return { acknowledged, refused, workResultCompleted: false };

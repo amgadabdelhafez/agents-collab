@@ -523,6 +523,50 @@ test("lease sweep: an unobservable kind is left to its holder; a store that cann
   expect(f.enrollment.notEnrolledSince("supervisor:harvto")).toBe(START + 1000);
 });
 
+test("lease renewal on demand (the recipient route's catch-up): an expired lease of a live session is renewed with its own fence; anything else is left to the pass", async () => {
+  const f = sweepFixture([
+    lease("supervisor:harvto", { expiresAt: iso(-500) }),
+    lease("supervisor:harness"),
+    lease("supervisor:runner", { expiresAt: iso(-500), releasedAt: iso(-1) }),
+    lease("supervisor:stranger", {
+      expiresAt: iso(-500),
+      principal: "principal:stranger",
+    }),
+  ]);
+  // The renewal lagged behind the TTL; the session is observed live.
+  expect(await f.enrollment.renewIfLive("supervisor:harvto")).toBe(true);
+  expect(f.calls).toEqual([
+    {
+      input: {
+        fence: { epoch: 4, holderRef: "holder:harvto" },
+        recipient: "supervisor:harvto",
+        scope: { principal: "principal:harvto", tenantId: "tenant:local" },
+        ttlMs: 60_000,
+      },
+      operation: "renew",
+    },
+  ]);
+  // A live lease needs nothing; a released one, an unconfigured supervisor's
+  // and a session not observed live are not renewed.
+  expect(await f.enrollment.renewIfLive("supervisor:harness")).toBe(true);
+  expect(await f.enrollment.renewIfLive("supervisor:runner")).toBe(false);
+  expect(await f.enrollment.renewIfLive("supervisor:stranger")).toBe(false);
+  f.observations.set("supervisor:harvto", "unavailable");
+  expect(await f.enrollment.renewIfLive("supervisor:harvto")).toBe(false);
+  f.observations.set("supervisor:harvto", "terminal");
+  expect(await f.enrollment.renewIfLive("supervisor:harvto")).toBe(false);
+  expect(f.calls.map((call) => call.operation)).toEqual(["renew"]);
+  // A fenced renewal (a newer claim) is no live lease; nor is a store error.
+  f.observations.set("supervisor:harvto", "live");
+  f.results.renew = { reason: "epoch-mismatch", status: "fenced" };
+  expect(await f.enrollment.renewIfLive("supervisor:harvto")).toBe(false);
+  f.failList(new Error("lease store down"));
+  expect(await f.enrollment.renewIfLive("supervisor:harvto")).toBe(false);
+  // Nothing was reported or released on demand.
+  expect(f.logs).toEqual([]);
+  expect(f.enrollment.notEnrolled()).toEqual([]);
+});
+
 test("the orchestration sweep clears a seat a lease release or an r8 hand-over removed, and r8's enrollment leaves a leased seat alone", async () => {
   const outcomes: A2AV2EnrollmentOutcome[][] = [
     [

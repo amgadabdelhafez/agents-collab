@@ -1270,6 +1270,38 @@ export const supervisorMessageV2WorkflowDefinition: WorkflowDefinition = {
   type: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
 };
 
+/**
+ * A recipient command that is early, not wrong: the intended recipient's
+ * claim while its delivery is not yet recorded accepted (a Claude session or
+ * a mailbox reader can see a message before the workflow records the
+ * delivery), or its acknowledge before its claim is recorded. Refused before
+ * any signal: the workflow port keeps every command's outcome under its
+ * request id, refusals included, and the recipient's request ids are derived
+ * from the workflow id, so a signalled early refusal would be replayed to
+ * every later retry of that command, after the delivery was recorded too.
+ * `retryAt` is when the delivery's next attempt falls due, when one is
+ * scheduled: from then on a claim drives that attempt itself.
+ */
+export class SupervisorMessageV2RecipientTooEarlyError extends WorkflowError {
+  readonly reason: "delivery-not-recorded" | "not-claimed";
+  readonly retryAt: null | string;
+
+  constructor(
+    reason: "delivery-not-recorded" | "not-claimed",
+    retryAt: null | string
+  ) {
+    super(
+      "invalid-state",
+      reason === "delivery-not-recorded"
+        ? "SupervisorMessage delivery is not recorded yet; the claim can be retried"
+        : "SupervisorMessage claim is not recorded yet; the acknowledgement can be retried"
+    );
+    this.name = "SupervisorMessageV2RecipientTooEarlyError";
+    this.reason = reason;
+    this.retryAt = retryAt;
+  }
+}
+
 export class SupervisorMessageV2Coordinator {
   readonly #delivery: SupervisorMessageV2DeliveryPort;
   readonly #dispatchOwner: string;
@@ -1571,7 +1603,7 @@ export class SupervisorMessageV2Coordinator {
     claimant: string,
     requestId: string
   ): Promise<SupervisorMessageV2Projection> {
-    const projection = await this.status(trustedScope, workflowId);
+    let projection = await this.status(trustedScope, workflowId);
     if (
       projection.to === claimant &&
       projection.phase === "retry-scheduled" &&
@@ -1594,6 +1626,21 @@ export class SupervisorMessageV2Coordinator {
           `recipient-recovery:${requestId}`
         );
       }
+      projection = await this.status(trustedScope, workflowId);
+    }
+    // Only the intended recipient's early claim is held back here; any other
+    // claimant still reaches the workflow's own refusal.
+    if (
+      projection.to === claimant &&
+      (projection.phase === "retry-scheduled" ||
+        (projection.phase === "routed" &&
+          (projection.deliveredAt === null ||
+            (await this.#deliveryPending(trustedScope, workflowId)))))
+    ) {
+      throw new SupervisorMessageV2RecipientTooEarlyError(
+        "delivery-not-recorded",
+        projection.phase === "retry-scheduled" ? projection.nextRetryAt : null
+      );
     }
     await this.#workflows.signal({
       name: "claim",
@@ -1616,7 +1663,19 @@ export class SupervisorMessageV2Coordinator {
     claimant: string,
     requestId: string
   ): Promise<SupervisorMessageV2Projection> {
-    await this.status(trustedScope, workflowId);
+    const projection = await this.status(trustedScope, workflowId);
+    // The intended recipient's acknowledge before its claim is recorded is
+    // early, not wrong (see SupervisorMessageV2RecipientTooEarlyError).
+    if (
+      projection.to === claimant &&
+      projection.claimedBy === null &&
+      ["escalated", "retry-scheduled", "routed"].includes(projection.phase)
+    ) {
+      throw new SupervisorMessageV2RecipientTooEarlyError(
+        "not-claimed",
+        projection.phase === "retry-scheduled" ? projection.nextRetryAt : null
+      );
+    }
     const receipt = await this.#workflows.signal({
       name: "acknowledge",
       payload: { claimant },
