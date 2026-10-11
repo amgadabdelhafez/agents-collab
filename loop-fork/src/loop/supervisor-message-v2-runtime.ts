@@ -26,6 +26,12 @@ import {
 export const SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE = "supervisor-message.v2";
 /** The schema every V2 message execution answers its status query with. */
 const V2_STATUS_SCHEMA = "supervisor-message-status.v2";
+const isV2Projection = (
+  value: unknown
+): value is SupervisorMessageV2Projection =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { schema?: unknown }).schema === V2_STATUS_SCHEMA;
 const DISPATCH_OWNER = /^v2-dispatcher:[A-Za-z0-9._:-]{1,255}$/;
 
 /**
@@ -1214,6 +1220,15 @@ export const supervisorMessageV2WorkflowDefinition: WorkflowDefinition = {
     if (name === "delivery_pending") {
       return state.phase === "routed" && state.deliveryStatus === "pending";
     }
+    if (name === "recovery_status") {
+      // status and delivery_pending in one answer: the recovery sweep asks
+      // both of every open message on every sweep. A query only; no history.
+      return {
+        deliveryPending:
+          state.phase === "routed" && state.deliveryStatus === "pending",
+        status: projectionOf({ ...state, ...scope }),
+      };
+    }
     if (name === "delivery_request") {
       const workflowId = args?.workflowId;
       if (typeof workflowId !== "string") {
@@ -1270,6 +1285,54 @@ export const supervisorMessageV2WorkflowDefinition: WorkflowDefinition = {
   type: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
 };
 
+/**
+ * The first delivery attempts started after their sends were answered, one
+ * per workflow at a time. Every coordinator of one service shares one, so
+ * the service can let them settle before it closes the stores and engine
+ * client under them. Not a scheduler: it starts nothing on its own, and an
+ * attempt it never sees finish is the recovery sweep's to converge.
+ */
+export class SupervisorMessageV2DeliveryAttempts {
+  /** workflowId -> its attempt in flight. */
+  readonly #inFlight = new Map<string, Promise<void>>();
+
+  /** Starts `attempt` unless one for the workflow is already in flight. */
+  run(workflowId: string, attempt: () => Promise<void>): void {
+    if (this.#inFlight.has(workflowId)) {
+      return;
+    }
+    const running = attempt().finally(() => {
+      this.#inFlight.delete(workflowId);
+    });
+    this.#inFlight.set(workflowId, running);
+  }
+
+  /** Resolves once every attempt, including any started meanwhile, settled. */
+  async idle(): Promise<void> {
+    while (this.#inFlight.size > 0) {
+      await Promise.allSettled(this.#inFlight.values());
+    }
+  }
+
+  /** idle(), or `boundMs` elapsed, whichever is first. */
+  settle(boundMs: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    return Promise.race([
+      this.idle(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, boundMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+}
+
+export interface SupervisorMessageV2CoordinatorOptions {
+  /** Shared with every coordinator of one service; omitted, its own. */
+  attempts?: SupervisorMessageV2DeliveryAttempts;
+  /** Where a failed background attempt is reported; omitted, stderr. */
+  log?: (line: string) => void;
+}
+
 export class SupervisorMessageV2Coordinator {
   readonly #delivery: SupervisorMessageV2DeliveryPort;
   readonly #dispatchOwner: string;
@@ -1280,6 +1343,9 @@ export class SupervisorMessageV2Coordinator {
   readonly #readiness: SupervisorMessageV2DeliveryReadinessPort | undefined;
   readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
   readonly #workflows: WorkflowPort;
+  /** First delivery attempts started after their sends were answered. */
+  readonly #attempts: SupervisorMessageV2DeliveryAttempts;
+  readonly #log: (line: string) => void;
 
   constructor(
     workflows: WorkflowPort,
@@ -1289,7 +1355,8 @@ export class SupervisorMessageV2Coordinator {
     now: () => Date = () => new Date(),
     readiness?: SupervisorMessageV2DeliveryReadinessPort,
     readinessOutage?: SupervisorMessageV2ReadinessOutageTracker,
-    notEnrolled?: SupervisorMessageV2NotEnrolledDeferral
+    notEnrolled?: SupervisorMessageV2NotEnrolledDeferral,
+    options: SupervisorMessageV2CoordinatorOptions = {}
   ) {
     if (!DISPATCH_OWNER.test(dispatchOwner)) {
       throw new Error("SupervisorMessage V2 dispatch owner is invalid");
@@ -1317,6 +1384,9 @@ export class SupervisorMessageV2Coordinator {
     this.#notEnrolled =
       notEnrolled ?? new SupervisorMessageV2NotEnrolledDeferral();
     this.#workflows = workflows;
+    this.#attempts =
+      options.attempts ?? new SupervisorMessageV2DeliveryAttempts();
+    this.#log = options.log ?? ((line) => console.error(line));
   }
 
   async receive(
@@ -1358,14 +1428,58 @@ export class SupervisorMessageV2Coordinator {
       workflowId,
       workflowType: SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE,
     });
-    if (await this.#deliveryPending(trustedScope, workflowId)) {
-      await this.#deliver(trustedScope, workflowId, `${requestId}:delivery`);
-    }
-    return {
-      created: started.created,
-      projection: await this.status(trustedScope, workflowId),
+    // A new execution's start result is its current state; an adopted one
+    // (a sender retry) may have moved on, so it is read.
+    const projection =
+      started.created && isV2Projection(started.result)
+        ? started.result
+        : await this.status(trustedScope, workflowId);
+    // The message is durably accepted: its intent is in the ledger and its
+    // execution runs. The sender's answer waits for nothing more. The first
+    // delivery attempt runs after it, under the same fenced lease as every
+    // recovery attempt, so a sender retry or a sweep that meets it in flight
+    // cannot deliver twice, and an attempt this process never finishes is
+    // the recovery sweep's to converge.
+    this.#attemptInBackground(
+      trustedScope,
       workflowId,
-    };
+      `${requestId}:delivery`
+    );
+    return { created: started.created, projection, workflowId };
+  }
+
+  /**
+   * Resolves once every delivery attempt started after a send's answer has
+   * settled, including any started while waiting. For orderly shutdown and
+   * tests; the durable recovery sweep does not depend on it.
+   */
+  idle(): Promise<void> {
+    return this.#attempts.idle();
+  }
+
+  /**
+   * One first delivery attempt per workflow in flight in this process. Its
+   * failure has no sender to reach (the send was answered), so it is logged
+   * with the workflow id; the message stays pending for recovery.
+   */
+  #attemptInBackground(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string,
+    requestId: string
+  ): void {
+    this.#attempts.run(workflowId, async () => {
+      try {
+        if (await this.#deliveryPending(trustedScope, workflowId)) {
+          await this.#deliver(trustedScope, workflowId, requestId);
+        }
+      } catch (error) {
+        this.#log(
+          `V2 delivery attempt for workflow ${workflowId} failed after its send was answered; recovery retries it: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`
+        );
+      }
+    });
   }
 
   /**
@@ -1463,7 +1577,12 @@ export class SupervisorMessageV2Coordinator {
       failures.push({ error, kind: "foreign-execution" });
       return false;
     }
-    const projection = await this.status(trustedScope, workflowId);
+    // Status and delivery_pending in one query: a delivered message waiting
+    // on its recipient costs this sweep one engine query, not two.
+    const { deliveryPending, projection } = await this.#recoveryStatus(
+      trustedScope,
+      workflowId
+    );
     // The execution is ours and running, yet its message may have ended
     // (a cancel issued outside this coordinator, or a process that stopped
     // before recording). Record it now, while the engine cannot purge it.
@@ -1476,6 +1595,7 @@ export class SupervisorMessageV2Coordinator {
       await this.#ledger.recordTerminalOutcome(workflowId, trustedScope, ended);
       return false;
     }
+    let pending = deliveryPending;
     if (
       projection.phase === "retry-scheduled" &&
       projection.nextRetryAt !== null &&
@@ -1487,8 +1607,10 @@ export class SupervisorMessageV2Coordinator {
         requestId: `recovery-retry:${workflowId}:${projection.nextRetryAt}`,
         workflowId,
       });
+      // The retry changed the state the answer above described.
+      pending = await this.#deliveryPending(trustedScope, workflowId);
     }
-    if (!(await this.#deliveryPending(trustedScope, workflowId))) {
+    if (!pending) {
       return false;
     }
     // A delivery deferred by a readiness-store outage stays pending for the
@@ -1563,6 +1685,50 @@ export class SupervisorMessageV2Coordinator {
       );
     }
     return result.value as SupervisorMessageV2Projection;
+  }
+
+  /**
+   * status() and delivery_pending from one engine query. Anything but a V2
+   * answer (another workflow type under the ID does not know the query)
+   * falls back to the two separate reads, so every refusal and conflict is
+   * exactly the one status() gives.
+   */
+  async #recoveryStatus(
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    workflowId: string
+  ): Promise<{
+    deliveryPending: boolean;
+    projection: SupervisorMessageV2Projection;
+  }> {
+    await this.#ledger.assertStartIntent(workflowId, trustedScope);
+    // A port may answer synchronously or throw synchronously.
+    const value = await Promise.resolve()
+      .then(() =>
+        this.#workflows.query({
+          args: { trustedScope },
+          name: "recovery_status",
+          workflowId,
+        })
+      )
+      .then(
+        (result) => result.value,
+        () => undefined
+      );
+    if (
+      isRecord(value) &&
+      typeof value.deliveryPending === "boolean" &&
+      isV2Projection(value.status)
+    ) {
+      return {
+        deliveryPending: value.deliveryPending,
+        projection: value.status,
+      };
+    }
+    const projection = await this.status(trustedScope, workflowId);
+    return {
+      deliveryPending: await this.#deliveryPending(trustedScope, workflowId),
+      projection,
+    };
   }
 
   async claim(

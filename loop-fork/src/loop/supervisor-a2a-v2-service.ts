@@ -41,6 +41,7 @@ import {
   matchA2AV2Route,
   parseA2AV2SessionRequest,
 } from "./a2a-v2-routes-contract";
+import { a2aV2TimingEnabled, timedPort } from "./a2a-v2-timing";
 import { readBoundedRequestText } from "./bounded-request-body";
 import {
   SupervisorEndpointLeaseError,
@@ -90,6 +91,7 @@ import {
 } from "./supervisor-message-v2-recipient-assignment";
 import {
   SupervisorMessageV2Coordinator,
+  SupervisorMessageV2DeliveryAttempts,
   type SupervisorMessageV2DeliveryLedger,
   type SupervisorMessageV2DeliveryOutcome,
   type SupervisorMessageV2DeliveryPort,
@@ -444,6 +446,9 @@ const safeFailureCategory = (error: unknown): string =>
  * starts a Bun listener, provider adapter, or session rebind endpoint; the
  * standard server supplies authentication and route exposure separately.
  */
+/** How long closing waits for in-flight first delivery attempts. */
+const SERVICE_CLOSE_DRAIN_MS = 10_000;
+
 class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly allSupervisorsRoute: SupervisorA2AV2Service["allSupervisorsRoute"];
   readonly assignmentRoute: SupervisorA2AV2Service["assignmentRoute"];
@@ -475,11 +480,13 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
       ) => Promise<boolean>)
     | undefined;
   readonly #taskStore: TaskStoreResource;
+  readonly #attempts: SupervisorMessageV2DeliveryAttempts;
   #closing: Promise<void> | undefined;
 
   constructor(input: {
     allSupervisorsRoute?: SupervisorA2AV2Service["allSupervisorsRoute"];
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
+    attempts: SupervisorMessageV2DeliveryAttempts;
     leases?: LeaseResource;
     /** r9: the recipient route's reachability rule, for publishResult. */
     reachable?(
@@ -508,6 +515,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   }) {
     this.allSupervisorsRoute = input.allSupervisorsRoute;
     this.assignmentRoute = input.assignmentRoute;
+    this.#attempts = input.attempts;
     this.#leases = input.leases;
     this.#reachable = input.reachable;
     this.#workflows = input.workflows;
@@ -724,6 +732,10 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     // The host stops ingress recovery before its worker. Only after that
     // boundary has settled may this factory release V2 session, ledger, and
     // task clients. Concurrent callers share this exact barrier.
+    // First, within a bound, the delivery attempts started after their sends
+    // were answered, by any of this service's routes: one cut short here is
+    // the next start's recovery sweep's to converge.
+    await this.#attempts.settle(SERVICE_CLOSE_DRAIN_MS);
     let failed = false;
     for (const resource of [
       this.host,
@@ -1902,6 +1914,9 @@ export const createSupervisorA2AV2Service = async (
         (routing ?? options.recipientEnrollment)?.notEnrolledSince(recipient),
     },
   });
+  // First delivery attempts started after their sends were answered, by any
+  // of this service's coordinators; drained before the stores close.
+  const attempts = new SupervisorMessageV2DeliveryAttempts();
   let taskStore: TaskStoreResource | undefined;
   let ledger: LedgerResource | undefined;
   let sessions: SessionResource | undefined;
@@ -1957,10 +1972,19 @@ export const createSupervisorA2AV2Service = async (
       sessions,
     });
     routing = opened?.routing;
-    const delivery: SupervisorMessageV2DeliveryPort =
-      routing ?? options.delivery;
-    const readiness: SupervisorMessageV2DeliveryReadinessPort =
-      routing ?? sessions;
+    // Debug only (LOOP_A2A_V2_TIMING=1): every call on the send path's
+    // ports is timed to standard error. Off, these are the ports themselves.
+    const timing = a2aV2TimingEnabled();
+    const timed = <T extends object>(name: string, port: T): T =>
+      timing ? timedPort(name, port) : port;
+    const delivery: SupervisorMessageV2DeliveryPort = timed(
+      "delivery",
+      routing ?? options.delivery
+    );
+    const readiness: SupervisorMessageV2DeliveryReadinessPort = timed(
+      "readiness",
+      routing ?? sessions
+    );
     if (options.enrollSessions) {
       stage = "session-enrollment";
       const store = sessions;
@@ -1972,9 +1996,12 @@ export const createSupervisorA2AV2Service = async (
           store.register(scope, descriptor),
       });
     }
-    const workflows = dependencies.createWorkflows(
-      options.host.workflowClient,
-      options.host.taskQueue
+    const workflows = timed(
+      "workflows",
+      dependencies.createWorkflows(
+        options.host.workflowClient,
+        options.host.taskQueue
+      )
     );
     let governance: GovernedSupervisorMessageV2Service | undefined;
     if (options.messageAuthority) {
@@ -1994,7 +2021,8 @@ export const createSupervisorA2AV2Service = async (
           () => new Date(options.now()),
           readiness,
           readinessOutage,
-          notEnrolled
+          notEnrolled,
+          { attempts }
         ),
         now: options.now,
         receipts,
@@ -2003,9 +2031,10 @@ export const createSupervisorA2AV2Service = async (
     // Every ingress (primary and peer) shares these, the outage tracker and
     // the not-enrolled deferral among them.
     const shared = {
+      attempts,
       delivery,
       dispatchOwner: options.dispatchOwner,
-      ledger,
+      ledger: timed("ledger", ledger),
       notEnrolled,
       now: options.now,
       policy: options.policy,
@@ -2086,7 +2115,8 @@ export const createSupervisorA2AV2Service = async (
         () => new Date(options.now()),
         readiness,
         readinessOutage,
-        notEnrolled
+        notEnrolled,
+        { attempts }
       ),
       taskStore,
     });
@@ -2134,6 +2164,7 @@ export const createSupervisorA2AV2Service = async (
     }
     ownedService = new OwnedSupervisorA2AV2Service({
       allSupervisorsRoute: r9.route,
+      attempts,
       assignmentRoute,
       leases,
       reachable: r9.reachable,

@@ -291,6 +291,21 @@ const harness = (
     notEnrolled
   );
   const status = (workflowId: string) => coordinator.status(scope, workflowId);
+  // A send is answered before its first delivery attempt, which then runs in
+  // the background. These tests are about that attempt's outcome, so they
+  // wait for it to settle and read the message's state after it.
+  const receive = async (
+    trustedScope: TrustedSupervisorMessageV2Scope,
+    input: SupervisorMessageV2Input,
+    requestId: string
+  ) => {
+    const received = await coordinator.receive(trustedScope, input, requestId);
+    await coordinator.idle();
+    return {
+      ...received,
+      projection: await coordinator.status(trustedScope, received.workflowId),
+    };
+  };
   const signals = (workflowId: string) =>
     workflows
       .inspect(workflowId)
@@ -315,6 +330,7 @@ const harness = (
     providerDown,
     readinessChecks,
     readinessStore,
+    receive,
     signalPayloads,
     signals,
     status,
@@ -327,13 +343,13 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("a ready seat is delivered exactly once across receive replay and recovery", async () => {
     const h = harness();
     const input = inputFor("ready-once");
-    const first = await h.coordinator.receive(scope, input, "request:ready");
+    const first = await h.receive(scope, input, "request:ready");
     expect(first.projection.phase).toBe("routed");
     expect(first.projection.deliveredAt).not.toBeNull();
     expect(first.projection.deliveryAttempts).toBe(1);
     expect(h.delivered).toHaveLength(1);
 
-    const replay = await h.coordinator.receive(scope, input, "request:ready");
+    const replay = await h.receive(scope, input, "request:ready");
     expect(replay.created).toBe(false);
     expect(await h.coordinator.recoverPending()).toBe(0);
     expect(h.delivered).toHaveLength(1);
@@ -343,7 +359,7 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("an unready seat on receive becomes a retryable delivery_failed, then delivers once when ready", async () => {
     const h = harness();
     h.unready.add("supervisor:target");
-    const received = await h.coordinator.receive(
+    const received = await h.receive(
       scope,
       inputFor("stale-seat"),
       "request:stale"
@@ -394,12 +410,12 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
     const h = harness();
     h.providerDown.add("supervisor:a-stale");
     h.providerDown.add("supervisor:z-ready");
-    const stale = await h.coordinator.receive(
+    const stale = await h.receive(
       scope,
       inputFor("sweep-stale", "supervisor:a-stale"),
       "request:sweep-stale"
     );
-    const ready = await h.coordinator.receive(
+    const ready = await h.receive(
       scope,
       inputFor("sweep-ready", "supervisor:z-ready"),
       "request:sweep-ready"
@@ -459,7 +475,7 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("a claimant's due retry with an unready seat records a retryable delivery_failed", async () => {
     const h = harness();
     h.providerDown.add("supervisor:target");
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("claim-stale"),
       "request:claim-stale"
@@ -504,7 +520,7 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("an unready seat still consumes delivery attempts and dead-letters at the policy bound", async () => {
     const h = harness();
     h.unready.add("supervisor:target");
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("unready-bound"),
       "request:unready-bound"
@@ -524,7 +540,7 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("a readiness store outage defers delivery without consuming an attempt or a lease", async () => {
     const h = harness();
     h.readinessStore.down = true;
-    const received = await h.coordinator.receive(
+    const received = await h.receive(
       scope,
       inputFor("store-outage"),
       "request:store-outage"
@@ -563,7 +579,7 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
   test("a readiness store outage on a claimant's due retry leaves the attempt for recovery", async () => {
     const h = harness();
     h.providerDown.add("supervisor:target");
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("claim-outage"),
       "request:claim-outage"
@@ -606,16 +622,8 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("an outage logs one line per recipient on entering deferral and one on leaving it, not one per attempt", async () => {
     const h = harness();
     h.readinessStore.down = true;
-    await h.coordinator.receive(
-      scope,
-      inputFor("log-a", "supervisor:a"),
-      "request:log-a"
-    );
-    await h.coordinator.receive(
-      scope,
-      inputFor("log-b", "supervisor:b"),
-      "request:log-b"
-    );
+    await h.receive(scope, inputFor("log-a", "supervisor:a"), "request:log-a");
+    await h.receive(scope, inputFor("log-b", "supervisor:b"), "request:log-b");
     for (let sweep = 0; sweep < 4; sweep += 1) {
       h.advance(30_000);
       expect(await h.coordinator.recoverPending()).toBe(0);
@@ -635,7 +643,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
     expect(h.logs).toEqual(afterOutage);
 
     // A later delivery while the store answers says nothing more.
-    await h.coordinator.receive(
+    await h.receive(
       scope,
       inputFor("log-a-again", "supervisor:a"),
       "request:log-a-again"
@@ -647,7 +655,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("a store that answers the seat is not ready ends the outage too", async () => {
     const h = harness();
     h.readinessStore.downFor.add("supervisor:target");
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("outage-then-unready"),
       "request:outage-then-unready"
@@ -673,7 +681,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
       recipientsDeferred: 0,
     });
     h.readinessStore.downFor.add("supervisor:a");
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("count-a", "supervisor:a"),
       "request:count-a"
@@ -712,7 +720,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("an outage that outlasts its bound becomes a retryable delivery failure that consumes attempts up to the policy bound", async () => {
     const h = harness({ outageBoundMs: 60_000 });
     h.readinessStore.down = true;
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("outage-bound"),
       "request:outage-bound"
@@ -756,7 +764,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("one continuous outage observed only every half hour is still one outage", async () => {
     const h = harness();
     h.readinessStore.down = true;
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("sparse-outage"),
       "request:sparse-outage"
@@ -779,7 +787,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("a bound longer than an hour keeps an outage observed every ninety minutes as one outage", async () => {
     const h = harness({ outageBoundMs: 7_200_000 });
     h.readinessStore.down = true;
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("long-bound"),
       "request:long-bound"
@@ -798,7 +806,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("an outage nothing observed for over two hours, with no message waiting on it, is over: the next failure starts a new bound", async () => {
     const h = harness({ outageBoundMs: 60_000 });
     h.readinessStore.down = true;
-    const first = await h.coordinator.receive(
+    const first = await h.receive(
       scope,
       inputFor("stale-outage"),
       "request:stale-outage"
@@ -821,7 +829,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
     expect(h.outage.recipients(h.at())).toEqual([]);
     // A later, separate outage defers under its own bound instead of
     // failing the new message's first attempt at once.
-    const second = await h.coordinator.receive(
+    const second = await h.receive(
       scope,
       inputFor("stale-outage-later"),
       "request:stale-outage-later"
@@ -846,7 +854,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
       maxDeliveryAttempts: 2,
       retryDelayMs: 86_400_000,
     };
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       input,
       "request:ended-outage"
@@ -864,7 +872,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
     // having asked it about this recipient in between.
     h.advance(10_800_000);
     expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(0);
-    const later = await h.coordinator.receive(
+    const later = await h.receive(
       scope,
       inputFor("ended-outage-later"),
       "request:ended-outage-later"
@@ -883,13 +891,13 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("a store answer for one recipient does not end another recipient's outage", async () => {
     const h = harness({ outageBoundMs: 60_000 });
     h.readinessStore.downFor.add("supervisor:a");
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("partial-a", "supervisor:a"),
       "request:partial-a"
     );
     h.advance(30_000);
-    await h.coordinator.receive(
+    await h.receive(
       scope,
       inputFor("partial-b", "supervisor:b"),
       "request:partial-b"
@@ -908,7 +916,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
     h.readinessStore.down = true;
     const input = inputFor("long-retry-outage");
     input.policy = { ...input.policy, retryDelayMs: 86_400_000 };
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       input,
       "request:long-retry-outage"
@@ -941,7 +949,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
   test("outage failures count only the attempts the outage failed, not a verdict another dispatcher's lease absorbed", async () => {
     const h = harness({ outageBoundMs: 60_000 });
     h.readinessStore.down = true;
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("held-outage"),
       "request:held-outage"
@@ -1007,6 +1015,7 @@ describe("SupervisorMessageV2 readiness outage deferral bound", () => {
         inputFor("default-bound"),
         "request:default-bound"
       );
+      await coordinator.idle();
       expect(errors.mock.calls.map(([line]) => String(line))).toEqual([
         entered("supervisor:target"),
       ]);
@@ -1039,7 +1048,7 @@ describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
     const h = harness({ notEnrolledBoundMs: 60_000 });
     h.unready.add(target);
     h.notEnrolledSince.set(target, h.at().getTime());
-    const { workflowId, projection } = await h.coordinator.receive(
+    const { workflowId, projection } = await h.receive(
       scope,
       inputFor("not-enrolled-wait"),
       "request:not-enrolled-wait"
@@ -1079,7 +1088,7 @@ describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
     h.unready.add(target);
     // The seat stopped being enrolled 50 seconds before this message.
     h.notEnrolledSince.set(target, h.at().getTime() - 50_000);
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       inputFor("not-enrolled-bound"),
       "request:not-enrolled-bound"
@@ -1124,7 +1133,7 @@ describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
     h.notEnrolledSince.set(target, h.at().getTime());
     const input = inputFor("not-enrolled-long-retry");
     input.policy = { ...input.policy, retryDelayMs: 7_200_000 };
-    const { workflowId } = await h.coordinator.receive(
+    const { workflowId } = await h.receive(
       scope,
       input,
       "request:not-enrolled-long-retry"
@@ -1141,7 +1150,7 @@ describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
   test("an enrolled recipient whose seat is not ready still spends an attempt", async () => {
     const h = harness({ notEnrolledBoundMs: 60_000 });
     h.unready.add(target);
-    const { projection } = await h.coordinator.receive(
+    const { projection } = await h.receive(
       scope,
       inputFor("enrolled-unready"),
       "request:enrolled-unready"
@@ -1159,7 +1168,7 @@ describe("SupervisorMessageV2 not-enrolled recipient deferral bound", () => {
   test("a not-enrolled recipient the store still finds ready is delivered", async () => {
     const h = harness({ notEnrolledBoundMs: 60_000 });
     h.notEnrolledSince.set(target, h.at().getTime());
-    const { projection } = await h.coordinator.receive(
+    const { projection } = await h.receive(
       scope,
       inputFor("not-enrolled-ready"),
       "request:not-enrolled-ready"
@@ -1277,7 +1286,12 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
       inputFor("pending", "supervisor:z-ready"),
       "request:pending"
     );
-    expect(pending.projection.phase).toBe("retry-scheduled");
+    // The send is answered first; its delivery attempt runs after it.
+    expect(pending.projection.phase).toBe("routed");
+    await s.coordinator.idle();
+    expect((await s.coordinator.status(scope, pending.workflowId)).phase).toBe(
+      "retry-scheduled"
+    );
     s.providerDown.clear();
     s.advance(500);
 
@@ -1300,6 +1314,7 @@ describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => 
       inputFor("pending", "supervisor:z-ready"),
       "request:pending"
     );
+    await s.coordinator.idle();
     s.providerDown.clear();
     s.advance(500);
     await expect(s.coordinator.recoverPending()).rejects.toThrow(
@@ -1342,7 +1357,7 @@ describe("SupervisorMessageV2 workflow id deployment", () => {
 
   test("mints the deployment workflow id for a new message", async () => {
     const h = harness();
-    const received = await h.coordinator.receive(
+    const received = await h.receive(
       scope,
       inputFor("new-format"),
       "request:new"
@@ -1377,7 +1392,7 @@ describe("SupervisorMessageV2 workflow id deployment", () => {
     await h.coordinator.recoverPending();
     expect(h.delivered).toHaveLength(1);
 
-    const retry = await h.coordinator.receive(scope, input, "request:retry");
+    const retry = await h.receive(scope, input, "request:retry");
 
     expect(retry.workflowId).toBe(legacy);
     expect(retry.created).toBe(false);

@@ -57,6 +57,23 @@ const SCOPE = {
   principal: "principal:v2-service-test",
   tenantId: "tenant:v2-service-test",
 };
+/**
+ * A send is answered once the message is durably accepted; its first
+ * delivery attempt runs after the answer. Waits, bounded, for `condition`.
+ */
+const eventually = async (
+  label: string,
+  condition: () => boolean,
+  timeoutMs = 30_000
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${label}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+};
 const RECIPIENT = "supervisor:harness-desktop";
 const PEER = "supervisor:harness-peer";
 const SENDER = "supervisor:portfolio-coordinator";
@@ -1118,6 +1135,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
       metadata: undefined,
       tenant: SCOPE.tenantId,
     });
+    await eventually("the first delivery", () => deliveries >= 1);
     expect(deliveries).toBe(1);
     const workflowId = [...ownedWorkflowIds][0];
     if (!(workflowId && service.governance)) {
@@ -1424,6 +1442,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
       tenant: SCOPE.tenantId,
     });
     expect("id" in peerTask).toBe(true);
+    await eventually("the peer delivery", () => deliveries >= 2);
     expect(deliveries).toBe(2);
     const peerWorkflow = [...ownedWorkflowIds].find(
       (id) => id !== workflowId && id !== graphWorkflowId
@@ -1656,6 +1675,7 @@ test("end to end on PostgreSQL and Temporal: send a message, start its result gr
       metadata: undefined,
       tenant: SCOPE.tenantId,
     });
+    await eventually("the delivery", () => ownedWorkflowIds.size >= 1);
     const messageWorkflowId = [...ownedWorkflowIds][0];
     if (!(messageWorkflowId && "id" in submitted)) {
       throw new Error("Expected a delivered message and an A2A task");
@@ -1939,6 +1959,7 @@ test("r9 per-supervisor ingress end to end on PostgreSQL and Temporal: an accept
     if (!("id" in submitted)) {
       throw new Error("Expected an A2A task");
     }
+    await eventually("the delivery", () => delivered.length >= 1);
     expect(delivered).toHaveLength(1);
     const [envelope] = delivered;
     expect(envelope).toMatchObject({
@@ -2492,7 +2513,9 @@ test("a stopped PostgreSQL session store defers a delivery with one log line unt
       input,
       "request:stopped-session-store"
     );
-    expect(received.projection).toMatchObject({
+    // The send is answered first; its delivery attempt runs after it.
+    await coordinator.idle();
+    expect(await coordinator.status(scope, received.workflowId)).toMatchObject({
       deliveryAttempts: 0,
       phase: "routed",
     });

@@ -22,6 +22,7 @@ import {
   withA2AV2EnvFile,
 } from "./a2a-v2-env";
 import { matchA2AV2Route } from "./a2a-v2-routes-contract";
+import { a2aV2TimingProbe } from "./a2a-v2-timing";
 import { readBridgeStatus } from "./bridge-store";
 import {
   BridgeSupervisorMessageDeliveryPort,
@@ -2828,15 +2829,18 @@ export const runLoopOrchestrationServer = async (
         });
       }, config.wake.intervalMs);
     }
+    // Debug only (LOOP_A2A_V2_TIMING=1); otherwise every wrap is identity.
+    const timing = a2aV2TimingProbe(env);
+    const timedReconcile = timing.pass("reconcile pass", reconcile);
     reconcileTimer = setInterval(() => {
-      reconcile().catch((error) => {
+      timedReconcile().catch((error) => {
         reconciliationHealthy = false;
         console.error(
           `orchestration bridge reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}`
         );
       });
     }, 250);
-    const handler = createLoopOrchestrationFetchHandler({
+    const untimedHandler = createLoopOrchestrationFetchHandler({
       // A configured plane that is disabled answers 503 on its own routes.
       a2aV2DisabledRoutePath: () =>
         plane.state === "disabled" ? start.routePath : undefined,
@@ -2850,6 +2854,7 @@ export const runLoopOrchestrationServer = async (
       notEnrolledSeats: () => notEnrolled,
       reconciliationHealthy: () => reconciliationHealthy,
     });
+    const handler = timing.handler(untimedHandler);
     const server = serve({
       fetch: handler,
       hostname: config.hostname,
@@ -2857,6 +2862,7 @@ export const runLoopOrchestrationServer = async (
     });
     await new Promise<void>((resolve) => {
       const stop = () => {
+        timing.stop();
         process.off("SIGINT", stop);
         process.off("SIGTERM", stop);
         options.signal?.removeEventListener("abort", stop);

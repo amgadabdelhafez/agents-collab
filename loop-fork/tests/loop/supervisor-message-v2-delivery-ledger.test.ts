@@ -48,6 +48,23 @@ import {
 import { DisposablePostgres } from "../support/disposable-postgres";
 
 /**
+ * A send is answered before its first delivery attempt, which then runs in
+ * the background. These tests are about the attempt's outcome, so they wait
+ * for it to settle and read the message's state after it.
+ */
+const settledReceive = async (
+  coordinator: SupervisorMessageV2Coordinator,
+  ...args: Parameters<SupervisorMessageV2Coordinator["receive"]>
+) => {
+  const received = await coordinator.receive(...args);
+  await coordinator.idle();
+  return {
+    ...received,
+    projection: await coordinator.status(args[0], received.workflowId),
+  };
+};
+
+/**
  * The base-era build's own ledger code: the files of 40097564 this ledger
  * class needs, vendored unmodified under tests/fixtures. Each is pinned to
  * its git blob id at that commit, so the rollback tests below run the code a
@@ -708,7 +725,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     }));
     const input = inputFor(`exhausted-${randomUUID()}`, 1);
     const workflowId = workflowIdOf(input);
-    await coordinator.receive(SCOPE, input, "exhausted-receive");
+    await settledReceive(coordinator, SCOPE, input, "exhausted-receive");
     expect(workflows.presence(workflowId)).toBe("closed");
     await expect(ledger.terminalOutcome(workflowId, SCOPE)).resolves.toBe(
       "exhausted"
@@ -720,7 +737,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     expect(workflows.starts).toEqual([workflowId]);
     expect(delivered).toHaveLength(1);
     await expect(
-      coordinator.receive(SCOPE, input, "exhausted-sender-retry")
+      settledReceive(coordinator, SCOPE, input, "exhausted-sender-retry")
     ).rejects.toMatchObject({ code: "conflict", name: "WorkflowError" });
     expect(workflows.starts).toEqual([workflowId]);
     expect(delivered).toHaveLength(1);
@@ -733,7 +750,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     }));
     const input = inputFor(`dead-lettered-${randomUUID()}`, 5);
     const workflowId = workflowIdOf(input);
-    await coordinator.receive(SCOPE, input, "dead-letter-receive");
+    await settledReceive(coordinator, SCOPE, input, "dead-letter-receive");
     await expect(ledger.terminalOutcome(workflowId, SCOPE)).resolves.toBe(
       "dead-lettered"
     );
@@ -782,7 +799,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     const { coordinator, delivered, ledger, workflows } = await harness();
     const input = inputFor(`delivered-${randomUUID()}`);
     const workflowId = workflowIdOf(input);
-    await coordinator.receive(SCOPE, input, "delivered-receive");
+    await settledReceive(coordinator, SCOPE, input, "delivered-receive");
     // Closed outside this host, before any sweep could record an outcome.
     workflows.cancel({
       reason: "operator",
@@ -818,7 +835,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     const { coordinator, ledger } = await harness();
     const input = inputFor(`acknowledged-${randomUUID()}`);
     const workflowId = workflowIdOf(input);
-    await coordinator.receive(SCOPE, input, "ack-receive");
+    await settledReceive(coordinator, SCOPE, input, "ack-receive");
     await coordinator.claim(SCOPE, workflowId, input.to, "ack-claim");
     await expect(ledger.terminalOutcome(workflowId, SCOPE)).resolves.toBe(
       undefined
@@ -846,7 +863,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
       workflowType: "supervisor-message.v2",
     });
 
-    await coordinator.receive(SCOPE, input, "resurrected-sender-retry");
+    await settledReceive(coordinator, SCOPE, input, "resurrected-sender-retry");
 
     expect(delivered).toEqual([]);
   });
@@ -967,7 +984,12 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     ]);
 
     // The sender retries the same dedupe key after the upgrade.
-    const retried = await coordinator.receive(SCOPE, input, "sender-retry");
+    const retried = await settledReceive(
+      coordinator,
+      SCOPE,
+      input,
+      "sender-retry"
+    );
 
     expect(retried.workflowId).toBe(legacyId);
     expect(retried.created).toBe(false);
@@ -997,7 +1019,7 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     const { coordinator, delivered, workflows } = coordinatorOver(upgraded);
 
     await coordinator.recoverPending();
-    await coordinator.receive(SCOPE, input, "sender-retry");
+    await settledReceive(coordinator, SCOPE, input, "sender-retry");
 
     expect([...new Set(workflows.starts)]).toEqual([legacyId]);
     expect(delivered).toEqual([

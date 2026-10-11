@@ -244,3 +244,28 @@ What changed:
 - **`bun run test:compiled-a2a`** builds the binary into a scratch directory, nothing installed. It then runs `tests/loop/compiled-binary-a2a.test.ts`, which tests send, status and ack through the built binary for both the server and the client, including the 12 s slow-answer case. The file is skipped unless `LOOP_COMPILED_BINARY` is set.
 
 Not changed: why the live service's send path takes up to about 15 s (Temporal queries and the delivery attempt run inside the request). The 10 s budget on `status` and on the recipient route (`ack`) is also unchanged, and either can hit the same limit on a slow host.
+
+## Send latency (claude/fix-a2a-send-latency, 2026-10-11)
+
+Later the same day, successive live V2 sends from `supervisor:harness-desktop` to `supervisor:portfolio-coordinator` answered in about 3 s, 15 s, 18 s and 66 s. Every message was delivered.
+
+Evidence (live, read only):
+
+- **The ledger is tiny.** 4 start intents, 4 delivery rows, 4 A2A tasks, no lease or readiness rows. Index scans dominate. Full scans (hypothesis d) are ruled out.
+- **Each delivery succeeded on its first attempt** (lease fence 1). No readiness or not-enrolled wait (hypothesis c).
+- **Every step of the send was slow, not one step.** Times from each task's arrival (`status_timestamp`): the workflow started 4 to 9 s later, the lease was claimed 2 to 23 s later, the delivery completed, and the task was saved 5 to 53 s after arrival. On the queue, workflow tasks took 0.3 to 5 s. Workflow tasks on the same queue in September took 10 to 100 ms. The worker logged three workflow tasks over 5 s (TMPRL1104) at 06:52, 06:53 and 07:02, when no send was in flight. Only the 30 s recovery sweep was querying then.
+- **Only one worker polls the queue**, and only 9 executions run on it. Old workflows replaying (hypothesis a, as a backlog) is ruled out.
+- **The host was saturated.** Load average was 158 to 167 on 18 cores. The Docker VM (4 CPUs) was shared with about 14 test PostgreSQL containers.
+
+Root cause: the send answered only after the whole first delivery attempt. That attempt is about 25 serialized remote calls: about 10 PostgreSQL statements, about 12 Temporal RPCs including 7 queries that each need a workflow task on the single worker, the mailbox write, and the A2A task save. The answer time was the sum of every hop's latency. On a saturated host each hop cost 0.1 to 1.5 s, and a workflow task up to 5 s. Meanwhile the 30 s recovery sweep made about 10 calls per open message, with 3 queries each. Open messages include every delivered message not yet acknowledged, and mailbox-only recipients never acknowledge through V2. So that load grows with every message and competes for the same worker and database (hypotheses b and e). A local throwaway server reproduces it at host load about 160: 0.5 to 7.5 s per send before the change.
+
+What changed:
+
+- **A send answers on durable acceptance.** That means the ledger intent plus the workflow start. A new execution's start result is its state, so the send makes no status query. The first delivery attempt runs after the answer, under the same fenced lease as every recovery attempt. A sender retry, or a sweep that meets the attempt in flight, cannot deliver twice. One attempt per workflow is in flight per process (`SupervisorMessageV2DeliveryAttempts`). A failure is logged with the workflow id and left to the recovery sweep. The task state is SUBMITTED either way, and delivery is still not acknowledgement. There is no new transport or scheduler.
+- **The service drains in-flight attempts (up to 10 s) before it closes its stores.** An attempt cut short is the next start's recovery sweep's to converge.
+- **The sweep asks one query per open message.** A new V2 query, `recovery_status`, answers both status and delivery_pending. It is a query only, so it adds no history and is replay safe. A non-V2 answer falls back to the two old reads, so conflicts are reported exactly as before.
+- **`LOOP_A2A_V2_TIMING=1` (debug only)** times every port call on the send path, every HTTP request and each reconcile pass over 50 ms, and reports main-thread stalls over 100 ms, all to stderr. Lines carry method names and workflow-id suffixes only.
+
+Tests: `tests/loop/supervisor-message-v2-send-latency.test.ts`. A send whose delivery takes 3 s answers within 2 s. Six repeated sends, with a sweep between each, each answer within the bound, the last no slower than the first, and each makes the same number of engine and ledger calls. A retry while an attempt is in flight delivers exactly once. Background failures are logged and recovered. A sweep over delivered messages makes one state query each.
+
+Not changed: host saturation itself, the sweep's per-message start adoption (the existing recovery contract detects foreign and other-type executions there), and the 30 s sweep period.

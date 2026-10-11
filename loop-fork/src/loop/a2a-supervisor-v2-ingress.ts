@@ -13,10 +13,14 @@ import type {
 } from "./supervisor-message-v2-runtime";
 import {
   SupervisorMessageV2Coordinator,
+  SupervisorMessageV2DeliveryAttempts,
   SupervisorMessageV2RecoveryRunner,
 } from "./supervisor-message-v2-runtime";
 import type { SupervisorMessagePolicy } from "./supervisor-message-workflow";
 import type { WorkflowPort } from "./workflow-port";
+
+/** How long closing waits for in-flight first delivery attempts. */
+const INGRESS_CLOSE_DRAIN_MS = 10_000;
 
 /**
  * The owned V2 ingress composition. It intentionally does not create a
@@ -26,6 +30,12 @@ import type { WorkflowPort } from "./workflow-port";
  * recovery without closing caller-owned TaskStore, Temporal, or listener.
  */
 export interface SupervisorA2AV2IngressOptions {
+  /**
+   * First delivery attempts started after a send's answer. Every ingress of
+   * one service shares them, so the service drains them before it closes the
+   * stores; omitted, this ingress keeps its own.
+   */
+  attempts?: SupervisorMessageV2DeliveryAttempts;
   card: Omit<Parameters<typeof agentCardFor>[0], "url"> & { url: string };
   delivery: SupervisorMessageV2DeliveryPort;
   dispatchOwner: string;
@@ -67,6 +77,7 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
   readonly card: AgentCard;
   readonly handler: SupervisorA2ARequestHandler;
   readonly #recovery: SupervisorMessageV2RecoveryRunner;
+  readonly #attempts: SupervisorMessageV2DeliveryAttempts;
   #closed = false;
   #started: Promise<void> | undefined;
 
@@ -78,6 +89,8 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
       throw new Error("Supervisor A2A V2 ingress requires session readiness");
     }
     this.card = agentCardFor(options.card);
+    this.#attempts =
+      options.attempts ?? new SupervisorMessageV2DeliveryAttempts();
     // A live V2 ingress can only be constructed with the common control-plane
     // readiness boundary. This prevents a caller from exposing a V2 route that
     // silently bypasses current-session verification.
@@ -89,7 +102,8 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
       () => new Date(options.now()),
       options.sessionReadiness,
       options.readinessOutage,
-      options.notEnrolled
+      options.notEnrolled,
+      { attempts: this.#attempts, log: options.log }
     );
     this.handler = new SupervisorA2ARequestHandler(
       this.card,
@@ -129,5 +143,9 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
     this.#closed = true;
     await this.#started?.catch(() => undefined);
     await this.#recovery.close();
+    // Let a first delivery attempt started after a send's answer finish
+    // before the caller closes the stores under it, within a bound: one
+    // still unfinished is the next start's recovery sweep's to converge.
+    await this.#attempts.settle(INGRESS_CLOSE_DRAIN_MS);
   }
 }

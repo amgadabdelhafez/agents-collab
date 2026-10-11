@@ -34,6 +34,23 @@ import {
 import { DisposablePostgres } from "../support/disposable-postgres";
 
 /**
+ * A send is answered before its first delivery attempt, which then runs in
+ * the background. These tests are about the attempt's outcome, so they wait
+ * for it to settle and read the message's state after it.
+ */
+const settledReceive = async (
+  coordinator: SupervisorMessageV2Coordinator,
+  ...args: Parameters<SupervisorMessageV2Coordinator["receive"]>
+) => {
+  const received = await coordinator.receive(...args);
+  await coordinator.idle();
+  return {
+    ...received,
+    projection: await coordinator.status(args[0], received.workflowId),
+  };
+};
+
+/**
  * The coordinator's terminal-marker paths on a real Temporal dev server and a
  * real PostgreSQL ledger. The generic Temporal workflow never returns: a
  * message's own terminal phase (acknowledged, canceled, dead-lettered) leaves
@@ -248,7 +265,12 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
       status: "permanent-failure",
     }));
 
-    const received = await coordinator.receive(SCOPE, inputFor(3), "receive");
+    const received = await settledReceive(
+      coordinator,
+      SCOPE,
+      inputFor(3),
+      "receive"
+    );
 
     expect(received.projection.phase).toBe("dead-lettered");
     // The message ended; the engine execution did not.
@@ -266,7 +288,8 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
         status: failure,
       }));
       const input = inputFor(1);
-      const { workflowId } = await coordinator.receive(
+      const { workflowId } = await settledReceive(
+        coordinator,
         SCOPE,
         input,
         `receive-${failure}`
@@ -300,7 +323,12 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
     const ledger = await freshLedger();
     const { coordinator } = coordinatorFor(owner, ledger);
     const input = inputFor();
-    const { workflowId } = await coordinator.receive(SCOPE, input, "receive");
+    const { workflowId } = await settledReceive(
+      coordinator,
+      SCOPE,
+      input,
+      "receive"
+    );
 
     await coordinator.claim(SCOPE, workflowId, input.to, "claim");
     const acknowledged = await coordinator.acknowledge(
@@ -319,7 +347,8 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
   test("a sweep records a cancel issued outside the coordinator while the execution still runs", async () => {
     const ledger = await freshLedger();
     const { coordinator, delivered } = coordinatorFor(owner, ledger);
-    const { workflowId } = await coordinator.receive(
+    const { workflowId } = await settledReceive(
+      coordinator,
       SCOPE,
       inputFor(),
       "receive"
@@ -344,7 +373,8 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
     for (const close of ["terminate", "cancel"] as const) {
       const ledger = await freshLedger();
       const { coordinator } = coordinatorFor(owner, ledger);
-      const { workflowId } = await coordinator.receive(
+      const { workflowId } = await settledReceive(
+        coordinator,
         SCOPE,
         inputFor(),
         `receive-${close}`
@@ -386,10 +416,10 @@ describe("V2 terminal marker on real Temporal and PostgreSQL", () => {
     );
     const workflowId = await recordLegacyIntent(ownerLedger, input);
     expect(await recordLegacyIntent(foreignLedger, input)).toBe(workflowId);
-    await ownerSide.coordinator.receive(SCOPE, input, "owner-receive");
+    await settledReceive(ownerSide.coordinator, SCOPE, input, "owner-receive");
     expect(
       await settle(
-        foreignSide.coordinator.receive(SCOPE, input, "foreign-receive")
+        settledReceive(foreignSide.coordinator, SCOPE, input, "foreign-receive")
       )
     ).toEqual(CONFLICT);
 
@@ -478,7 +508,7 @@ describe("V2 workflow id deployment discriminator on real Temporal and PostgreSQ
       );
       const input = inputFor();
       const received = await settle(
-        coordinator.receive(SCOPE, input, "bundle-receive")
+        settledReceive(coordinator, SCOPE, input, "bundle-receive")
       );
       const workflowId = deriveSupervisorMessageV2WorkflowId(
         SCOPE,
@@ -530,10 +560,10 @@ describe("V2 workflow id deployment discriminator on real Temporal and PostgreSQ
     );
 
     const ours = await settle(
-      ownerSide.coordinator.receive(SCOPE, input, "owner-receive")
+      settledReceive(ownerSide.coordinator, SCOPE, input, "owner-receive")
     );
     const theirs = await settle(
-      foreignSide.coordinator.receive(SCOPE, input, "foreign-receive")
+      settledReceive(foreignSide.coordinator, SCOPE, input, "foreign-receive")
     );
 
     expect(ours).toMatchObject({ value: { created: true } });
@@ -579,7 +609,12 @@ describe("V2 workflow id deployment discriminator on real Temporal and PostgreSQ
     ]);
 
     // A sender retry after the upgrade: the same execution, not a new one.
-    const retried = await coordinator.receive(SCOPE, input, "sender-retry");
+    const retried = await settledReceive(
+      coordinator,
+      SCOPE,
+      input,
+      "sender-retry"
+    );
     expect(retried.workflowId).toBe(legacyId);
     expect(retried.created).toBe(false);
     expect(delivered).toHaveLength(1);
@@ -627,7 +662,7 @@ describe("V2 workflow id deployment discriminator on real Temporal and PostgreSQ
     );
     const workflowId = await recordLegacyIntent(ownerLedger, input);
     await recordLegacyIntent(foreignLedger, input);
-    await ownerSide.coordinator.receive(SCOPE, input, "owner-receive");
+    await settledReceive(ownerSide.coordinator, SCOPE, input, "owner-receive");
     const before = await ownerSide.coordinator.status(SCOPE, workflowId);
     expect(before.phase).toBe("routed");
     return { before, foreignLedger, foreignSide, input, ownerSide, workflowId };
