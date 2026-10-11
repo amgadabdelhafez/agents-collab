@@ -1,5 +1,39 @@
 import { SQL } from "bun";
 import {
+  decideSupervisorEndpointLeaseClaim,
+  decideSupervisorEndpointLeaseFence,
+  isSupervisorEndpointKind,
+  parseSupervisorEndpointLocator,
+  requireSupervisorEndpointHolderRef,
+  requireSupervisorEndpointLeaseFence,
+  requireSupervisorEndpointLeaseTtlMs,
+  requireSupervisorEndpointRecipient,
+  requireSupervisorEndpointSessionRef,
+  resolveSupervisorEndpointLease,
+  SUPERVISOR_ENDPOINT_LEASE_V2_SCHEMA,
+  type SupervisorEndpointKind,
+  type SupervisorEndpointLeaseClaimInput,
+  type SupervisorEndpointLeaseClaimResult,
+  SupervisorEndpointLeaseError,
+  type SupervisorEndpointLeaseFence,
+  type SupervisorEndpointLeaseFenceRefusal,
+  type SupervisorEndpointLeaseReleaseInput,
+  type SupervisorEndpointLeaseReleaseResult,
+  type SupervisorEndpointLeaseRenewInput,
+  type SupervisorEndpointLeaseRenewResult,
+  type SupervisorEndpointLeaseResolution,
+  type SupervisorEndpointLeaseStore,
+  type SupervisorEndpointLeaseStoreDeps,
+  type SupervisorEndpointLeaseV2,
+  type SupervisorEndpointLocator,
+  type SupervisorEndpointLocatorResolver,
+  supervisorEndpointDescriptorIdentity,
+  supervisorEndpointLeaseExpiresAt,
+  supervisorEndpointLeaseHolderSummary,
+  supervisorEndpointLocatorDigest,
+  supervisorEndpointLocatorRefused,
+} from "./supervisor-endpoint-lease";
+import {
   parseTrustedSupervisorMessageV2Scope,
   type TrustedSupervisorMessageV2Scope,
 } from "./supervisor-message-v2-contract";
@@ -530,6 +564,228 @@ const descriptorFromRow = (
   return parseSupervisorSessionDescriptorV2(value, scope);
 };
 
+/* ---------------------------------------------------------------------------
+ * r9 endpoint lease rows (loop_supervisor_endpoint_lease_v2).
+ * ------------------------------------------------------------------------- */
+
+const TENANT_ID_RE = /^tenant:[a-z0-9][a-z0-9._-]{0,127}$/;
+
+interface LeaseRow {
+  descriptor_id: unknown;
+  descriptor_revision: unknown;
+  epoch: unknown;
+  expires_at: unknown;
+  holder_ref: unknown;
+  kind: unknown;
+  locator_digest: unknown;
+  locator_json: unknown;
+  principal: unknown;
+  recipient: unknown;
+  released_at: unknown;
+  session_ref: unknown;
+  tenant_id: unknown;
+}
+
+interface StoredEndpointLease {
+  lease: SupervisorEndpointLeaseV2;
+  /** The descriptor sessionRef the claim bound; renewal keeps it. */
+  sessionRef: string;
+}
+
+const storedLeaseInvalid = (): SupervisorEndpointLeaseError =>
+  new SupervisorEndpointLeaseError("stored endpoint lease is invalid");
+
+const storedInteger = (value: unknown): number => {
+  const number = Number(value);
+  if (
+    !(
+      (typeof value === "number" ||
+        typeof value === "bigint" ||
+        typeof value === "string") &&
+      Number.isSafeInteger(number) &&
+      number >= 1 &&
+      String(value) === String(number)
+    )
+  ) {
+    throw storedLeaseInvalid();
+  }
+  return number;
+};
+
+const storedTimestamp = (value: unknown): string => {
+  let date: Date | undefined;
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === "string") {
+    date = new Date(value);
+  }
+  if (!date || Number.isNaN(date.getTime())) {
+    throw storedLeaseInvalid();
+  }
+  return date.toISOString();
+};
+
+const storedJson = (value: unknown): unknown => {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw storedLeaseInvalid();
+  }
+};
+
+/**
+ * Decodes one stored lease strictly. The locator is re-parsed as untrusted
+ * (ids only) and must still hash to the digest written with it, and the
+ * descriptor id must be the seat scope's own; a row edited out of band is
+ * this store's refusal, never a lease anyone may use.
+ */
+const storedLeaseFromRow = (row: LeaseRow): StoredEndpointLease => {
+  try {
+    const tenantId = requireLeaseTenant(row.tenant_id);
+    const recipient = requireSupervisorEndpointRecipient(row.recipient);
+    const scope = parseTrustedSupervisorMessageV2Scope({
+      principal: row.principal,
+      tenantId,
+    });
+    if (!isSupervisorEndpointKind(row.kind)) {
+      throw storedLeaseInvalid();
+    }
+    const locator: SupervisorEndpointLocator = parseSupervisorEndpointLocator(
+      storedJson(row.locator_json)
+    );
+    if (
+      locator.kind !== row.kind ||
+      supervisorEndpointLocatorDigest(locator) !== row.locator_digest
+    ) {
+      throw storedLeaseInvalid();
+    }
+    const sessionRef = requireSupervisorEndpointSessionRef(row.session_ref);
+    // A stored identity that no longer derives (a Codex sessionRef that does
+    // not name its thread) is refused like any other corrupt row.
+    supervisorEndpointDescriptorIdentity(locator, sessionRef);
+    const descriptorId = requireString(
+      row.descriptor_id,
+      "descriptorId",
+      SESSION_DESCRIPTOR_ID_RE
+    );
+    if (
+      descriptorId !== deriveSupervisorSessionDescriptorV2Id(scope, recipient)
+    ) {
+      throw storedLeaseInvalid();
+    }
+    return {
+      lease: {
+        descriptorId,
+        descriptorRevision: storedInteger(row.descriptor_revision),
+        epoch: storedInteger(row.epoch),
+        expiresAt: storedTimestamp(row.expires_at),
+        holderRef: requireSupervisorEndpointHolderRef(row.holder_ref),
+        kind: row.kind as SupervisorEndpointKind,
+        locator,
+        principal: scope.principal,
+        recipient,
+        releasedAt:
+          row.released_at === null ? null : storedTimestamp(row.released_at),
+        schema: SUPERVISOR_ENDPOINT_LEASE_V2_SCHEMA,
+        tenantId,
+      },
+      sessionRef,
+    };
+  } catch {
+    throw storedLeaseInvalid();
+  }
+};
+
+const leaseFromRow = (row: LeaseRow): SupervisorEndpointLeaseV2 =>
+  storedLeaseFromRow(row).lease;
+
+const requireLeaseTenant = (value: unknown): string => {
+  if (typeof value !== "string" || !TENANT_ID_RE.test(value)) {
+    throw new SupervisorEndpointLeaseError("tenantId is invalid");
+  }
+  return value;
+};
+
+const requireLeaseScope = (value: unknown): TrustedSupervisorMessageV2Scope => {
+  try {
+    return parseTrustedSupervisorMessageV2Scope(value);
+  } catch {
+    throw new SupervisorEndpointLeaseError("scope is invalid");
+  }
+};
+
+const requireLeaseInput = (value: unknown): Record<string, unknown> => {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    throw new SupervisorEndpointLeaseError("lease input is invalid");
+  }
+  return value as Record<string, unknown>;
+};
+
+const parseLeaseClaimInput = (value: SupervisorEndpointLeaseClaimInput) => {
+  const record = requireLeaseInput(value);
+  if (record.takeover !== undefined && typeof record.takeover !== "boolean") {
+    throw new SupervisorEndpointLeaseError("takeover is invalid");
+  }
+  const locator = parseSupervisorEndpointLocator(record.locator);
+  const sessionRef = requireSupervisorEndpointSessionRef(record.sessionRef);
+  return {
+    holderRef: requireSupervisorEndpointHolderRef(record.holderRef),
+    // Also refuses a Codex sessionRef that does not name the thread.
+    identity: supervisorEndpointDescriptorIdentity(locator, sessionRef),
+    locator,
+    recipient: requireSupervisorEndpointRecipient(record.recipient),
+    scope: requireLeaseScope(record.scope),
+    sessionRef,
+    takeover: record.takeover === true,
+    ttlMs: requireSupervisorEndpointLeaseTtlMs(record.ttlMs),
+  };
+};
+
+const parseLeaseFenceInput = (
+  value: SupervisorEndpointLeaseReleaseInput | SupervisorEndpointLeaseRenewInput
+) => {
+  const record = requireLeaseInput(value);
+  return {
+    fence: requireSupervisorEndpointLeaseFence(record.fence),
+    recipient: requireSupervisorEndpointRecipient(record.recipient),
+    scope: requireLeaseScope(record.scope),
+  };
+};
+
+/**
+ * The fence decision, plus scope: a lease written in another principal's
+ * scope (the recipient's principal changed in config) is not this caller's
+ * lease, so it reads as absent.
+ */
+const fenceRefusal = (
+  lease: SupervisorEndpointLeaseV2 | undefined,
+  scope: TrustedSupervisorMessageV2Scope,
+  fence: SupervisorEndpointLeaseFence
+): "ok" | SupervisorEndpointLeaseFenceRefusal =>
+  decideSupervisorEndpointLeaseFence(
+    lease && lease.principal === scope.principal ? lease : undefined,
+    fence
+  );
+
+/**
+ * Rejection handler for every lease store operation: a refusal this store or
+ * the session store decides passes through unchanged; anything else (a
+ * driver or connection failure) means the store could not answer, and its
+ * text is dropped.
+ */
+const rethrowLeaseStoreFailure = (error: unknown): never => {
+  if (
+    error instanceof SupervisorEndpointLeaseError ||
+    error instanceof SupervisorSessionV2Error
+  ) {
+    throw error;
+  }
+  throw new SupervisorMessageV2ReadinessUnavailableError();
+};
+
 /**
  * Durable scoped current-session registry and body-free readiness receipts.
  * Its tables are private control-plane state, not a replacement for Temporal,
@@ -645,6 +901,456 @@ export class PostgresSupervisorSessionV2Store {
       CREATE INDEX IF NOT EXISTS loop_supervisor_session_v2_readiness_receipt_seat_idx
       ON loop_supervisor_session_v2_readiness_receipt (tenant_id, principal, descriptor_id)
     `;
+    // r9: which live session holds a supervisor's endpoint. One row per
+    // (tenant, recipient); see supervisor-endpoint-lease.ts. Additive, so an
+    // r8 binary sharing the database ignores it. `locator_json` holds ids only
+    // (never a path or URL); `locator_digest` is its sha256 as written, which
+    // every read re-derives, and also the lease descriptor's endpointDigest.
+    await this.#sql`
+      CREATE TABLE IF NOT EXISTS loop_supervisor_endpoint_lease_v2 (
+        tenant_id TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        principal TEXT NOT NULL,
+        epoch BIGINT NOT NULL CHECK (epoch >= 1),
+        holder_ref TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        locator_json JSONB NOT NULL,
+        locator_digest TEXT NOT NULL,
+        session_ref TEXT NOT NULL,
+        descriptor_id TEXT NOT NULL,
+        descriptor_revision BIGINT NOT NULL CHECK (descriptor_revision >= 1),
+        expires_at TIMESTAMPTZ NOT NULL,
+        released_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (tenant_id, recipient)
+      )
+    `;
+  }
+
+  /**
+   * The r9 endpoint lease store over this store's connection and descriptor
+   * table (its table is created by `migrate`). `deps.resolveLocator` is the
+   * server's own resolver, bound to its own roots: claim resolves the input
+   * locator and renew re-resolves the stored one before anything is written.
+   */
+  endpointLeases(
+    deps: SupervisorEndpointLeaseStoreDeps
+  ): SupervisorEndpointLeaseStore {
+    const resolveLocator = deps?.resolveLocator;
+    if (typeof resolveLocator !== "function") {
+      throw new SupervisorEndpointLeaseError("resolveLocator is required");
+    }
+    return {
+      claim: (input) =>
+        this.#claimEndpointLease(resolveLocator, input).catch(
+          rethrowLeaseStoreFailure
+        ),
+      list: (tenantId) =>
+        this.#listEndpointLeases(tenantId).catch(rethrowLeaseStoreFailure),
+      release: (input) =>
+        this.#releaseEndpointLease(input).catch(rethrowLeaseStoreFailure),
+      renew: (input) =>
+        this.#renewEndpointLease(resolveLocator, input).catch(
+          rethrowLeaseStoreFailure
+        ),
+      resolve: (tenantId, recipient) =>
+        this.#resolveEndpointLease(tenantId, recipient).catch(
+          rethrowLeaseStoreFailure
+        ),
+    };
+  }
+
+  async #claimEndpointLease(
+    resolveLocator: SupervisorEndpointLocatorResolver,
+    input: SupervisorEndpointLeaseClaimInput
+  ): Promise<SupervisorEndpointLeaseClaimResult> {
+    const claim = parseLeaseClaimInput(input);
+    const { recipient, scope } = claim;
+    // SECURITY: the locator is untrusted. It must resolve, under the server's
+    // own roots and for this recipient, before anything is written.
+    try {
+      resolveLocator(claim.locator, recipient);
+    } catch (error) {
+      return supervisorEndpointLocatorRefused(error);
+    }
+    const now = this.#leaseNow();
+    const expiresAt = supervisorEndpointLeaseExpiresAt(
+      new Date(now),
+      claim.ttlMs
+    );
+    const descriptorId = deriveSupervisorSessionDescriptorV2Id(
+      scope,
+      recipient
+    );
+    let result: SupervisorEndpointLeaseClaimResult | undefined;
+    // Two claims of a never-claimed recipient both find no row to lock; the
+    // loser's INSERT waits for the winner's commit, conflicts, and that claim
+    // is decided again on the row it can now lock.
+    for (let attempt = 0; attempt < 2 && !result; attempt += 1) {
+      await this.#sql.begin(async (sql) => {
+        const rows = await sql<LeaseRow[]>`
+          SELECT tenant_id, recipient, principal, epoch, holder_ref, kind, locator_json,
+          locator_digest, session_ref, descriptor_id, descriptor_revision,
+          expires_at, released_at
+          FROM loop_supervisor_endpoint_lease_v2
+          WHERE tenant_id = ${scope.tenantId} AND recipient = ${recipient}
+          FOR UPDATE
+        `;
+        const current = rows[0] ? leaseFromRow(rows[0]) : undefined;
+        const decision = decideSupervisorEndpointLeaseClaim(
+          current,
+          claim,
+          new Date(now)
+        );
+        if (!decision.allowed) {
+          result = { current: decision.current, status: "held" };
+          return;
+        }
+        const written = current
+          ? await sql`
+              UPDATE loop_supervisor_endpoint_lease_v2
+              SET principal = ${scope.principal},
+                epoch = ${decision.nextEpoch},
+                holder_ref = ${claim.holderRef},
+                kind = ${claim.locator.kind},
+                locator_json = ${canonical(claim.locator)}::text::jsonb,
+                locator_digest = ${claim.identity.endpointDigest},
+                session_ref = ${claim.sessionRef},
+                descriptor_id = ${descriptorId},
+                descriptor_revision = 1,
+                expires_at = ${expiresAt}::timestamptz,
+                released_at = NULL,
+                updated_at = now()
+              WHERE tenant_id = ${scope.tenantId}
+                AND recipient = ${recipient}
+                AND epoch = ${current.epoch}
+            `
+          : await sql`
+              INSERT INTO loop_supervisor_endpoint_lease_v2 (
+                tenant_id, recipient, principal, epoch, holder_ref, kind,
+                locator_json, locator_digest, session_ref, descriptor_id,
+                descriptor_revision, expires_at
+              ) VALUES (
+                ${scope.tenantId}, ${recipient}, ${scope.principal},
+                ${decision.nextEpoch}, ${claim.holderRef}, ${claim.locator.kind},
+                ${canonical(claim.locator)}::text::jsonb, ${claim.identity.endpointDigest},
+                ${claim.sessionRef}, ${descriptorId}, 1, ${expiresAt}::timestamptz
+              ) ON CONFLICT (tenant_id, recipient) DO NOTHING
+            `;
+        if (written.count !== 1) {
+          if (current) {
+            throw new SupervisorEndpointLeaseError(
+              "endpoint lease claim lost the current epoch"
+            );
+          }
+          return;
+        }
+        // The descriptor is registered or rebound in the same transaction:
+        // lease and descriptor commit together or not at all.
+        const descriptor = await this.#bindLeaseDescriptor(
+          sql,
+          scope,
+          {
+            ...claim.identity,
+            descriptorId,
+            expiresAt,
+            issuedAt: now,
+            principal: scope.principal,
+            recipient,
+            revision: 0,
+            schema: SUPERVISOR_SESSION_DESCRIPTOR_V2_SCHEMA,
+            tenantId: scope.tenantId,
+          },
+          "claim"
+        );
+        await sql`
+          UPDATE loop_supervisor_endpoint_lease_v2
+          SET descriptor_revision = ${descriptor.revision}
+          WHERE tenant_id = ${scope.tenantId} AND recipient = ${recipient}
+        `;
+        result = {
+          descriptor,
+          lease: {
+            descriptorId,
+            descriptorRevision: descriptor.revision,
+            epoch: decision.nextEpoch,
+            expiresAt,
+            holderRef: claim.holderRef,
+            kind: claim.locator.kind,
+            locator: claim.locator,
+            principal: scope.principal,
+            recipient,
+            releasedAt: null,
+            schema: SUPERVISOR_ENDPOINT_LEASE_V2_SCHEMA,
+            tenantId: scope.tenantId,
+          },
+          previous: current
+            ? supervisorEndpointLeaseHolderSummary(current, new Date(now))
+            : null,
+          status: "claimed",
+          tookOver: decision.tookOver,
+        };
+      });
+    }
+    if (!result) {
+      throw new SupervisorEndpointLeaseError("endpoint lease claim conflicted");
+    }
+    return result;
+  }
+
+  /**
+   * Registers the lease's descriptor at revision 1, or rebinds the current
+   * one to `revision + 1` through the rebind authority and CAS. Runs inside
+   * the lease transaction, after the lease row is locked, so lease writers
+   * for one recipient are serialized; any other writer that moved the
+   * descriptor first fails the CAS and rolls the whole claim back.
+   */
+  async #bindLeaseDescriptor(
+    sql: SQL,
+    scope: TrustedSupervisorMessageV2Scope,
+    template: SupervisorSessionDescriptorV2,
+    mode: "claim" | "renew"
+  ): Promise<SupervisorSessionDescriptorV2> {
+    const rows = await sql<DescriptorRow[]>`
+      SELECT descriptor_json, principal, tenant_id
+      FROM loop_supervisor_session_v2_descriptor
+      WHERE tenant_id = ${scope.tenantId}
+        AND principal = ${scope.principal}
+        AND recipient = ${template.recipient}
+      FOR UPDATE
+    `;
+    const current = descriptorFromRow(rows[0], scope);
+    if (mode === "renew" && !(current && sameSeatIdentity(current, template))) {
+      // Renewal extends only what the claim bound; a descriptor another
+      // writer moved or removed is not silently re-pointed.
+      throw new SupervisorEndpointLeaseError(
+        "endpoint lease descriptor no longer matches the lease"
+      );
+    }
+    if (!current) {
+      const next = parseSupervisorSessionDescriptorV2(
+        { ...template, revision: 1 },
+        scope
+      );
+      const inserted = await sql`
+        INSERT INTO loop_supervisor_session_v2_descriptor (
+          descriptor_id, tenant_id, principal, recipient, revision, descriptor_json
+        ) VALUES (
+          ${next.descriptorId}, ${scope.tenantId}, ${scope.principal},
+          ${next.recipient}, ${next.revision}, ${descriptorSemantics(next)}::jsonb
+        ) ON CONFLICT (descriptor_id) DO NOTHING
+      `;
+      if (inserted.count !== 1) {
+        throw new SupervisorSessionV2Error(
+          "session descriptor conflicts with the current registration"
+        );
+      }
+      return next;
+    }
+    const next = parseSupervisorSessionDescriptorV2(
+      { ...template, revision: current.revision + 1 },
+      scope
+    );
+    const decision = await this.#decideRebind(scope, current, next);
+    await this.#commitRebind(sql, scope, current, next, decision);
+    return next;
+  }
+
+  async #renewEndpointLease(
+    resolveLocator: SupervisorEndpointLocatorResolver,
+    input: SupervisorEndpointLeaseRenewInput
+  ): Promise<SupervisorEndpointLeaseRenewResult> {
+    const { fence, recipient, scope } = parseLeaseFenceInput(input);
+    const ttlMs = requireSupervisorEndpointLeaseTtlMs(input.ttlMs);
+    // The fence is checked first, then the STORED locator is re-resolved
+    // (outside any row lock: it touches the filesystem), then the fence is
+    // checked again under the lock before anything is extended.
+    const seen = await this.#readLease(this.#sql, scope.tenantId, recipient);
+    const before = fenceRefusal(seen, scope, fence);
+    if (before !== "ok") {
+      return { reason: before, status: "fenced" };
+    }
+    const stored = seen as SupervisorEndpointLeaseV2;
+    try {
+      resolveLocator(stored.locator, recipient);
+    } catch (error) {
+      return supervisorEndpointLocatorRefused(error);
+    }
+    const now = this.#leaseNow();
+    const expiresAt = supervisorEndpointLeaseExpiresAt(new Date(now), ttlMs);
+    let result: SupervisorEndpointLeaseRenewResult | undefined;
+    await this.#sql.begin(async (sql) => {
+      const rows = await sql<LeaseRow[]>`
+        SELECT tenant_id, recipient, principal, epoch, holder_ref, kind, locator_json,
+          locator_digest, session_ref, descriptor_id, descriptor_revision,
+          expires_at, released_at
+        FROM loop_supervisor_endpoint_lease_v2
+        WHERE tenant_id = ${scope.tenantId} AND recipient = ${recipient}
+        FOR UPDATE
+      `;
+      const locked = rows[0] ? storedLeaseFromRow(rows[0]) : undefined;
+      const refusal = fenceRefusal(locked?.lease, scope, fence);
+      if (refusal !== "ok") {
+        result = { reason: refusal, status: "fenced" };
+        return;
+      }
+      const { lease, sessionRef } = locked as StoredEndpointLease;
+      // Only a claim changes the locator, and a claim bumps the epoch; the
+      // locator resolved above must still be the stored one.
+      if (canonical(lease.locator) !== canonical(stored.locator)) {
+        result = supervisorEndpointLocatorRefused(undefined);
+        return;
+      }
+      const descriptor = await this.#bindLeaseDescriptor(
+        sql,
+        scope,
+        {
+          ...supervisorEndpointDescriptorIdentity(lease.locator, sessionRef),
+          descriptorId: deriveSupervisorSessionDescriptorV2Id(scope, recipient),
+          expiresAt,
+          issuedAt: now,
+          principal: scope.principal,
+          recipient,
+          revision: 0,
+          schema: SUPERVISOR_SESSION_DESCRIPTOR_V2_SCHEMA,
+          tenantId: scope.tenantId,
+        },
+        "renew"
+      );
+      const updated = await sql`
+        UPDATE loop_supervisor_endpoint_lease_v2
+        SET expires_at = ${expiresAt}::timestamptz,
+          descriptor_revision = ${descriptor.revision},
+          updated_at = now()
+        WHERE tenant_id = ${scope.tenantId}
+          AND recipient = ${recipient}
+          AND epoch = ${fence.epoch}
+          AND holder_ref = ${fence.holderRef}
+          AND released_at IS NULL
+      `;
+      if (updated.count !== 1) {
+        throw new SupervisorEndpointLeaseError(
+          "endpoint lease renewal lost the fence"
+        );
+      }
+      result = {
+        descriptor,
+        lease: {
+          ...lease,
+          descriptorRevision: descriptor.revision,
+          expiresAt,
+        },
+        status: "renewed",
+      };
+    });
+    if (!result) {
+      throw new SupervisorEndpointLeaseError(
+        "endpoint lease renewal is absent"
+      );
+    }
+    return result;
+  }
+
+  async #releaseEndpointLease(
+    input: SupervisorEndpointLeaseReleaseInput
+  ): Promise<SupervisorEndpointLeaseReleaseResult> {
+    const { fence, recipient, scope } = parseLeaseFenceInput(input);
+    // Release never resolves the locator: a holder can always let go.
+    const now = this.#leaseNow();
+    let result: SupervisorEndpointLeaseReleaseResult | undefined;
+    await this.#sql.begin(async (sql) => {
+      const rows = await sql<LeaseRow[]>`
+        SELECT tenant_id, recipient, principal, epoch, holder_ref, kind, locator_json,
+          locator_digest, session_ref, descriptor_id, descriptor_revision,
+          expires_at, released_at
+        FROM loop_supervisor_endpoint_lease_v2
+        WHERE tenant_id = ${scope.tenantId} AND recipient = ${recipient}
+        FOR UPDATE
+      `;
+      const lease = rows[0] ? leaseFromRow(rows[0]) : undefined;
+      const refusal = fenceRefusal(lease, scope, fence);
+      if (refusal === "released") {
+        result = {
+          changed: false,
+          lease: lease as SupervisorEndpointLeaseV2,
+          status: "released",
+        };
+        return;
+      }
+      if (refusal !== "ok") {
+        result = { reason: refusal, status: "fenced" };
+        return;
+      }
+      const updated = await sql`
+        UPDATE loop_supervisor_endpoint_lease_v2
+        SET released_at = ${now}::timestamptz, updated_at = now()
+        WHERE tenant_id = ${scope.tenantId}
+          AND recipient = ${recipient}
+          AND epoch = ${fence.epoch}
+          AND holder_ref = ${fence.holderRef}
+          AND released_at IS NULL
+      `;
+      if (updated.count !== 1) {
+        throw new SupervisorEndpointLeaseError(
+          "endpoint lease release lost the fence"
+        );
+      }
+      result = {
+        changed: true,
+        lease: { ...(lease as SupervisorEndpointLeaseV2), releasedAt: now },
+        status: "released",
+      };
+    });
+    if (!result) {
+      throw new SupervisorEndpointLeaseError(
+        "endpoint lease release is absent"
+      );
+    }
+    return result;
+  }
+
+  async #resolveEndpointLease(
+    tenantValue: string,
+    recipientValue: string
+  ): Promise<SupervisorEndpointLeaseResolution> {
+    const tenantId = requireLeaseTenant(tenantValue);
+    const recipient = requireSupervisorEndpointRecipient(recipientValue);
+    const lease = await this.#readLease(this.#sql, tenantId, recipient);
+    return resolveSupervisorEndpointLease(lease, new Date(this.#leaseNow()));
+  }
+
+  async #listEndpointLeases(
+    tenantValue: string
+  ): Promise<readonly SupervisorEndpointLeaseV2[]> {
+    const tenantId = requireLeaseTenant(tenantValue);
+    const rows = await this.#sql<LeaseRow[]>`
+      SELECT tenant_id, recipient, principal, epoch, holder_ref, kind, locator_json,
+          locator_digest, session_ref, descriptor_id, descriptor_revision,
+          expires_at, released_at
+      FROM loop_supervisor_endpoint_lease_v2
+      WHERE tenant_id = ${tenantId} AND released_at IS NULL
+      ORDER BY recipient COLLATE "C"
+    `;
+    return rows.map(leaseFromRow);
+  }
+
+  async #readLease(
+    sql: SQL,
+    tenantId: string,
+    recipient: string
+  ): Promise<SupervisorEndpointLeaseV2 | undefined> {
+    const rows = await sql<LeaseRow[]>`
+      SELECT tenant_id, recipient, principal, epoch, holder_ref, kind, locator_json,
+          locator_digest, session_ref, descriptor_id, descriptor_revision,
+          expires_at, released_at
+      FROM loop_supervisor_endpoint_lease_v2
+      WHERE tenant_id = ${tenantId} AND recipient = ${recipient}
+    `;
+    return rows[0] ? leaseFromRow(rows[0]) : undefined;
+  }
+
+  #leaseNow(): string {
+    return requireCanonicalUtc(this.#now(), "lease now");
   }
 
   async register(
@@ -708,6 +1414,23 @@ export class PostgresSupervisorSessionV2Store {
     if (next.revision !== current.revision + 1) {
       throw new SupervisorSessionV2Error("session rebind revision is stale");
     }
+    const decision = await this.#decideRebind(scope, current, next);
+    let receipt: SupervisorSessionRebindReceiptV2 | undefined;
+    await this.#sql.begin(async (sql) => {
+      receipt = await this.#commitRebind(sql, scope, current, next, decision);
+    });
+    if (!receipt) {
+      throw new SupervisorSessionV2Error("session rebind receipt is absent");
+    }
+    return { descriptor: next, receipt };
+  }
+
+  /** The rebind authority's decision, validated; a denial throws. */
+  async #decideRebind(
+    scope: TrustedSupervisorMessageV2Scope,
+    current: SupervisorSessionDescriptorV2,
+    next: SupervisorSessionDescriptorV2
+  ): Promise<{ authorityRef: string; reasonCode: string }> {
     const decision = await this.#authority.decide({
       current,
       next,
@@ -728,6 +1451,22 @@ export class PostgresSupervisorSessionV2Store {
         `session rebind denied: ${reasonCode}`
       );
     }
+    return { authorityRef, reasonCode };
+  }
+
+  /**
+   * The rebind CAS and its receipts, inside the caller's transaction: moves
+   * the descriptor from `current.revision` to `next`, or throws when another
+   * writer moved it first. Shared by `rebind` and the endpoint lease store.
+   */
+  async #commitRebind(
+    sql: SQL,
+    scope: TrustedSupervisorMessageV2Scope,
+    current: SupervisorSessionDescriptorV2,
+    next: SupervisorSessionDescriptorV2,
+    decision: { authorityRef: string; reasonCode: string }
+  ): Promise<SupervisorSessionRebindReceiptV2> {
+    const { authorityRef, reasonCode } = decision;
     const encoded = descriptorSemantics(next);
     const receipt: SupervisorSessionRebindReceiptV2 = {
       authorityRef,
@@ -747,8 +1486,7 @@ export class PostgresSupervisorSessionV2Store {
       tenantId: scope.tenantId,
       toRevision: next.revision,
     };
-    await this.#sql.begin(async (sql) => {
-      const updated = await sql`
+    const updated = await sql`
       UPDATE loop_supervisor_session_v2_descriptor
       SET revision = ${next.revision}, descriptor_json = ${encoded}::jsonb, updated_at = now()
       WHERE descriptor_id = ${current.descriptorId}
@@ -756,16 +1494,16 @@ export class PostgresSupervisorSessionV2Store {
         AND principal = ${scope.principal}
         AND revision = ${current.revision}
     `;
-      if (updated.count !== 1) {
-        throw new SupervisorSessionV2Error(
-          "session rebind lost the current revision"
-        );
-      }
-      // The id can only already exist when an earlier lifetime of a
-      // re-registered descriptor made the same transition. That stored
-      // receipt is kept as it was; only its write time moves to now, so
-      // retention ranks it as this renewal's receipt (see the retention type).
-      await sql`
+    if (updated.count !== 1) {
+      throw new SupervisorSessionV2Error(
+        "session rebind lost the current revision"
+      );
+    }
+    // The id can only already exist when an earlier lifetime of a
+    // re-registered descriptor made the same transition. That stored
+    // receipt is kept as it was; only its write time moves to now, so
+    // retention ranks it as this renewal's receipt (see the retention type).
+    await sql`
       INSERT INTO loop_supervisor_session_v2_rebind_receipt (
         receipt_id, descriptor_id, tenant_id, principal, receipt_json
       ) VALUES (
@@ -774,14 +1512,13 @@ export class PostgresSupervisorSessionV2Store {
       ) ON CONFLICT (receipt_id) DO UPDATE
         SET created_at = now()
     `;
-      // A renewal of the same provider session must not drop a dependent
-      // DAG gate to not-ready until the next delivery probes it.
-      if (sameSeatIdentity(current, next)) {
-        await this.#carryReadiness(sql, scope, current, next);
-      }
-      await this.#pruneReceipts(sql, scope, next.descriptorId);
-    });
-    return { descriptor: next, receipt };
+    // A renewal of the same provider session must not drop a dependent
+    // DAG gate to not-ready until the next delivery probes it.
+    if (sameSeatIdentity(current, next)) {
+      await this.#carryReadiness(sql, scope, current, next);
+    }
+    await this.#pruneReceipts(sql, scope, next.descriptorId);
+    return receipt;
   }
 
   /**

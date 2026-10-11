@@ -1,6 +1,29 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SQL } from "bun";
+import {
+  createSupervisorEndpointLocatorResolver,
+  SupervisorEndpointLeaseError,
+  type SupervisorEndpointLeaseStore,
+  type SupervisorEndpointLeaseV2,
+  type SupervisorEndpointLocator,
+  type SupervisorEndpointLocatorRefusal,
+  type SupervisorEndpointLocatorResolver,
+  supervisorEndpointLocatorDigest,
+  supervisorEndpointRoots,
+} from "../../src/loop/supervisor-endpoint-lease";
+import { SupervisorMessageV2ReadinessUnavailableError } from "../../src/loop/supervisor-message-v2-runtime";
 import {
   deriveSupervisorSessionDescriptorV2Id,
   PostgresSupervisorSessionV2Store,
@@ -731,3 +754,1034 @@ test("PostgreSQL: a rebind to another session during a readiness probe still ref
   }
   await renewer.close();
 }, 60_000);
+
+/* ---------------------------------------------------------------------------
+ * r9 T1: the endpoint lease store (loop_supervisor_endpoint_lease_v2) over
+ * real PostgreSQL, with the server's own locator resolver over a real
+ * filesystem fixture (symlinks and realpath are part of what is under test).
+ * ------------------------------------------------------------------------- */
+describe("PostgreSQL endpoint lease store", () => {
+  const ALPHA = "supervisor:alpha";
+  const BETA = "supervisor:beta";
+  const SEAT_PRINCIPAL = "principal:seat-alpha";
+  const TTL = 30_000;
+  let base = "";
+  let home = "";
+
+  const runsRoot = () => supervisorEndpointRoots(home).runsRoot;
+  const sessionsRoot = () => supervisorEndpointRoots(home).sessionsRoot;
+  const manifestPath = (repoId: string, runId: string) =>
+    join(runsRoot(), repoId, runId, "manifest.json");
+  const writeRun = (
+    repoId: string,
+    runId: string,
+    overrides: Record<string, unknown> = {}
+  ) => {
+    mkdirSync(join(runsRoot(), repoId, runId), { recursive: true });
+    writeFileSync(
+      manifestPath(repoId, runId),
+      JSON.stringify({
+        a2aSupervisorId: ALPHA,
+        codexRemoteUrl: "ws://127.0.0.1:4500",
+        codexThreadId: "thread-1",
+        repoId,
+        runId,
+        ...overrides,
+      })
+    );
+  };
+
+  /** The server's resolver, counting calls so tests see where it runs. */
+  const resolver = () => {
+    const real = createSupervisorEndpointLocatorResolver({
+      fs: {
+        readJson: (path) => JSON.parse(readFileSync(path, "utf8")),
+        realpath: (path) => realpathSync(path),
+      },
+      roots: supervisorEndpointRoots(home),
+    });
+    const calls: string[] = [];
+    const resolveLocator: SupervisorEndpointLocatorResolver = (
+      locator,
+      supervisorId
+    ) => {
+      calls.push(`${supervisorId}:${locator.kind}`);
+      return real(locator, supervisorId);
+    };
+    return { calls, resolveLocator };
+  };
+
+  const loopRun = (runId = "run-1"): SupervisorEndpointLocator => ({
+    kind: "loop-run",
+    repoId: "repo-a",
+    runId,
+    seat: "claude",
+  });
+
+  const seatScope = () => ({
+    principal: SEAT_PRINCIPAL,
+    tenantId: `tenant:lease-${randomUUID().slice(0, 8)}`,
+  });
+
+  const open = async (
+    input: { authority?: typeof allow; clock?: { ms: number } } = {}
+  ) => {
+    const clock = input.clock ?? { ms: START };
+    const sessions = await PostgresSupervisorSessionV2Store.connect({
+      authority: input.authority ?? allow,
+      databaseUrl: postgres.databaseUrl(),
+      now: () => new Date(clock.ms).toISOString(),
+      provider: { ready: echo },
+    });
+    await sessions.migrate();
+    const { calls, resolveLocator } = resolver();
+    return {
+      calls,
+      leases: sessions.endpointLeases({ resolveLocator }),
+      sessions,
+    };
+  };
+
+  const claimInput = (
+    owner: Scope,
+    holderRef: string,
+    extra: {
+      locator?: SupervisorEndpointLocator;
+      recipient?: string;
+      sessionRef?: string;
+      takeover?: boolean;
+      ttlMs?: number;
+    } = {}
+  ) => ({
+    holderRef,
+    locator: extra.locator ?? loopRun(),
+    recipient: extra.recipient ?? ALPHA,
+    scope: owner,
+    sessionRef: extra.sessionRef ?? "session:claude-alpha-1",
+    ...(extra.takeover === undefined ? {} : { takeover: extra.takeover }),
+    ttlMs: extra.ttlMs ?? TTL,
+  });
+
+  const claimed = async (
+    leases: SupervisorEndpointLeaseStore,
+    input: ReturnType<typeof claimInput>
+  ) => {
+    const result = await leases.claim(input);
+    if (result.status !== "claimed") {
+      throw new Error(`expected a claim, got ${JSON.stringify(result)}`);
+    }
+    return result;
+  };
+
+  const fenceOf = (lease: SupervisorEndpointLeaseV2) => ({
+    epoch: lease.epoch,
+    holderRef: lease.holderRef,
+  });
+
+  const leaseRows = async (owner: Scope, recipient = ALPHA) =>
+    await admin<{ epoch: string; holder_ref: string }[]>`
+      SELECT epoch::text AS epoch, holder_ref
+      FROM loop_supervisor_endpoint_lease_v2
+      WHERE tenant_id = ${owner.tenantId} AND recipient = ${recipient}
+    `;
+
+  const descriptorRows = async (owner: Scope, recipient = ALPHA) =>
+    await admin<{ revision: string }[]>`
+      SELECT revision::text AS revision
+      FROM loop_supervisor_session_v2_descriptor
+      WHERE tenant_id = ${owner.tenantId} AND recipient = ${recipient}
+    `;
+
+  beforeAll(() => {
+    base = mkdtempSync(join(tmpdir(), "r9-lease-store-"));
+    home = join(base, "home");
+    mkdirSync(home);
+    writeRun("repo-a", "run-1");
+    writeRun("repo-a", "run-2");
+    writeRun("repo-a", "codex-1");
+    mkdirSync(join(sessionsRoot(), "alpha", "sess-1"), { recursive: true });
+    mkdirSync(join(sessionsRoot(), "beta", "sess-b"), { recursive: true });
+  });
+
+  afterAll(() => {
+    if (base) {
+      rmSync(base, { force: true, recursive: true });
+    }
+  });
+
+  test("migrate creates the lease table keyed by (tenant, recipient), idempotently", async () => {
+    const { sessions } = await open();
+    await sessions.migrate();
+    await sessions.close();
+    const rows = await admin<{ column_name: string }[]>`
+      SELECT a.attname AS column_name
+      FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indrelid = 'loop_supervisor_endpoint_lease_v2'::regclass
+        AND i.indisprimary
+      ORDER BY a.attname
+    `;
+    expect(rows.map((row) => row.column_name)).toEqual([
+      "recipient",
+      "tenant_id",
+    ]);
+  });
+
+  test("a first claim registers the seat's descriptor and the lease together, at epoch 1", async () => {
+    const owner = seatScope();
+    const { calls, leases, sessions } = await open();
+    try {
+      const result = await claimed(leases, claimInput(owner, "holder:a"));
+      const expiresAt = new Date(START + TTL).toISOString();
+      expect(result.tookOver).toBe(false);
+      expect(result.previous).toBeNull();
+      expect(result.lease).toEqual({
+        descriptorId: deriveSupervisorSessionDescriptorV2Id(owner, ALPHA),
+        descriptorRevision: 1,
+        epoch: 1,
+        expiresAt,
+        holderRef: "holder:a",
+        kind: "loop-run",
+        locator: loopRun(),
+        principal: SEAT_PRINCIPAL,
+        recipient: ALPHA,
+        releasedAt: null,
+        schema: "supervisor-endpoint-lease.v2",
+        tenantId: owner.tenantId,
+      });
+      // The descriptor binds the locator's ids by digest, in the seat's own
+      // scope, and expires with the lease.
+      expect(result.descriptor).toMatchObject({
+        endpointDigest: supervisorEndpointLocatorDigest(loopRun()),
+        endpointRef: "endpoint:loop-run",
+        expiresAt,
+        issuedAt: new Date(START).toISOString(),
+        provider: "claude-code",
+        revision: 1,
+        sessionRef: "session:claude-alpha-1",
+      });
+      expect(await sessions.current(owner, ALPHA)).toEqual(result.descriptor);
+      expect(
+        await sessions.current(
+          { ...owner, principal: "principal:sender" },
+          ALPHA
+        )
+      ).toBeUndefined();
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: result.lease,
+        state: "live",
+      });
+      expect(await leases.list(owner.tenantId)).toEqual([result.lease]);
+      expect(await leases.resolve(owner.tenantId, BETA)).toEqual({
+        state: "none",
+      });
+      // The claim resolved its locator, for the claimed recipient.
+      expect(calls).toEqual([`${ALPHA}:loop-run`]);
+      // Only ids are stored: no path or URL reaches the row.
+      const [row] = await admin<{ locator: string; type: string }[]>`
+        SELECT locator_json::text AS locator, jsonb_typeof(locator_json) AS type
+        FROM loop_supervisor_endpoint_lease_v2
+        WHERE tenant_id = ${owner.tenantId}
+      `;
+      // A JSONB object (queryable in place), not a double-encoded string.
+      expect(row?.type).toBe("object");
+      expect(JSON.parse(row?.locator ?? "null")).toEqual(loopRun());
+      expect(row?.locator).not.toContain("/");
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("a Codex thread claim binds session:<threadId> and the codex provider", async () => {
+    const owner = seatScope();
+    const { leases, sessions } = await open();
+    const locator: SupervisorEndpointLocator = {
+      kind: "codex-thread",
+      repoId: "repo-a",
+      runId: "codex-1",
+      threadId: "thread-1",
+    };
+    try {
+      await expect(
+        leases.claim(claimInput(owner, "holder:a", { locator }))
+      ).rejects.toBeInstanceOf(SupervisorEndpointLeaseError);
+      expect(await leaseRows(owner)).toEqual([]);
+      const result = await claimed(
+        leases,
+        claimInput(owner, "holder:a", {
+          locator,
+          sessionRef: "session:thread-1",
+        })
+      );
+      expect(result.descriptor).toMatchObject({
+        endpointDigest: supervisorEndpointLocatorDigest(locator),
+        endpointRef: "endpoint:codex-thread",
+        provider: "codex-app-server",
+        sessionRef: "session:thread-1",
+      });
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("renew extends lease and descriptor under the fence; release ends it; a released lease cannot be renewed", async () => {
+    const owner = seatScope();
+    const clock = { ms: START };
+    const { calls, leases, sessions } = await open({ clock });
+    try {
+      const first = await claimed(leases, claimInput(owner, "holder:a"));
+      await sessions.assertReady(owner, ALPHA);
+      clock.ms += 10_000;
+      const renewed = await leases.renew({
+        fence: fenceOf(first.lease),
+        recipient: ALPHA,
+        scope: owner,
+        ttlMs: TTL,
+      });
+      const renewedExpiry = new Date(START + 10_000 + TTL).toISOString();
+      expect(renewed).toMatchObject({
+        lease: {
+          descriptorRevision: 2,
+          epoch: 1,
+          expiresAt: renewedExpiry,
+          holderRef: "holder:a",
+          locator: loopRun(),
+        },
+        status: "renewed",
+      });
+      expect(await sessions.current(owner, ALPHA)).toMatchObject({
+        endpointDigest: first.descriptor.endpointDigest,
+        expiresAt: renewedExpiry,
+        revision: 2,
+        sessionRef: first.descriptor.sessionRef,
+      });
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: (renewed as { lease: SupervisorEndpointLeaseV2 }).lease,
+        state: "live",
+      });
+      // The same provider session: the earlier probe's readiness carries.
+      expect((await sessions.status(owner, ALPHA))?.ready).toBe(true);
+      // Renewal re-resolved the STORED locator.
+      expect(calls).toEqual([`${ALPHA}:loop-run`, `${ALPHA}:loop-run`]);
+
+      clock.ms += 1000;
+      const released = await leases.release({
+        fence: fenceOf(first.lease),
+        recipient: ALPHA,
+        scope: owner,
+      });
+      const releasedAt = new Date(clock.ms).toISOString();
+      expect(released).toMatchObject({
+        changed: true,
+        lease: { epoch: 1, releasedAt },
+        status: "released",
+      });
+      // Release never resolves the locator.
+      expect(calls).toHaveLength(2);
+      // Repeating the release with the same fence is an idempotent success.
+      clock.ms += 1000;
+      expect(
+        await leases.release({
+          fence: fenceOf(first.lease),
+          recipient: ALPHA,
+          scope: owner,
+        })
+      ).toMatchObject({
+        changed: false,
+        lease: { releasedAt },
+        status: "released",
+      });
+      expect(
+        await leases.renew({
+          fence: fenceOf(first.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: TTL,
+        })
+      ).toEqual({ reason: "released", status: "fenced" });
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toMatchObject({
+        lease: { releasedAt },
+        state: "released",
+      });
+      // The enrollment sweep's work set holds unreleased leases only.
+      expect(await leases.list(owner.tenantId)).toEqual([]);
+
+      // A released lease is claimable again, by anyone, at the next epoch.
+      const again = await claimed(leases, claimInput(owner, "holder:b"));
+      expect(again.lease).toMatchObject({ epoch: 2, releasedAt: null });
+      expect(again.previous).toMatchObject({
+        epoch: 1,
+        holderRef: "holder:a",
+        state: "released",
+      });
+      expect(again.tookOver).toBe(false);
+      expect(again.descriptor.revision).toBe(3);
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("a competing claim is fenced; takeover evicts the live holder and fences its renew and release", async () => {
+    const owner = seatScope();
+    const clock = { ms: START };
+    const { leases, sessions } = await open({ clock });
+    try {
+      const a = await claimed(leases, claimInput(owner, "holder:a"));
+      clock.ms += 1000;
+      expect(await leases.claim(claimInput(owner, "holder:b"))).toEqual({
+        current: {
+          epoch: 1,
+          expiresAt: a.lease.expiresAt,
+          holderRef: "holder:a",
+          state: "live",
+        },
+        status: "held",
+      });
+      expect(
+        await leases.claim(claimInput(owner, "holder:b", { takeover: false }))
+      ).toMatchObject({ status: "held" });
+      // The refused claim changed nothing.
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: a.lease,
+        state: "live",
+      });
+      expect(await descriptorRows(owner)).toEqual([{ revision: "1" }]);
+
+      const b = await claimed(
+        leases,
+        claimInput(owner, "holder:b", {
+          locator: loopRun("run-2"),
+          sessionRef: "session:claude-alpha-2",
+          takeover: true,
+        })
+      );
+      expect(b.tookOver).toBe(true);
+      expect(b.previous).toMatchObject({
+        epoch: 1,
+        holderRef: "holder:a",
+        state: "live",
+      });
+      expect(b.lease).toMatchObject({
+        epoch: 2,
+        holderRef: "holder:b",
+        locator: loopRun("run-2"),
+      });
+      expect(b.descriptor).toMatchObject({
+        endpointDigest: supervisorEndpointLocatorDigest(loopRun("run-2")),
+        revision: 2,
+        sessionRef: "session:claude-alpha-2",
+      });
+      // The evicted holder's renew and release are fenced by the epoch.
+      expect(
+        await leases.renew({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: TTL,
+        })
+      ).toEqual({ reason: "epoch-mismatch", status: "fenced" });
+      expect(
+        await leases.release({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: owner,
+        })
+      ).toEqual({ reason: "epoch-mismatch", status: "fenced" });
+      // The current epoch with the wrong holder is fenced by the holder.
+      expect(
+        await leases.renew({
+          fence: { epoch: 2, holderRef: "holder:a" },
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: TTL,
+        })
+      ).toEqual({ reason: "holder-mismatch", status: "fenced" });
+      expect(
+        await leases.release({
+          fence: { epoch: 2, holderRef: "holder:a" },
+          recipient: ALPHA,
+          scope: owner,
+        })
+      ).toEqual({ reason: "holder-mismatch", status: "fenced" });
+      // Nothing that was fenced moved the lease.
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: b.lease,
+        state: "live",
+      });
+      // No lease for a recipient never claimed.
+      expect(
+        await leases.renew({
+          fence: { epoch: 1, holderRef: "holder:a" },
+          recipient: BETA,
+          scope: owner,
+          ttlMs: TTL,
+        })
+      ).toEqual({ reason: "absent", status: "fenced" });
+      // The live holder may claim again without takeover: a new epoch.
+      const b2 = await claimed(
+        leases,
+        claimInput(owner, "holder:b", {
+          locator: loopRun("run-2"),
+          sessionRef: "session:claude-alpha-2",
+        })
+      );
+      expect(b2.lease.epoch).toBe(3);
+      expect(b2.tookOver).toBe(false);
+      expect(
+        await leases.renew({
+          fence: fenceOf(b.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: TTL,
+        })
+      ).toEqual({ reason: "epoch-mismatch", status: "fenced" });
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("expiry alone never fences: the holder renews an expired lease until another claim bumps the epoch", async () => {
+    const owner = seatScope();
+    const clock = { ms: START };
+    const { leases, sessions } = await open({ clock });
+    try {
+      const a = await claimed(
+        leases,
+        claimInput(owner, "holder:a", { ttlMs: 5000 })
+      );
+      clock.ms = START + 5000;
+      expect((await leases.resolve(owner.tenantId, ALPHA)).state).toBe(
+        "expired"
+      );
+      // Expired but unreleased: still in the sweep's work set.
+      expect(await leases.list(owner.tenantId)).toEqual([a.lease]);
+      // Its holder renews it at the same epoch.
+      expect(
+        await leases.renew({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: 5000,
+        })
+      ).toMatchObject({
+        lease: { epoch: 1, expiresAt: new Date(START + 10_000).toISOString() },
+        status: "renewed",
+      });
+      expect((await leases.resolve(owner.tenantId, ALPHA)).state).toBe("live");
+      expect(await leases.claim(claimInput(owner, "holder:b"))).toMatchObject({
+        status: "held",
+      });
+      clock.ms = START + 10_001;
+      expect((await leases.resolve(owner.tenantId, ALPHA)).state).toBe(
+        "expired"
+      );
+      // An expired lease is claimable by another holder without takeover.
+      const b = await claimed(leases, claimInput(owner, "holder:b"));
+      expect(b.tookOver).toBe(false);
+      expect(b.previous).toMatchObject({ epoch: 1, state: "expired" });
+      expect(b.lease.epoch).toBe(2);
+      expect(
+        await leases.renew({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: 5000,
+        })
+      ).toEqual({ reason: "epoch-mismatch", status: "fenced" });
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("concurrent claims serialize: one wins a free recipient, and racing takeovers each get their own epoch", async () => {
+    const owner = seatScope();
+    const stores = await Promise.all(
+      Array.from({ length: 4 }, async () => await open())
+    );
+    try {
+      const holders = Array.from(
+        { length: 8 },
+        (_, index) => `holder:${index}`
+      );
+      const race = async (takeover: boolean) =>
+        await Promise.all(
+          holders.map(async (holderRef, index) => {
+            const store = stores[index % stores.length];
+            if (!store) {
+              throw new Error("missing store");
+            }
+            return await store.leases.claim(
+              claimInput(owner, holderRef, { takeover })
+            );
+          })
+        );
+      // A never-claimed recipient: exactly one claim wins at epoch 1.
+      const first = await race(false);
+      const winners = first.filter((result) => result.status === "claimed");
+      expect(winners).toHaveLength(1);
+      const winner = winners[0];
+      if (winner?.status !== "claimed") {
+        throw new Error("expected a winner");
+      }
+      expect(winner.lease.epoch).toBe(1);
+      const held = first.filter((result) => result.status === "held");
+      expect(held).toHaveLength(7);
+      for (const result of held) {
+        expect(result).toMatchObject({
+          current: { epoch: 1, holderRef: winner.lease.holderRef },
+        });
+      }
+      expect(await descriptorRows(owner)).toEqual([{ revision: "1" }]);
+
+      // Racing takeovers all succeed, one at a time: distinct epochs 2..9,
+      // and the descriptor moved once per claim.
+      const second = await race(true);
+      const epochs = second
+        .map((result) =>
+          result.status === "claimed" ? result.lease.epoch : Number.NaN
+        )
+        .sort((left, right) => left - right);
+      expect(epochs).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(
+        await stores[0]?.leases.resolve(owner.tenantId, ALPHA)
+      ).toMatchObject({
+        lease: { descriptorRevision: 9, epoch: 9 },
+        state: "live",
+      });
+      expect(await descriptorRows(owner)).toEqual([{ revision: "9" }]);
+    } finally {
+      for (const store of stores) {
+        await store.sessions.close();
+      }
+    }
+  }, 60_000);
+
+  describe("SECURITY: locators are untrusted", () => {
+    let outside = "";
+    beforeAll(() => {
+      outside = join(base, "outside");
+      // A run that names another supervisor.
+      writeRun("repo-a", "foreign", { a2aSupervisorId: BETA });
+      // A run directory that is a symlink out of the runs root.
+      mkdirSync(join(outside, "run"), { recursive: true });
+      writeFileSync(
+        join(outside, "run", "manifest.json"),
+        JSON.stringify({
+          a2aSupervisorId: ALPHA,
+          repoId: "repo-a",
+          runId: "escape",
+        })
+      );
+      symlinkSync(join(outside, "run"), join(runsRoot(), "repo-a", "escape"));
+      // A Codex run whose manifest points at a non-loopback host.
+      writeRun("repo-a", "codex-remote", {
+        codexRemoteUrl: "ws://192.168.1.18:4500",
+      });
+    });
+
+    const refusedClaims: [
+      string,
+      SupervisorEndpointLocator,
+      SupervisorEndpointLocatorRefusal,
+    ][] = [
+      ["a run without a manifest", loopRun("missing"), "unresolved"],
+      [
+        "a run naming another supervisor",
+        loopRun("foreign"),
+        "foreign-manifest",
+      ],
+      [
+        "a run directory symlinked out of the root",
+        loopRun("escape"),
+        "not-contained",
+      ],
+      [
+        "another supervisor's Claude session",
+        { kind: "claude-channel", sessionId: "sess-b" },
+        "unresolved",
+      ],
+      [
+        "a Codex run whose manifest URL is not loopback",
+        {
+          kind: "codex-thread",
+          repoId: "repo-a",
+          runId: "codex-remote",
+          threadId: "thread-1",
+        },
+        "remote-url-refused",
+      ],
+    ];
+    for (const [label, locator, reason] of refusedClaims) {
+      test(`a claim of ${label} is refused and writes nothing`, async () => {
+        const owner = seatScope();
+        const { leases, sessions } = await open();
+        try {
+          expect(
+            await leases.claim(
+              claimInput(owner, "holder:a", {
+                locator,
+                sessionRef:
+                  locator.kind === "codex-thread"
+                    ? `session:${locator.threadId}`
+                    : "session:claude-alpha-1",
+              })
+            )
+          ).toEqual({ reason, status: "locator-refused" });
+          expect(await leaseRows(owner)).toEqual([]);
+          expect(await descriptorRows(owner)).toEqual([]);
+        } finally {
+          await sessions.close();
+        }
+      }, 60_000);
+    }
+
+    test("the claimant's own Claude session resolves under its own slug", async () => {
+      const owner = seatScope();
+      const { leases, sessions } = await open();
+      try {
+        const result = await claimed(
+          leases,
+          claimInput(owner, "holder:a", {
+            locator: { kind: "claude-channel", sessionId: "sess-1" },
+          })
+        );
+        expect(result.descriptor.endpointRef).toBe("endpoint:claude-channel");
+      } finally {
+        await sessions.close();
+      }
+    }, 60_000);
+
+    test("a locator carrying a path, a URL or a traversal id is invalid input", async () => {
+      const owner = seatScope();
+      const { calls, leases, sessions } = await open();
+      try {
+        for (const locator of [
+          { ...loopRun(), runDir: "/etc" },
+          { kind: "claude-channel", sessionDir: "/tmp", sessionId: "sess-1" },
+          {
+            kind: "codex-thread",
+            remoteUrl: "ws://127.0.0.1:1",
+            repoId: "repo-a",
+            runId: "codex-1",
+            threadId: "thread-1",
+          },
+          { ...loopRun(), runId: "../run-1" },
+          { ...loopRun(), repoId: "/abs" },
+          { kind: "claude-channel", sessionId: ".." },
+        ]) {
+          await expect(
+            leases.claim(
+              claimInput(owner, "holder:a", {
+                locator: locator as unknown as SupervisorEndpointLocator,
+              })
+            )
+          ).rejects.toBeInstanceOf(SupervisorEndpointLeaseError);
+        }
+        expect(calls).toEqual([]);
+        expect(await leaseRows(owner)).toEqual([]);
+      } finally {
+        await sessions.close();
+      }
+    }, 60_000);
+
+    test("renew re-resolves the stored locator and extends nothing once it is refused; release still lets go", async () => {
+      const owner = seatScope();
+      const clock = { ms: START };
+      const { calls, leases, sessions } = await open({ clock });
+      writeRun("repo-a", "renew-run");
+      try {
+        const a = await claimed(
+          leases,
+          claimInput(owner, "holder:a", { locator: loopRun("renew-run") })
+        );
+        const renew = async () =>
+          await leases.renew({
+            fence: fenceOf(a.lease),
+            recipient: ALPHA,
+            scope: owner,
+            ttlMs: TTL,
+          });
+        // The run is handed to another supervisor after the claim.
+        writeRun("repo-a", "renew-run", { a2aSupervisorId: BETA });
+        clock.ms += 1000;
+        expect(await renew()).toEqual({
+          reason: "foreign-manifest",
+          status: "locator-refused",
+        });
+        // The run directory is swapped for a symlink out of the root.
+        rmSync(join(runsRoot(), "repo-a", "renew-run"), {
+          force: true,
+          recursive: true,
+        });
+        symlinkSync(
+          join(outside, "run"),
+          join(runsRoot(), "repo-a", "renew-run")
+        );
+        expect(await renew()).toEqual({
+          reason: "not-contained",
+          status: "locator-refused",
+        });
+        expect(calls).toHaveLength(3);
+        // Nothing was extended: the lease lapses by TTL.
+        expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+          lease: a.lease,
+          state: "live",
+        });
+        expect(await descriptorRows(owner)).toEqual([{ revision: "1" }]);
+        expect(
+          await leases.release({
+            fence: fenceOf(a.lease),
+            recipient: ALPHA,
+            scope: owner,
+          })
+        ).toMatchObject({ changed: true, status: "released" });
+        expect(calls).toHaveLength(3);
+      } finally {
+        rmSync(join(runsRoot(), "repo-a", "renew-run"), { force: true });
+        await sessions.close();
+      }
+    }, 60_000);
+
+    test("renew refuses a Codex run whose manifest URL moved off loopback", async () => {
+      const owner = seatScope();
+      const { leases, sessions } = await open();
+      writeRun("repo-a", "codex-moves");
+      const locator: SupervisorEndpointLocator = {
+        kind: "codex-thread",
+        repoId: "repo-a",
+        runId: "codex-moves",
+        threadId: "thread-1",
+      };
+      try {
+        const a = await claimed(
+          leases,
+          claimInput(owner, "holder:a", {
+            locator,
+            sessionRef: "session:thread-1",
+          })
+        );
+        for (const codexRemoteUrl of [
+          "ws://evil.example:4500",
+          "ws://[::ffff:127.0.0.1]:4500",
+          "ws://127.0.0.1:4500/redirect?to=ws://evil.example",
+          "wss://127.0.0.1:4500",
+          "ws://localhost",
+        ]) {
+          writeRun("repo-a", "codex-moves", { codexRemoteUrl });
+          expect(
+            await leases.renew({
+              fence: fenceOf(a.lease),
+              recipient: ALPHA,
+              scope: owner,
+              ttlMs: TTL,
+            })
+          ).toEqual({
+            reason: "remote-url-refused",
+            status: "locator-refused",
+          });
+        }
+        expect(await descriptorRows(owner)).toEqual([{ revision: "1" }]);
+      } finally {
+        await sessions.close();
+      }
+    }, 60_000);
+
+    test("a stored lease edited out of band is refused, never used", async () => {
+      const owner = seatScope();
+      const { leases, sessions } = await open();
+      try {
+        await claimed(leases, claimInput(owner, "holder:a"));
+        for (const edit of [
+          // Another run's ids without the digest that binds them.
+          `jsonb_set(locator_json, '{runId}', '"run-2"')`,
+          // A path smuggled into the row.
+          `locator_json || '{"runDir": "/etc"}'::jsonb`,
+        ]) {
+          await admin.unsafe(
+            `UPDATE loop_supervisor_endpoint_lease_v2
+             SET locator_json = ${edit}
+             WHERE tenant_id = $1`,
+            [owner.tenantId]
+          );
+          await expect(leases.resolve(owner.tenantId, ALPHA)).rejects.toThrow(
+            "stored endpoint lease is invalid"
+          );
+          await expect(leases.list(owner.tenantId)).rejects.toThrow(
+            "stored endpoint lease is invalid"
+          );
+          await expect(
+            leases.claim(claimInput(owner, "holder:a"))
+          ).rejects.toThrow("stored endpoint lease is invalid");
+          await admin`
+            UPDATE loop_supervisor_endpoint_lease_v2
+            SET locator_json = ${JSON.stringify(loopRun())}::text::jsonb
+            WHERE tenant_id = ${owner.tenantId}
+          `;
+          expect((await leases.resolve(owner.tenantId, ALPHA)).state).toBe(
+            "live"
+          );
+        }
+      } finally {
+        await sessions.close();
+      }
+    }, 60_000);
+  });
+
+  test("lease and descriptor commit together: a denied rebind leaves the lease as it was", async () => {
+    const owner = seatScope();
+    let deny = false;
+    const { leases, sessions } = await open({
+      authority: {
+        decide: () => ({
+          allowed: !deny,
+          authorityRef: "authority:lease-test",
+          reasonCode: deny ? "denied-by-test" : "configured-session-rebind",
+        }),
+      },
+    });
+    try {
+      const a = await claimed(leases, claimInput(owner, "holder:a"));
+      deny = true;
+      await expect(
+        leases.claim(claimInput(owner, "holder:b", { takeover: true }))
+      ).rejects.toThrow("session rebind denied: denied-by-test");
+      await expect(
+        leases.renew({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: TTL,
+        })
+      ).rejects.toThrow("session rebind denied: denied-by-test");
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: a.lease,
+        state: "live",
+      });
+      expect(await descriptorRows(owner)).toEqual([{ revision: "1" }]);
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("renew refuses a descriptor another writer moved or removed, and changes nothing", async () => {
+    const owner = seatScope();
+    const { leases, sessions } = await open();
+    try {
+      const a = await claimed(leases, claimInput(owner, "holder:a"));
+      const renew = async () =>
+        await leases.renew({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: owner,
+          ttlMs: TTL,
+        });
+      await sessions.rebind(owner, {
+        ...a.descriptor,
+        revision: 2,
+        sessionRef: "session:someone-else",
+      });
+      await expect(renew()).rejects.toThrow(
+        "endpoint lease descriptor no longer matches the lease"
+      );
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: a.lease,
+        state: "live",
+      });
+      expect(await descriptorRows(owner)).toEqual([{ revision: "2" }]);
+      // A removed descriptor is not silently re-registered by a renewal.
+      await admin`
+        DELETE FROM loop_supervisor_session_v2_descriptor
+        WHERE tenant_id = ${owner.tenantId}
+      `;
+      await expect(renew()).rejects.toThrow(
+        "endpoint lease descriptor no longer matches the lease"
+      );
+      expect(await descriptorRows(owner)).toEqual([]);
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("a lease is only its own scope's: another principal's renew or release reads it as absent", async () => {
+    const owner = seatScope();
+    const { leases, sessions } = await open();
+    try {
+      const a = await claimed(leases, claimInput(owner, "holder:a"));
+      const other = { ...owner, principal: "principal:other" };
+      expect(
+        await leases.renew({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: other,
+          ttlMs: TTL,
+        })
+      ).toEqual({ reason: "absent", status: "fenced" });
+      expect(
+        await leases.release({
+          fence: fenceOf(a.lease),
+          recipient: ALPHA,
+          scope: other,
+        })
+      ).toEqual({ reason: "absent", status: "fenced" });
+      expect(await leases.resolve(owner.tenantId, ALPHA)).toEqual({
+        lease: a.lease,
+        state: "live",
+      });
+    } finally {
+      await sessions.close();
+    }
+  }, 60_000);
+
+  test("invalid input is refused before the store; an unreachable store answers unavailable with no driver text", async () => {
+    const owner = seatScope();
+    const { calls, leases, sessions } = await open();
+    await sessions.close();
+    const fence = { epoch: 1, holderRef: "holder:a" };
+    for (const bad of [
+      claimInput(owner, "holder:a", { recipient: "alpha" }),
+      claimInput(owner, "bad holder"),
+      claimInput(owner, "holder:a", { ttlMs: 999 }),
+      claimInput(owner, "holder:a", { ttlMs: 86_400_001 }),
+      claimInput(owner, "holder:a", { sessionRef: "claude-alpha-1" }),
+      { ...claimInput(owner, "holder:a"), takeover: "yes" as never },
+      { ...claimInput(owner, "holder:a"), scope: { tenantId: "x" } as never },
+    ]) {
+      await expect(leases.claim(bad)).rejects.toBeInstanceOf(
+        SupervisorEndpointLeaseError
+      );
+    }
+    await expect(
+      leases.renew({
+        fence: { epoch: 0, holderRef: "holder:a" },
+        recipient: ALPHA,
+        scope: owner,
+        ttlMs: TTL,
+      })
+    ).rejects.toBeInstanceOf(SupervisorEndpointLeaseError);
+    await expect(leases.resolve("tenant", ALPHA)).rejects.toBeInstanceOf(
+      SupervisorEndpointLeaseError
+    );
+    expect(calls).toEqual([]);
+    for (const call of [
+      () => leases.claim(claimInput(owner, "holder:a")),
+      () => leases.renew({ fence, recipient: ALPHA, scope: owner, ttlMs: TTL }),
+      () => leases.release({ fence, recipient: ALPHA, scope: owner }),
+      () => leases.resolve(owner.tenantId, ALPHA),
+      () => leases.list(owner.tenantId),
+    ]) {
+      const error = await call().then(
+        () => undefined,
+        (rejection: unknown) => rejection
+      );
+      expect(error).toBeInstanceOf(
+        SupervisorMessageV2ReadinessUnavailableError
+      );
+      expect((error as Error).message).toBe(
+        "session readiness store is unavailable"
+      );
+    }
+    expect(() =>
+      sessions.endpointLeases({ resolveLocator: undefined as never })
+    ).toThrow(SupervisorEndpointLeaseError);
+  }, 60_000);
+});
