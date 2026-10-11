@@ -6,6 +6,7 @@ import type {
   SupervisorBridgeRoute,
 } from "./bridge-supervisor-message-delivery";
 import { isActiveRunState, readRunManifest } from "./run-state";
+import type { ResolvedSupervisorEndpointOf } from "./supervisor-endpoint-lease";
 
 export interface LoopSupervisorBinding {
   // Absent for a recipient that is not a Loop run. Such a recipient has no pane
@@ -104,23 +105,60 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
       }
       this.#unverified.delete(supervisorId);
     }
-    const manifest = readRunManifest(manifestPath);
-    if (!(manifest && isActiveRunState(manifest.state))) {
-      return undefined;
-    }
-    const runDir = dirname(manifestPath);
-    if (realpathSync(join(runDir, "manifest.json")) !== manifestPath) {
-      throw new Error("supervisor run manifest identity changed");
-    }
-    const target =
-      this.#seats.get(supervisorId) ??
-      (isAgent(manifest.primaryAgent) ? manifest.primaryAgent : undefined);
-    const declaredAgents = new Set(
-      [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].filter(isAgent)
-    );
-    if (!(target && declaredAgents.has(target))) {
-      return undefined;
-    }
-    return { runDir, target };
+    return activeRunSeatRoute(manifestPath, this.#seats.get(supervisorId));
   }
 }
+
+/**
+ * The bridge route of an active run's seat: the run must be in an active
+ * state, its manifest must still be the one named, and the seat (or, when
+ * none is given, the run's primary agent) must be one of its declared panes.
+ * Shared by the manifest-bound directory and the r9 lease-backed Loop run
+ * endpoint, so both refuse the same stopped or undeclared seats.
+ */
+const activeRunSeatRoute = (
+  manifestPath: string,
+  seat: "claude" | "codex" | undefined
+): SupervisorBridgeRoute | undefined => {
+  const manifest = readRunManifest(manifestPath);
+  if (!(manifest && isActiveRunState(manifest.state))) {
+    return undefined;
+  }
+  const runDir = dirname(manifestPath);
+  if (realpathSync(join(runDir, "manifest.json")) !== manifestPath) {
+    throw new Error("supervisor run manifest identity changed");
+  }
+  const target =
+    seat ??
+    (isAgent(manifest.primaryAgent) ? manifest.primaryAgent : undefined);
+  const declaredAgents = new Set(
+    [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].filter(isAgent)
+  );
+  if (!(target && declaredAgents.has(target))) {
+    return undefined;
+  }
+  return { runDir, target };
+};
+
+/**
+ * r9: the bridge route of a Loop run endpoint the server just resolved from a
+ * lease (`resolveSupervisorEndpointLocator`, which derived and
+ * realpath-checked runDir and manifestPath under its own runs root). Never
+ * takes a locator or a caller path. Undefined, never a throw, when the run is
+ * not active, the seat is not a declared pane, or the run directory no longer
+ * holds that manifest: the endpoint is simply not ready.
+ */
+export const loopRunEndpointRoute = (
+  endpoint: ResolvedSupervisorEndpointOf<"loop-run">
+): SupervisorBridgeRoute | undefined => {
+  let route: SupervisorBridgeRoute | undefined;
+  try {
+    route = activeRunSeatRoute(endpoint.manifestPath, endpoint.seat);
+  } catch {
+    return undefined;
+  }
+  if (!route || route.runDir !== endpoint.runDir) {
+    return undefined;
+  }
+  return route;
+};
