@@ -271,7 +271,8 @@ All of them go through `src/loop/a2a-session-client.ts`, which enforces:
   caller beyond that identity, and a release refuses a lease recorded for
   another supervisor.
 - **The token goes only to the config's server.** The server is the
-  orchestration config's loopback `hostname`/`port`; every request URL is
+  orchestration config's `origin` when it names one (RA1, below), else its
+  loopback `hostname`/`port`; every request URL is
   checked against that origin before the token is attached (a path with
   `//`, a backslash, whitespace or control characters is refused), and
   redirects are refused. Ids from messages or tool input are validated as
@@ -293,6 +294,77 @@ supervisor is renamed only by an explicit takeover"; the r9 e2e
 (`a2a-v2-all-supervisors-e2e.test.ts`) runs each `loop a2a` call with only
 its supervisor's token. Each guard was mutation-checked: reverting it fails
 those tests.
+
+### RA1: origin policy and session tokens (claude/ra1-tokens-tls)
+
+Nothing here exposes the server: it still binds exactly the configured
+`hostname`. RA1 replaces four loopback-only checks with one policy
+(`src/loop/orchestration-origin-policy.ts`) and adds session tokens
+(`src/loop/orchestration-token-service.ts`). Static `tokenEnv` tokens keep
+working unchanged as legacy.
+
+- **Origin policy.** Plaintext only on a loopback IP literal: an `http:`
+  origin must be `127.0.0.1` or `[::1]` (never `localhost`), and every
+  binding `a2a-v2 init`'s ledger port is published on must be `127.0.0.1:`
+  or `[::1]:`. Anything else is an `https:` origin (TLS terminated by
+  Caddy). URLs with credentials, a query or a fragment are refused. Used by
+  the server's config parser, the A2A client (`a2a-session-client.ts`), the
+  recipient route client (`recipient-api-client.ts`) and the ledger check.
+- **Config.** Three optional keys:
+  - `origin`: where clients reach the server, for example
+    `"https://loop.home.lab"`. The A2A client sends its token there instead
+    of to `http://<hostname>:<port>`, and the agent card advertises it.
+  - `tokens`: `{"signingKeyFile": "/abs/path/signing.pem"}`, an Ed25519
+    PKCS#8 PEM in a regular 0600 file this user owns (not a symlink). The
+    key is never inline. The store is `<stateDir>/tokens/token-store.json`
+    (0600, directory 0700).
+  - `supervisors[].role`: `{"role": "owner"|"operator"|"supervisor"|"worker",
+    "repoKey": "...", "project": "..."}`. A role-bound address has a
+    principal no other supervisor shares, and a repoKey/project has at most
+    one `supervisor` address.
+  - A `hostname` beyond loopback (`0.0.0.0`, a tailnet address) is refused
+    unless the config also has an `https` origin and a `tokens` section.
+- **Tokens.** EdDSA JWTs, 30 minutes, claims `sub` (session id), `repoKey`,
+  `project`, `role`, `epoch`, `aud` (`loop-control`), `jti`, `iat`, `exp`.
+  A session acts only as the address it enrolled as: the server maps the
+  token subject to that address and its configured principal, so every
+  downstream sender check binds to the token subject.
+- **Host commands** (whoever reads the key is the owner already):
+  - `loop orchestration token-keygen <config>` writes the configured key
+    file (never overwrites one).
+  - `loop orchestration token-code <config> <supervisor-id> --out <new-file>`
+    writes a single-use, 10-minute enrollment code to a new 0600 file. The
+    code is never printed.
+  - `loop orchestration token-revoke <config> --session <id> | --jti <jti> |
+    --epoch <supervisor-id>` revokes a session, denies one token until it
+    would expire, or bumps the role epoch of that address's role and
+    subtree (every earlier token of it stops verifying).
+- **Routes** (`POST`, JSON, `cache-control: no-store`):
+  `/api/v1/tokens/enroll` `{"code"}` (the code is the credential) answers
+  `{data: {token, sessionId, expiresAt, audience, tokenType}}`;
+  `/api/v1/tokens/refresh` (Bearer session token) issues a new token for a
+  live, non-revoked session and denies the presented one;
+  `/api/v1/tokens/enrollment-codes` `{"supervisorId"}` and
+  `/api/v1/tokens/revoke` `{"sessionId"}|{"jti"}|{"epochFor"}` act as the
+  verified session only. A static legacy token never mints, refreshes or
+  revokes.
+- **Grants by role subtree.** A role-bound sender is governed by its role,
+  never widened by a configured grant: an owner may message anyone; a
+  supervisor messages (and cancels) the workers of its own repoKey/project;
+  a worker messages only its own subtree's supervisor; an operator messages
+  supervisors. Within an allowed pair the sender receives and cancels, the
+  recipient claims and acknowledges, either ticks, and a claimant must be
+  the actor itself. Minting a code or revoking a session follows the same
+  subtree (owner: any; supervisor: its workers; any session: itself);
+  epoch bumps are owner or host only. A sender without a role keeps its
+  configured grants exactly as before.
+
+Tests: `tests/loop/orchestration-origin-policy.test.ts`,
+`tests/loop/orchestration-token-service.test.ts`,
+`tests/loop/orchestration-token-command.test.ts`,
+`tests/loop/loop-orchestration-server-ra1.test.ts`, and the RA1 cases in
+`a2a-session-client.test.ts`, `recipient-api-client.test.ts` and
+`a2a-v2-init.test.ts`.
 
 ### fix8 critic fixes (2026-10-11)
 

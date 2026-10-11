@@ -108,6 +108,8 @@ const fakeDeps = (
     container?: { label: string; passwordInEnv?: boolean; running: boolean };
     volume?: boolean;
     probeOk?: boolean;
+    /** What `docker port` prints (default: 127.0.0.1 only). */
+    portStdout?: string;
   } = {}
 ) => {
   const calls: DockerCall[] = [];
@@ -149,7 +151,7 @@ const fakeDeps = (
         return Promise.resolve({
           code: 0,
           stderr: "",
-          stdout: "127.0.0.1:55432",
+          stdout: state.portStdout ?? "127.0.0.1:55432",
         });
       }
       return Promise.resolve({ code: 1, stderr: "unexpected", stdout: "" });
@@ -179,6 +181,37 @@ const noSecretIn = (text: string) => {
 };
 
 describe("a2a-v2 init", () => {
+  test("RA1: the plaintext ledger port is used only when every binding is a loopback IP literal", async () => {
+    for (const [portStdout, refused] of [
+      ["127.0.0.1:55432\n0.0.0.0:55432", true],
+      ["127.0.0.1:55432\n192.168.1.5:55432", true],
+      ["127.0.0.1:55432\n[::]:55432", true],
+      ["127.0.0.1:55432\n[::1]:55432\n", false],
+    ] as const) {
+      const f = fixture();
+      const { deps } = fakeDeps({ portStdout });
+      try {
+        const failure = await runA2AV2Init(
+          { configPath: f.configPath, recipient: "supervisor:harness" },
+          deps
+        ).then(
+          () => undefined,
+          (error: unknown) => error
+        );
+        if (refused) {
+          expect(String(failure)).toContain(
+            "ledger container loop-a2a-ledger is published beyond 127.0.0.1; refusing to use it"
+          );
+        } else {
+          // Accepted: init gets past the ledger to the missing Loop binding.
+          expect(failure).toBeInstanceOf(A2AV2InitIncompleteError);
+        }
+      } finally {
+        f.remove();
+      }
+    }
+  });
+
   test("r8 (--recipient) with no Loop binding: provisions the ledger and the 0600 env file, writes no section, and says what is missing", async () => {
     const f = fixture();
     const { calls, deps, logs } = fakeDeps();
