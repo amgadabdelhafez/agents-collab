@@ -366,7 +366,7 @@ Nothing here exposes the server: it still binds exactly the configured
 `hostname`. RA1 replaces four loopback-only checks with one policy
 (`src/loop/orchestration-origin-policy.ts`) and adds session tokens
 (`src/loop/orchestration-token-service.ts`). Static `tokenEnv` tokens keep
-working unchanged as legacy.
+working as legacy on a loopback listener (RA2: refused beyond loopback).
 
 - **Origin policy.** Plaintext only on a loopback IP literal: an `http:`
   origin must be `127.0.0.1` or `[::1]` (never `localhost`), and every
@@ -417,12 +417,14 @@ working unchanged as legacy.
   never widened by a configured grant: an owner may message anyone; a
   supervisor messages (and cancels) the workers of its own repoKey/project;
   a worker messages only its own subtree's supervisor; an operator messages
-  supervisors. Within an allowed pair the sender receives and cancels, the
-  recipient claims and acknowledges, either ticks, and a claimant must be
-  the actor itself. Minting a code or revoking a session follows the same
-  subtree (owner: any; supervisor: its workers; any session: itself);
-  epoch bumps are owner or host only. A sender without a role keeps its
-  configured grants exactly as before.
+  supervisors (RA2 adds supervisor to operator, and supervisor to owner as
+  a reply on an owner thread only). Within an allowed pair the sender
+  receives and cancels, the recipient claims and acknowledges, either
+  ticks, and a claimant must be the actor itself. Revoking a session
+  follows the same subtree (owner: any; supervisor: its workers; any
+  session: itself); minting a code is host or owner only (RA2); epoch
+  bumps are owner or host only. A sender without a role keeps its
+  configured grants exactly as before, except toward the owner (RA2).
 
 Tests: `tests/loop/orchestration-origin-policy.test.ts`,
 `tests/loop/orchestration-token-service.test.ts`,
@@ -430,6 +432,48 @@ Tests: `tests/loop/orchestration-origin-policy.test.ts`,
 `tests/loop/loop-orchestration-server-ra1.test.ts`, and the RA1 cases in
 `a2a-session-client.test.ts`, `recipient-api-client.test.ts` and
 `a2a-v2-init.test.ts`.
+
+### RA2: token hardening and owner messaging (claude/ra2-token-hardening)
+
+RA2 narrows RA1 where it supersedes the text above (owner decisions of
+2026-10-11):
+
+- **Minting.** Only the host (`loop orchestration token-code`) and an owner
+  session mint enrollment codes. A supervisor never does, not even for a
+  worker of its own subtree: a code it held would let it enroll as that
+  worker. Revocation is unchanged (owner any, supervisor its workers, any
+  session itself). The route answers 403 `authority-denied`.
+- **Unauthenticated enroll.** A code that matches no record is refused from
+  a lock-free read: the store lock is never taken and `token-store.json` is
+  never rewritten for it. Failed enrollments are limited per source (the
+  peer address Bun reports for the request): 10 per fixed 60-second window,
+  in memory, at most 1024 sources plus one shared overflow window (a flood
+  of new addresses shares it and evicts nobody). Over the limit the route
+  answers 429 `too-many-attempts` with `retry-after`, before reading the
+  body. Behind a reverse proxy on the same host the peer is the proxy, so
+  every proxied client shares one window (fail closed).
+- **Static tokens.** `tokenEnv` tokens authenticate only when the listener
+  `hostname` is loopback (`127.0.0.1`, `::1`, `localhost`). A listener
+  beyond loopback accepts session tokens alone, and its start no longer
+  requires the `tokenEnv` variables.
+- **Messaging.** A supervisor messages any operator (upward). A message to
+  the owner from a supervisor (or from a sender without a role, which also
+  needs its configured grant) is sent only as a reply on a thread the owner
+  started with that sender: on V1 the thread board's earliest message on
+  that `threadId` is the owner's and the owner messaged the sender on it;
+  on A2A the message's `contextId` is one the owner opened with that
+  supervisor through this server (in memory, 4096 contexts, 7 days; a
+  restart forgets them, so a later reply is refused). Anything else is
+  refused 403 `owner-reply-only` with a `message` and
+  `notifyVia: "attention-os:interactions"`: unprompted owner notifications
+  are attention-os interactions delivered with ntfy, never A2A. Workers and
+  operators never message the owner. `loop a2a send` reports that refusal
+  with its code instead of the generic one.
+
+Tests: `tests/loop/loop-orchestration-server-ra2.test.ts`,
+`tests/loop/loop-orchestration-server-ra2-serve.test.ts` (real Temporal dev
+server), the RA2 cases in `orchestration-token-service.test.ts` and
+`a2a-session-client.test.ts`.
 
 ### fix8 critic fixes (2026-10-11)
 

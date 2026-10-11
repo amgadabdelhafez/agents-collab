@@ -47,6 +47,11 @@ import {
   serverOriginFor,
 } from "./orchestration-origin-policy";
 import {
+  OWNER_NOTIFICATION_PATH,
+  OWNER_REPLY_ONLY,
+  OWNER_REPLY_ONLY_MESSAGE,
+} from "./orchestration-owner-messaging";
+import {
   acknowledgeRecipientWorkflow,
   isSupervisorMessageV2WorkflowId,
   RecipientAcknowledgementError,
@@ -715,7 +720,27 @@ export const sendA2AMessage = async (
     throw new Error("message body must be non-empty and at most 64 KiB");
   }
   const url = endpoint.url(a2aV2SupervisorIngressPath(endpoint.routePath, to));
-  const authenticated = a2aIngressFetch(endpoint, url, fetchImpl);
+  // RA2: the SDK reports any refusal as a transport error; the ingress's
+  // owner-reply-only refusal is kept so the caller is told the right path.
+  let ownerReplyOnly = false;
+  const observed = Object.assign(
+    async (
+      resource: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ): Promise<Response> => {
+      const response = await fetchImpl(resource, init);
+      if (response.status === 403) {
+        const value: unknown = await response
+          .clone()
+          .json()
+          .catch(() => undefined);
+        ownerReplyOnly = routeErrorCode(value) === OWNER_REPLY_ONLY;
+      }
+      return response;
+    },
+    { preconnect: fetch.preconnect }
+  );
+  const authenticated = a2aIngressFetch(endpoint, url, observed);
   const message: Message = {
     contextId: input.contextId ?? input.messageId,
     extensions: [],
@@ -752,6 +777,13 @@ export const sendA2AMessage = async (
       tenant: "",
     });
   } catch {
+    if (ownerReplyOnly) {
+      throw new A2AClientError(
+        `send refused: ${OWNER_REPLY_ONLY_MESSAGE} Nothing is claimed delivered.`,
+        OWNER_REPLY_ONLY,
+        { notifyVia: OWNER_NOTIFICATION_PATH }
+      );
+    }
     throw new A2AClientError(
       "send refused or the server is unavailable; nothing is claimed delivered",
       "unavailable"
