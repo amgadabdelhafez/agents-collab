@@ -1,12 +1,13 @@
 import type { SupervisorBridgeRoute } from "./bridge-supervisor-message-delivery";
 import type {
+  ResolvedSupervisorEndpointOf,
   SupervisorEndpointKind,
   SupervisorEndpointLeaseFence,
   SupervisorEndpointLeaseReader,
   SupervisorEndpointLeaseResolution,
   SupervisorEndpointLeaseV2,
   SupervisorEndpointLocator,
-  SupervisorEndpointLoopRunLocator,
+  SupervisorEndpointLocatorResolver,
 } from "./supervisor-endpoint-lease";
 import type { SupervisorMailboxDirectory } from "./supervisor-mailbox-delivery";
 import type {
@@ -49,6 +50,15 @@ import type { SupervisorSessionDescriptorV2 } from "./supervisor-session-v2";
  *
  * Every lookup uses the SEAT's scope {tenantId, principalFor(recipient)}, not
  * the sender scope the runtime passes; only tenantId is taken from it.
+ *
+ * SECURITY: a stored locator is untrusted ids. Every readiness check, probe
+ * and delivery re-resolves it with `options.resolveLocator(lease.locator,
+ * lease.recipient)` and hands the adapter only that fresh
+ * ResolvedSupervisorEndpoint; nothing caches a path or URL across calls. A
+ * live lease whose locator is refused still routes "endpoint" (it never falls
+ * through to the mailbox): readiness is unready with
+ * SUPERVISOR_ENDPOINT_REASONS.locatorRefused and delivery is
+ * `supervisorEndpointLocatorRefusedOutcome`.
  */
 
 export type SupervisorEndpointRoute = "defer" | "endpoint" | "mailbox" | "none";
@@ -70,6 +80,7 @@ export const decideSupervisorEndpointRoute = (
 export const SUPERVISOR_ENDPOINT_REASONS = {
   identityChanged: "recipient endpoint identity changed",
   leaseExpired: "recipient endpoint lease expired",
+  locatorRefused: "recipient endpoint locator refused",
   noEndpoint: "recipient has no endpoint and no mailbox",
   probeFailed: "recipient endpoint is not ready",
 } as const;
@@ -138,22 +149,29 @@ export type SupervisorEndpointLeaseOf<K extends SupervisorEndpointKind> = Omit<
  * readiness file, Loop run bridge status) and true only when the live session
  * matches the descriptor's sessionRef and endpointDigest. deliver must honour
  * envelope.idempotencyKey: a repeat after a lease change cannot duplicate work.
+ * Both receive `endpoint`, resolved by the caller for this call only; an
+ * adapter never derives a path or URL from `lease.locator` itself.
  *
  * - loop-run: BridgeSupervisorMessageDeliveryPort via
- *   `supervisorEndpointBridgeRoute(locator)`.
- * - claude-channel: the `__bridge-mcp <sessionDir> claude` channel server.
- * - codex-thread: probeCodexThread / injectCodexMessage.
+ *   `supervisorEndpointBridgeRoute(endpoint)`.
+ * - claude-channel: the `__bridge-mcp <endpoint.sessionDir> claude` channel
+ *   server.
+ * - codex-thread: probeCodexThread / injectCodexMessage on
+ *   `endpoint.remoteUrl` (manifest-derived, loopback-only). The WebSocket
+ *   client must not follow redirects: a 3xx upgrade response fails the probe.
  */
 export interface SupervisorEndpointKindAdapter<
   K extends SupervisorEndpointKind,
 > {
   deliver(input: {
+    endpoint: ResolvedSupervisorEndpointOf<K>;
     envelope: SupervisorMessageV2DeliveryEnvelope;
     lease: SupervisorEndpointLeaseOf<K>;
   }): Promise<SupervisorMessageV2DeliveryOutcome>;
   readonly kind: K;
   probe(input: {
     descriptor: SupervisorSessionDescriptorV2;
+    endpoint: ResolvedSupervisorEndpointOf<K>;
     lease: SupervisorEndpointLeaseOf<K>;
   }): Promise<boolean>;
 }
@@ -175,6 +193,11 @@ export interface SupervisorEndpointDeliveryOptions {
   mailboxes: SupervisorMailboxDirectory;
   now: () => Date;
   principalForRecipient(recipient: string): string | undefined;
+  /**
+   * The server's own resolver (createSupervisorEndpointLocatorResolver over
+   * its own home). Called on every readiness check, probe and delivery.
+   */
+  resolveLocator: SupervisorEndpointLocatorResolver;
   /** Seat-scope descriptor lookup (PostgresSupervisorSessionV2Store.current). */
   sessions: {
     current(
@@ -203,10 +226,23 @@ export const supervisorEndpointUndeliverable = (
   status: "transient-failure",
 });
 
-/** The bridge route of a Loop run lease: the seat is the bridge target. */
+/** A live lease whose locator the server refused: retry, never the mailbox. */
+export const supervisorEndpointLocatorRefusedOutcome: SupervisorMessageV2DeliveryOutcome =
+  {
+    reason: SUPERVISOR_ENDPOINT_REASONS.locatorRefused,
+    status: "transient-failure",
+  };
+
+/**
+ * The bridge route of a resolved Loop run endpoint: the server-derived runDir,
+ * the seat as the bridge target. Takes the resolved endpoint, never a locator.
+ */
 export const supervisorEndpointBridgeRoute = (
-  locator: SupervisorEndpointLoopRunLocator
-): SupervisorBridgeRoute => ({ runDir: locator.runDir, target: locator.seat });
+  endpoint: ResolvedSupervisorEndpointOf<"loop-run">
+): SupervisorBridgeRoute => ({
+  runDir: endpoint.runDir,
+  target: endpoint.seat,
+});
 
 /** The scope descriptors and leases of a seat live in. */
 export const supervisorEndpointSeatScope = (

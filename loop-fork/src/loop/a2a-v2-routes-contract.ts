@@ -10,6 +10,7 @@ import {
   type SupervisorEndpointLeaseFenceRefusal,
   type SupervisorEndpointLeaseHolderSummary,
   type SupervisorEndpointLocator,
+  supervisorEndpointSlug,
 } from "./supervisor-endpoint-lease";
 import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
 
@@ -39,6 +40,13 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  * - Errors use the existing envelope `{ error: { code } }` with the status of
  *   `A2A_V2_ROUTE_ERROR_STATUS`. A lease refusal adds `current` (held) or
  *   `reason` (fenced). No error carries a path, URL, token or driver detail.
+ * - SECURITY: a claim's locator is untrusted ids ({repoId, runId, seat},
+ *   {sessionId} or {repoId, runId, threadId}); the request carries no path
+ *   or URL. The handler resolves it with the server's own resolver for the
+ *   authenticated supervisorId (never a caller-chosen one), and refuses with
+ *   `locator-refused` (403, no detail: whether a path exists, escapes the
+ *   root, or names another supervisor is not disclosed). Renew re-resolves
+ *   the stored locator the same way.
  * - `/a2a/v2` (the bare routePath) stays the r8 recipient ingress; the
  *   existing /seats/<seat>, /assignment, /result-graph and /recipient routes
  *   are unchanged. /healthz stays counts only.
@@ -72,9 +80,7 @@ export class A2AV2RouteContractError extends Error {
 }
 
 export const a2aV2SupervisorSlug = (supervisorId: string): string =>
-  requireSupervisorEndpointRecipient(supervisorId).slice(
-    SUPERVISOR_PREFIX.length
-  );
+  supervisorEndpointSlug(supervisorId);
 
 export const a2aV2SupervisorIdFromSlug = (slug: string): string | undefined =>
   SLUG_RE.test(slug) ? `${SUPERVISOR_PREFIX}${slug}` : undefined;
@@ -255,6 +261,8 @@ export const A2A_V2_ROUTE_ERROR_STATUS = {
   "identity-mismatch": 403,
   "lease-fenced": 409,
   "lease-held": 409,
+  /** The locator did not resolve under the server's roots for this id. */
+  "locator-refused": 403,
   "method-not-allowed": 405,
   "not-found": 404,
   "request-invalid": 400,

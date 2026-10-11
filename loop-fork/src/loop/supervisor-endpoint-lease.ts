@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
 import type {
   SupervisorSessionDescriptorV2,
@@ -11,7 +11,8 @@ import type {
  * endpoint. Types, the store interface and pure helpers only. The PostgreSQL
  * store (T1) implements `SupervisorEndpointLeaseStore`; the endpoint delivery
  * ports (T2), server routes (T3) and clients (T4) consume it. Nothing here
- * opens a connection, reads a file, or probes a provider.
+ * opens a connection or probes a provider; the locator resolver touches the
+ * filesystem only through the `SupervisorEndpointFs` its caller injects.
  *
  * One row per (tenant, recipient) in `loop_supervisor_endpoint_lease_v2`.
  * `epoch` only grows (a successful claim bumps it; renew and release never
@@ -35,26 +36,46 @@ export const SUPERVISOR_ENDPOINT_KINDS = [
 ] as const;
 export type SupervisorEndpointKind = (typeof SUPERVISOR_ENDPOINT_KINDS)[number];
 
-/** A Loop run seat. The bridge directory resolves {runDir, seat} from it. */
-export interface SupervisorEndpointLoopRunLocator {
+/*
+ * Locators are UNTRUSTED caller input. They carry ids only, never a path or a
+ * URL. The server derives every path itself under its own roots
+ * (`supervisorEndpointRoots(<server home>)`), realpath-checks containment, and
+ * reads a Codex remote URL only from the server-derived run manifest
+ * (`resolveSupervisorEndpointLocator`). Every consumer re-resolves the stored
+ * locator on every claim, renew, readiness check, probe and delivery.
+ */
+
+/** A Loop run, by id: `<runsRoot>/<repoId>/<runId>`. */
+export interface SupervisorEndpointRunRef {
+  repoId: string;
+  runId: string;
+}
+
+/** A Loop run seat. The server derives runDir from {repoId, runId}. */
+export interface SupervisorEndpointLoopRunLocator
+  extends SupervisorEndpointRunRef {
   kind: "loop-run";
-  /** Absolute, normalized run directory (the one holding manifest.json). */
-  runDir: string;
   seat: "claude" | "codex";
 }
 
-/** A standalone Claude Code session served by `__bridge-mcp <sessionDir> claude`. */
+/**
+ * A standalone Claude Code session served by `__bridge-mcp <sessionDir> claude`.
+ * The server derives `<sessionsRoot>/<supervisor slug>/<sessionId>` from the
+ * lease's own recipient; a caller cannot name another supervisor's session.
+ */
 export interface SupervisorEndpointClaudeChannelLocator {
   kind: "claude-channel";
-  /** Absolute, normalized bridge session directory. */
-  sessionDir: string;
+  sessionId: string;
 }
 
-/** A Codex app-server thread, probed with read/resume and never a turn. */
-export interface SupervisorEndpointCodexThreadLocator {
+/**
+ * A Codex app-server thread of a Loop run, probed with read/resume and never a
+ * turn. The remote URL is the run manifest's `codexRemoteUrl`, never the
+ * caller's.
+ */
+export interface SupervisorEndpointCodexThreadLocator
+  extends SupervisorEndpointRunRef {
   kind: "codex-thread";
-  /** Loopback ws:// or wss:// URL with no credentials, query or fragment. */
-  remoteUrl: string;
   threadId: string;
 }
 
@@ -131,6 +152,15 @@ export interface SupervisorEndpointLeaseHolderSummary
   state: SupervisorEndpointLeaseState;
 }
 
+/**
+ * A locator the server refused to resolve. Callers learn only that it was
+ * refused (the route body carries no reason); the reason is for logs.
+ */
+export interface SupervisorEndpointLocatorRefusedResult {
+  reason: SupervisorEndpointLocatorRefusal;
+  status: "locator-refused";
+}
+
 export type SupervisorEndpointLeaseClaimResult =
   | {
       descriptor: SupervisorSessionDescriptorV2;
@@ -141,7 +171,8 @@ export type SupervisorEndpointLeaseClaimResult =
       /** True only when a live lease of another holder was evicted. */
       tookOver: boolean;
     }
-  | { current: SupervisorEndpointLeaseHolderSummary; status: "held" };
+  | { current: SupervisorEndpointLeaseHolderSummary; status: "held" }
+  | SupervisorEndpointLocatorRefusedResult;
 
 /**
  * Why a fence was refused. Expiry alone never fences: an expired, unreleased
@@ -159,7 +190,8 @@ export type SupervisorEndpointLeaseRenewResult =
       lease: SupervisorEndpointLeaseV2;
       status: "renewed";
     }
-  | { reason: SupervisorEndpointLeaseFenceRefusal; status: "fenced" };
+  | { reason: SupervisorEndpointLeaseFenceRefusal; status: "fenced" }
+  | SupervisorEndpointLocatorRefusedResult;
 
 export type SupervisorEndpointLeaseReleaseResult =
   | {
@@ -186,6 +218,15 @@ export type SupervisorEndpointLeaseReleaseResult =
  * - renew/release: decided by `decideSupervisorEndpointLeaseFence`. Renew
  *   extends expiresAt (and renews the descriptor); release sets releasedAt.
  *   Neither changes epoch, holderRef, kind or locator.
+ * - Locators (SECURITY): the store is constructed with
+ *   `SupervisorEndpointLeaseStoreDeps.resolveLocator` (the server's own
+ *   `createSupervisorEndpointLocatorResolver`). claim resolves the input
+ *   locator for the claimed recipient before it writes anything; renew
+ *   re-resolves the STORED locator after the fence passes and, if it no
+ *   longer resolves, extends nothing (the lease lapses by TTL). Either
+ *   returns `locator-refused`. Release never resolves: a holder can always
+ *   let go. resolve/list return rows as stored, so every reader re-resolves
+ *   before it uses a locator (see the endpoint delivery contract).
  * - resolve/list: classify with the store's clock via
  *   `supervisorEndpointLeaseState`. list returns unreleased rows only (the
  *   enrollment sweep's work set), ordered by recipient.
@@ -210,6 +251,11 @@ export interface SupervisorEndpointLeaseStore {
   ): Promise<SupervisorEndpointLeaseResolution>;
 }
 
+/** Construction inputs T1's store takes beyond its database handle. */
+export interface SupervisorEndpointLeaseStoreDeps {
+  resolveLocator: SupervisorEndpointLocatorResolver;
+}
+
 /** The read side every delivery and assignment path needs; no writes. */
 export type SupervisorEndpointLeaseReader = Pick<
   SupervisorEndpointLeaseStore,
@@ -227,7 +273,27 @@ const RECIPIENT_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const HOLDER_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/;
 const THREAD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,247}$/;
 const SESSION_REF_RE = /^session:[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]"]);
+/**
+ * Path segments. None admits `/`, `\`, NUL, `.` or `..`: each starts with an
+ * alphanumeric and the repo, run and session patterns carry no dot at all.
+ * Repo ids are `sanitizeBase(label)-<hash>` (run-state.ts buildRepoId); run
+ * ids are git.ts RUN_ID_RE, bounded.
+ */
+const REPO_ID_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
+const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const PATH_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+/**
+ * The only Codex remote URL shape delivery will dial: plain ws, literal
+ * 127.0.0.1 or localhost, an explicit decimal port, nothing else (no
+ * credentials, path, query or fragment). Matched on the raw string, so no URL
+ * normalization (decimal or short IPv4, IPv6-mapped, case, percent-encoding,
+ * userinfo) can turn another spelling into an accepted one.
+ */
+const CODEX_REMOTE_URL_RE =
+  /^ws:\/\/(?:127\.0\.0\.1|localhost):([1-9]\d{0,4})\/?$/;
+const MAX_PORT = 65_535;
+const SUPERVISOR_PREFIX = "supervisor:";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -244,7 +310,134 @@ const exactKeys = (
   );
 };
 
-const canonicalDirectory = (value: unknown, field: string): string => {
+const requireId = (value: unknown, pattern: RegExp, field: string): string => {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new SupervisorEndpointLeaseError(`${field} is invalid`);
+  }
+  return value;
+};
+
+export const requireSupervisorEndpointRepoId = (value: unknown): string =>
+  requireId(value, REPO_ID_RE, "repoId");
+
+export const requireSupervisorEndpointRunId = (value: unknown): string =>
+  requireId(value, RUN_ID_RE, "runId");
+
+export const requireSupervisorEndpointSessionId = (value: unknown): string =>
+  requireId(value, SESSION_ID_RE, "sessionId");
+
+export const requireSupervisorEndpointThreadId = (value: unknown): string =>
+  requireId(value, THREAD_ID_RE, "threadId");
+
+/**
+ * The Codex remote URL delivery may dial, read from the server-derived run
+ * manifest only. Accepts exactly `ws://127.0.0.1:<port>` or
+ * `ws://localhost:<port>` (optional trailing `/`), port 1-65535. The adapter
+ * must also refuse a redirect: a 3xx upgrade response is a failed probe.
+ */
+export const requireLoopbackCodexRemoteUrl = (value: unknown): string => {
+  const match =
+    typeof value === "string" ? CODEX_REMOTE_URL_RE.exec(value) : null;
+  if (!match || Number(match[1]) > MAX_PORT) {
+    throw new SupervisorEndpointLocatorError("remote-url-refused");
+  }
+  return value as string;
+};
+
+export const isSupervisorEndpointKind = (
+  value: unknown
+): value is SupervisorEndpointKind =>
+  typeof value === "string" &&
+  (SUPERVISOR_ENDPOINT_KINDS as readonly string[]).includes(value);
+
+/**
+ * Strict decode: exact keys per kind, every field an id matching its pattern.
+ * A locator never carries a path or a URL, so a caller cannot point the
+ * server at one.
+ */
+export const parseSupervisorEndpointLocator = (
+  value: unknown
+): SupervisorEndpointLocator => {
+  if (!(isRecord(value) && isSupervisorEndpointKind(value.kind))) {
+    throw new SupervisorEndpointLeaseError("locator kind is invalid");
+  }
+  if (value.kind === "loop-run") {
+    if (
+      !(
+        exactKeys(value, ["kind", "repoId", "runId", "seat"]) &&
+        (value.seat === "claude" || value.seat === "codex")
+      )
+    ) {
+      throw new SupervisorEndpointLeaseError("loop-run locator is invalid");
+    }
+    return {
+      kind: "loop-run",
+      repoId: requireSupervisorEndpointRepoId(value.repoId),
+      runId: requireSupervisorEndpointRunId(value.runId),
+      seat: value.seat,
+    };
+  }
+  if (value.kind === "claude-channel") {
+    if (!exactKeys(value, ["kind", "sessionId"])) {
+      throw new SupervisorEndpointLeaseError(
+        "claude-channel locator is invalid"
+      );
+    }
+    return {
+      kind: "claude-channel",
+      sessionId: requireSupervisorEndpointSessionId(value.sessionId),
+    };
+  }
+  if (!exactKeys(value, ["kind", "repoId", "runId", "threadId"])) {
+    throw new SupervisorEndpointLeaseError("codex-thread locator is invalid");
+  }
+  return {
+    kind: "codex-thread",
+    repoId: requireSupervisorEndpointRepoId(value.repoId),
+    runId: requireSupervisorEndpointRunId(value.runId),
+    threadId: requireSupervisorEndpointThreadId(value.threadId),
+  };
+};
+
+/* ---------------------------------------------------------------------------
+ * Server-side resolution (SECURITY). Every path is derived from the server's
+ * own roots and the locator's ids, then realpath-checked; the Codex URL comes
+ * from the derived manifest. The filesystem is injected, so this module still
+ * reads nothing by itself: the server passes `{ realpath: realpathSync,
+ * readJson }` and tests pass fixtures.
+ * ------------------------------------------------------------------------- */
+
+/** Why a locator did not resolve. For logs only; routes never echo it. */
+export const SUPERVISOR_ENDPOINT_LOCATOR_REFUSALS = [
+  "foreign-manifest",
+  "invalid",
+  "not-contained",
+  "remote-url-refused",
+  "thread-mismatch",
+  "unresolved",
+] as const;
+export type SupervisorEndpointLocatorRefusal =
+  (typeof SUPERVISOR_ENDPOINT_LOCATOR_REFUSALS)[number];
+
+/** Fixed message: never a path, URL, id or errno. */
+export class SupervisorEndpointLocatorError extends SupervisorEndpointLeaseError {
+  readonly reason: SupervisorEndpointLocatorRefusal;
+  constructor(reason: SupervisorEndpointLocatorRefusal) {
+    super(`endpoint locator refused: ${reason}`);
+    this.name = "SupervisorEndpointLocatorError";
+    this.reason = reason;
+  }
+}
+
+/** The server's own roots, from its own home. Never from a request. */
+export interface SupervisorEndpointRoots {
+  /** `<home>/.loop/runs`, the same root as run-state.ts resolveStorageRoot. */
+  runsRoot: string;
+  /** `<home>/.loop/sessions`, one directory per supervisor slug. */
+  sessionsRoot: string;
+}
+
+const canonicalAbsolute = (value: unknown, field: string): string => {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
@@ -259,85 +452,258 @@ const canonicalDirectory = (value: unknown, field: string): string => {
   return value;
 };
 
-const loopbackWebSocketUrl = (value: unknown): string => {
-  if (typeof value !== "string" || value.length > 2048) {
-    throw new SupervisorEndpointLeaseError("remoteUrl is invalid");
+export const supervisorEndpointRoots = (
+  home: string
+): SupervisorEndpointRoots => {
+  const base = canonicalAbsolute(home, "home");
+  return {
+    runsRoot: join(base, ".loop", "runs"),
+    sessionsRoot: join(base, ".loop", "sessions"),
+  };
+};
+
+/** The recipient id without `supervisor:`; a single safe path segment. */
+export const supervisorEndpointSlug = (supervisorId: string): string =>
+  requireSupervisorEndpointRecipient(supervisorId).slice(
+    SUPERVISOR_PREFIX.length
+  );
+
+/** `<runsRoot>/<repoId>/<runId>`, lexically. Containment is checked separately. */
+export const supervisorEndpointRunDir = (
+  roots: SupervisorEndpointRoots,
+  ref: SupervisorEndpointRunRef
+): string =>
+  join(
+    canonicalAbsolute(roots.runsRoot, "runsRoot"),
+    requireSupervisorEndpointRepoId(ref.repoId),
+    requireSupervisorEndpointRunId(ref.runId)
+  );
+
+/** `<sessionsRoot>/<supervisor slug>/<sessionId>`, lexically. */
+export const supervisorEndpointSessionDir = (
+  roots: SupervisorEndpointRoots,
+  supervisorId: string,
+  sessionId: string
+): string =>
+  join(
+    canonicalAbsolute(roots.sessionsRoot, "sessionsRoot"),
+    supervisorEndpointSlug(supervisorId),
+    requireSupervisorEndpointSessionId(sessionId)
+  );
+
+/** The filesystem the resolver may touch. Both throw when the path is absent. */
+export interface SupervisorEndpointFs {
+  /** JSON.parse of a regular file's contents. */
+  readJson(path: string): unknown;
+  /** fs.realpathSync semantics. */
+  realpath(path: string): string;
+}
+
+/**
+ * Realpath containment: the real path of `root/segments...` must be EXACTLY
+ * `realpath(root)/segments...`. That refuses a symlink escape and also any
+ * symlink below the root (which could alias another repo's run or another
+ * supervisor's session). The root itself may be a symlink. Returns the real
+ * path.
+ */
+export const supervisorEndpointContainedRealpath = (
+  fs: Pick<SupervisorEndpointFs, "realpath">,
+  root: string,
+  segments: readonly string[]
+): string => {
+  const lexicalRoot = canonicalAbsolute(root, "root");
+  if (
+    segments.length === 0 ||
+    !segments.every((segment) => PATH_SEGMENT_RE.test(segment))
+  ) {
+    throw new SupervisorEndpointLocatorError("invalid");
   }
-  let url: URL;
+  let realRoot: string;
+  let actual: string;
   try {
-    url = new URL(value);
+    realRoot = fs.realpath(lexicalRoot);
+    actual = fs.realpath(join(lexicalRoot, ...segments));
   } catch {
-    throw new SupervisorEndpointLeaseError("remoteUrl is invalid");
+    throw new SupervisorEndpointLocatorError("unresolved");
+  }
+  if (actual !== join(realRoot, ...segments)) {
+    throw new SupervisorEndpointLocatorError("not-contained");
+  }
+  return actual;
+};
+
+/**
+ * The run manifest field that names the supervisor a run serves. T4's
+ * `--a2a-as supervisor:x` launch writes it; a run without it cannot be
+ * claimed, renewed or delivered to as any supervisor.
+ */
+export const SUPERVISOR_ENDPOINT_MANIFEST_SUPERVISOR_FIELD =
+  "a2aSupervisorId" as const;
+export const SUPERVISOR_ENDPOINT_MANIFEST_FILE = "manifest.json" as const;
+
+export interface SupervisorEndpointRunManifestFacts {
+  codexRemoteUrl?: unknown;
+  codexThreadId?: unknown;
+  manifestPath: string;
+  runDir: string;
+}
+
+/**
+ * Derive and check a run: contained run directory and manifest, and a
+ * manifest that names this repo, this run and the claiming supervisor. The
+ * principal is never read from the manifest: it is principalFor(supervisorId)
+ * from the server's own config.
+ */
+export const resolveSupervisorEndpointRun = (
+  fs: SupervisorEndpointFs,
+  roots: SupervisorEndpointRoots,
+  ref: SupervisorEndpointRunRef,
+  supervisorId: string
+): SupervisorEndpointRunManifestFacts => {
+  const repoId = requireSupervisorEndpointRepoId(ref.repoId);
+  const runId = requireSupervisorEndpointRunId(ref.runId);
+  requireSupervisorEndpointRecipient(supervisorId);
+  const runDir = supervisorEndpointContainedRealpath(fs, roots.runsRoot, [
+    repoId,
+    runId,
+  ]);
+  const manifestPath = supervisorEndpointContainedRealpath(fs, roots.runsRoot, [
+    repoId,
+    runId,
+    SUPERVISOR_ENDPOINT_MANIFEST_FILE,
+  ]);
+  let manifest: unknown;
+  try {
+    manifest = fs.readJson(manifestPath);
+  } catch {
+    throw new SupervisorEndpointLocatorError("unresolved");
   }
   if (
     !(
-      (url.protocol === "ws:" || url.protocol === "wss:") &&
-      LOOPBACK_HOSTS.has(url.hostname)
-    ) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    // Only the exact spelling the probe will use: no implicit normalization.
-    (url.toString() !== value && url.toString() !== `${value}/`)
+      isRecord(manifest) &&
+      manifest.repoId === repoId &&
+      manifest.runId === runId &&
+      manifest[SUPERVISOR_ENDPOINT_MANIFEST_SUPERVISOR_FIELD] === supervisorId
+    )
   ) {
-    throw new SupervisorEndpointLeaseError("remoteUrl is invalid");
+    throw new SupervisorEndpointLocatorError("foreign-manifest");
   }
-  return value;
+  return {
+    codexRemoteUrl: manifest.codexRemoteUrl,
+    codexThreadId: manifest.codexThreadId,
+    manifestPath,
+    runDir,
+  };
 };
 
-export const isSupervisorEndpointKind = (
-  value: unknown
-): value is SupervisorEndpointKind =>
-  typeof value === "string" &&
-  (SUPERVISOR_ENDPOINT_KINDS as readonly string[]).includes(value);
-
-/** Strict decode: exact keys per kind, canonical paths, loopback Codex URL. */
-export const parseSupervisorEndpointLocator = (
-  value: unknown
-): SupervisorEndpointLocator => {
-  if (!(isRecord(value) && isSupervisorEndpointKind(value.kind))) {
-    throw new SupervisorEndpointLeaseError("locator kind is invalid");
-  }
-  if (value.kind === "loop-run") {
-    if (
-      !(
-        exactKeys(value, ["kind", "runDir", "seat"]) &&
-        (value.seat === "claude" || value.seat === "codex")
-      )
-    ) {
-      throw new SupervisorEndpointLeaseError("loop-run locator is invalid");
+/** What a stored locator resolves to, for the server's use only. */
+export type ResolvedSupervisorEndpoint =
+  | {
+      kind: "loop-run";
+      manifestPath: string;
+      runDir: string;
+      seat: "claude" | "codex";
     }
-    return {
-      kind: "loop-run",
-      runDir: canonicalDirectory(value.runDir, "runDir"),
-      seat: value.seat,
+  | { kind: "claude-channel"; sessionDir: string }
+  | {
+      kind: "codex-thread";
+      remoteUrl: string;
+      runDir: string;
+      threadId: string;
     };
+
+export type ResolvedSupervisorEndpointOf<K extends SupervisorEndpointKind> =
+  Extract<ResolvedSupervisorEndpoint, { kind: K }>;
+
+export interface SupervisorEndpointResolveContext {
+  fs: SupervisorEndpointFs;
+  roots: SupervisorEndpointRoots;
+  /** The lease's recipient (claim: the authenticated, body-matched id). */
+  supervisorId: string;
+}
+
+/**
+ * The one place a locator becomes a path or URL. Call it on every claim,
+ * renew, readiness check, probe and delivery; never cache its result across
+ * calls. Throws SupervisorEndpointLocatorError (fixed message) on refusal.
+ */
+export const resolveSupervisorEndpointLocator = (
+  locatorValue: unknown,
+  context: SupervisorEndpointResolveContext
+): ResolvedSupervisorEndpoint => {
+  let locator: SupervisorEndpointLocator;
+  try {
+    locator = parseSupervisorEndpointLocator(locatorValue);
+    requireSupervisorEndpointRecipient(context.supervisorId);
+  } catch {
+    throw new SupervisorEndpointLocatorError("invalid");
   }
-  if (value.kind === "claude-channel") {
-    if (!exactKeys(value, ["kind", "sessionDir"])) {
-      throw new SupervisorEndpointLeaseError(
-        "claude-channel locator is invalid"
-      );
-    }
+  if (locator.kind === "claude-channel") {
+    const slug = supervisorEndpointSlug(context.supervisorId);
     return {
       kind: "claude-channel",
-      sessionDir: canonicalDirectory(value.sessionDir, "sessionDir"),
+      sessionDir: supervisorEndpointContainedRealpath(
+        context.fs,
+        context.roots.sessionsRoot,
+        [slug, locator.sessionId]
+      ),
     };
   }
-  if (
-    !exactKeys(value, ["kind", "remoteUrl", "threadId"]) ||
-    typeof value.threadId !== "string" ||
-    !THREAD_ID_RE.test(value.threadId)
-  ) {
-    throw new SupervisorEndpointLeaseError("codex-thread locator is invalid");
+  const run = resolveSupervisorEndpointRun(
+    context.fs,
+    context.roots,
+    locator,
+    context.supervisorId
+  );
+  if (locator.kind === "loop-run") {
+    return {
+      kind: "loop-run",
+      manifestPath: run.manifestPath,
+      runDir: run.runDir,
+      seat: locator.seat,
+    };
+  }
+  if (run.codexThreadId !== locator.threadId) {
+    throw new SupervisorEndpointLocatorError("thread-mismatch");
   }
   return {
     kind: "codex-thread",
-    remoteUrl: loopbackWebSocketUrl(value.remoteUrl),
-    threadId: value.threadId,
+    remoteUrl: requireLoopbackCodexRemoteUrl(run.codexRemoteUrl),
+    runDir: run.runDir,
+    threadId: locator.threadId,
   };
 };
+
+export type SupervisorEndpointLocatorResolver = (
+  locator: SupervisorEndpointLocator,
+  supervisorId: string
+) => ResolvedSupervisorEndpoint;
+
+/** Bind the server's own filesystem and roots once, at server construction. */
+export const createSupervisorEndpointLocatorResolver = (deps: {
+  fs: SupervisorEndpointFs;
+  roots: SupervisorEndpointRoots;
+}): SupervisorEndpointLocatorResolver => {
+  const roots: SupervisorEndpointRoots = {
+    runsRoot: canonicalAbsolute(deps.roots.runsRoot, "runsRoot"),
+    sessionsRoot: canonicalAbsolute(deps.roots.sessionsRoot, "sessionsRoot"),
+  };
+  return (locator, supervisorId) =>
+    resolveSupervisorEndpointLocator(locator, {
+      fs: deps.fs,
+      roots,
+      supervisorId,
+    });
+};
+
+/** `{ status: "locator-refused" }` for a store result, from a thrown refusal. */
+export const supervisorEndpointLocatorRefused = (
+  error: unknown
+): SupervisorEndpointLocatorRefusedResult => ({
+  reason:
+    error instanceof SupervisorEndpointLocatorError ? error.reason : "invalid",
+  status: "locator-refused",
+});
 
 /** The descriptor endpointRef for a kind: `endpoint:<kind>`. */
 export const supervisorEndpointRef = (kind: SupervisorEndpointKind): string =>

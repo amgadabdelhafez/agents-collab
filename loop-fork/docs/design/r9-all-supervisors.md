@@ -117,11 +117,11 @@ Freeze the lease types and the route contracts first.
 
 ## CONTRACTS
 
-Frozen on `claude/fix9-contracts` (from `claude/fix-integration-r8-2026-10-11` e2fa0507). Builders import these files and do not edit them; a change goes back through this branch. Each file holds types, interfaces and pure helpers only. `tests/loop/supervisor-endpoint-contracts.test.ts` pins the decisions, and every guard was mutation-proved.
+Frozen on `claude/fix9-contracts` (from `claude/fix-integration-r8-2026-10-11` e2fa0507). Builders import these files and do not edit them; a change goes back through this branch. Each file holds types, interfaces and pure helpers only; the locator resolver reaches the filesystem only through an injected interface. `tests/loop/supervisor-endpoint-contracts.test.ts` pins the decisions, and every guard was mutation-proved (28 mutants in f6466b8e, 35 more for the locator security hardening).
 
 | File | Owns | Used by |
 |---|---|---|
-| `src/loop/supervisor-endpoint-lease.ts` | Lease row type, kinds, locators, fence, `SupervisorEndpointLeaseStore` (claim/renew/release/resolve/list), claim and fence decisions | T1 implements the store; T2, T3 and T4 read it |
+| `src/loop/supervisor-endpoint-lease.ts` | Lease row type, kinds, id-only locators, fence, `SupervisorEndpointLeaseStore` (claim/renew/release/resolve/list), claim and fence decisions, the server-side locator resolver | T1 implements the store; T2, T3 and T4 read it |
 | `src/loop/supervisor-message-v2-endpoint-contract.ts` | The one routing table, readiness states, per-kind adapter interface, delivery options, fixed reasons | T2 implements it; T3 wires it |
 | `src/loop/a2a-v2-routes-contract.ts` | Paths, the route matcher, strict session request parsers, receipt, message status, error codes | T3 serves the routes; T4 calls them |
 
@@ -140,11 +140,31 @@ Frozen on `claude/fix9-contracts` (from `claude/fix-integration-r8-2026-10-11` e
   - The provider is set by the kind, or by the seat for `loop-run`.
   - A Codex sessionRef must be `session:<threadId>`.
   - The descriptor's expiresAt equals the lease's.
-- **Locators:**
-  - Directories are absolute and normalized, with no trailing slash and no NUL.
-  - A Codex remoteUrl must be `ws:` or `wss:` on literal loopback (127.0.0.1 or [::1]). It carries no credentials, query or fragment, and is accepted only in the exact spelling the probe uses.
+- **Locators** carry ids only (see Locator security below). The digest covers those ids, so the r9 descriptor binds which run, session or thread, and the resolved path or URL is re-derived on every use.
 - **TTL** is 1000 to 86,400,000 ms, the same bounds as `a2aV2.sessionTtlMs`. The server defaults to sessionTtlMs.
 - **Store outage:** the store rejects with `SupervisorMessageV2ReadinessUnavailableError`, never with driver text.
+
+### Locator security
+
+Added on top of f6466b8e after a security review. A locator is untrusted caller input: the server never reads a path or dials a URL that a caller supplied. This supersedes the Data model's `locator_json` line (runDir+seat, sessionDir, remoteUrl+threadId).
+
+| Kind | Locator (exact keys) | Server derives |
+|---|---|---|
+| loop-run | `{kind, repoId, runId, seat}` | `<home>/.loop/runs/<repoId>/<runId>` and its `manifest.json` |
+| claude-channel | `{kind, sessionId}` | `<home>/.loop/sessions/<slug>/<sessionId>`, where slug is the lease recipient without `supervisor:` |
+| codex-thread | `{kind, repoId, runId, threadId}` | the run as above; the URL is the manifest's `codexRemoteUrl` |
+
+- **Roots** come from the server's own home (`supervisorEndpointRoots`), never from a request.
+- **Ids:** repoId `^[a-z0-9][a-z0-9-]{0,127}$`, runId and sessionId `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`. None admits `/`, `\`, NUL, `.` or `..`. A locator with a path or URL key (runDir, sessionDir, remoteUrl) is refused as an unknown key.
+- **Containment:** `realpath(<root>/<segments>)` must equal `realpath(<root>)/<segments>` exactly. That refuses a symlink escape and any symlink below the root, including an alias of another run or another supervisor's session. The root itself may be a symlink. The run's `manifest.json` gets the same check.
+- **Manifest binding:** the manifest must have `repoId` and `runId` equal to the locator's and `a2aSupervisorId` equal to the claiming supervisor. T4's `--a2a-as supervisor:x` writes `a2aSupervisorId`; a run without it cannot be claimed. The principal is `principalFor(supervisorId)` from the server config, never from the manifest. For codex-thread, the manifest's `codexThreadId` must equal the locator's threadId.
+- **Codex URL:** exactly `ws://127.0.0.1:<port>` or `ws://localhost:<port>` (optional trailing `/`, port 1-65535), matched on the raw string. Refused: other hosts, IPv6 and IPv6-mapped forms, numeric or short IPv4 spellings, `wss:`, userinfo, any path, query or fragment, and no explicit port. The client must not follow a redirect: a 3xx upgrade fails the probe.
+- **Re-validation:** `resolveSupervisorEndpointLocator` is the only place a locator becomes a path or URL. It runs on every claim, every renew (on the stored locator, after the fence passes), and every readiness check, probe and delivery. Nothing caches its result. Release never resolves, so a holder can always let go.
+- **Refusals:** `SupervisorEndpointLocatorError` with a fixed message and a reason for logs (`invalid`, `unresolved`, `not-contained`, `foreign-manifest`, `thread-mismatch`, `remote-url-refused`).
+  - claim and renew return `{status: "locator-refused", reason}`; renew then extends nothing and the lease lapses by TTL.
+  - The route answers `locator-refused` (403) with no reason, so it does not disclose whether a path exists.
+  - A live lease whose locator is refused still routes `endpoint`: readiness is unready (`locatorRefused`) and delivery is a transient failure. It never falls through to the mailbox.
+- **I/O:** the resolver touches the filesystem only through the injected `SupervisorEndpointFs` (`realpath`, `readJson`), so the contract module still reads nothing by itself. T1's store takes the resolver as `SupervisorEndpointLeaseStoreDeps.resolveLocator`; T2 takes it as `SupervisorEndpointDeliveryOptions.resolveLocator`; adapters receive only the freshly resolved endpoint.
 
 ### Endpoint routing
 
@@ -173,10 +193,11 @@ All routes sit under `a2aV2.routePath`. The bare routePath and the r8 sub-routes
 | GET | `/messages/<messageId>` | The messageId is URI-encoded. The route answers only within {route tenant, authenticated principal}; any other id gets a 404. |
 
 - **Agent card:** none is served. Clients build the card with `agentCardFor` and use `ClientFactory.createFromAgentCard`.
-- **Session bodies** use exact keys (claim takes optional takeover and ttlMs; renew takes optional ttlMs) and are decoded by `parseA2AV2SessionRequest` on both sides.
+- **Session bodies** use exact keys (claim takes optional takeover and ttlMs; renew takes optional ttlMs) and are decoded by `parseA2AV2SessionRequest` on both sides. A claim's locator is ids only.
 - **Receipts** never echo the locator.
 - **Message status** returns phase, deliveredAt, acknowledgedAt, taskState (the SDK enum name, or null) and workResultCompleted. workResultCompleted is true only for TASK_STATE_COMPLETED, so delivery, the read ACK and completion stay three separate facts.
 - **Errors** use the existing `{ error: { code } }` envelope with the statuses in `A2A_V2_ROUTE_ERROR_STATUS`.
   - `lease-held` adds the holder summary.
   - `lease-fenced` adds the reason.
+  - `locator-refused` (403) carries no detail.
   - `v2-unavailable` (503) means V2 is disabled by a fault or its store cannot answer. V1 is unaffected.
