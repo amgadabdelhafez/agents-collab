@@ -719,6 +719,8 @@ describe("ra1 inbox stream route", () => {
           `${A2A_V2_LEASE_EPOCH_HEADER}: 3`,
           `${A2A_V2_LEASE_HOLDER_HEADER}: connect:holder-a`,
           "accept: text/event-stream",
+          // The socket ends with the response, not at the idle timeout.
+          "connection: close",
           "",
           "",
         ].join("\r\n")
