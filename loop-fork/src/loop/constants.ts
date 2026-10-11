@@ -54,6 +54,9 @@ Usage:
   loop                                     Start paired interactive tmux mode
   loop dashboard                           Open live panel for running loop instances
   loop world help                          Build or query the local Project World Model
+  loop project init --project <name> [--project <name> ...] [--repo <owner>/<name>] [--force]
+                                           Write the committed .harness/project.json (repo key + projects); refuses to overwrite without --force
+  loop project show                        Print this checkout's repoKey, checkoutId, projects and supervisor role ids
   loop [options] [prompt]
   loop update                              Check for updates and apply if available
   loop upgrade                             Alias for update

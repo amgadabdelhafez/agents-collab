@@ -66,6 +66,7 @@ import {
   pidCanStillOwnRun,
 } from "./loop/pid-ownership";
 import { groupCanStillOwnRun } from "./loop/process-group";
+import { runProjectCommand } from "./loop/project-command";
 import {
   RECON_PANE_SUBCOMMAND,
   type ReconPaneIndex,
@@ -477,7 +478,17 @@ const runA2ACliCommand = async (argv: string[]): Promise<boolean> => {
   return true;
 };
 
+const runProjectCliCommand = (argv: string[]): boolean => {
+  const result = runProjectCommand(argv);
+  if (!result) {
+    return false;
+  }
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return true;
+};
+
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
+  runProjectCliCommand(argv) ||
   (await runMailboxCliCommand(argv)) ||
   (await runA2ACliCommand(argv)) ||
   (await runOrchestrationCommand(argv)) ||
