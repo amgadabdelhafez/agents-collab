@@ -130,7 +130,9 @@ const freePort = (): number => {
 const waitFor = async <T>(
   label: string,
   probe: () => Promise<T | undefined> | T | undefined,
-  timeoutMs = 30_000
+  // A Claude target's first attempt only queues; the delivery is recorded
+  // by a later attempt, which the V2 recovery sweep (every 30s) drives.
+  timeoutMs = 90_000
 ): Promise<T> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -995,7 +997,7 @@ test("every configured supervisor is an A2A V2 recipient: six directed sends del
     }
     f.remove();
   }
-}, 300_000);
+}, 900_000);
 
 /** The A2A task carrying a message, from the sender's own status scope. */
 const a2aTaskIdOf = async (
