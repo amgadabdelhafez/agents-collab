@@ -94,7 +94,12 @@ import {
   PostgresSupervisorMessageV2GovernanceReceiptStore,
   type SupervisorMessageV2AuthorityPort,
 } from "./supervisor-message-v2-governance";
-import { createSupervisorMessageV2RecipientHttpHandler } from "./supervisor-message-v2-http";
+import {
+  createSupervisorMessageV2RecipientHttpHandler,
+  runSupervisorMessageV2RecipientLifecycle,
+  type SupervisorMessageV2RecipientLifecycleCommand,
+  type SupervisorMessageV2RecipientLifecycleOutcome,
+} from "./supervisor-message-v2-http";
 import {
   createSupervisorMessageV2RecipientAssignmentResolver,
   createSupervisorMessageV2RecipientReachability,
@@ -426,6 +431,16 @@ export interface SupervisorA2AV2Service {
   recipientRoute?: {
     pathname: string;
     httpHandler(request: Request): Promise<Response>;
+    /**
+     * The same claim/acknowledge as the HTTP route, for an identity the host
+     * established itself rather than from a bearer: the mailbox consumption
+     * reconciler acting for a supervisor whose own reader acknowledged the
+     * message. Assignment, reachability and claimant rules are the route's.
+     */
+    lifecycle?(
+      identity: SupervisorA2AAuthenticatedIdentity,
+      command: SupervisorMessageV2RecipientLifecycleCommand
+    ): Promise<SupervisorMessageV2RecipientLifecycleOutcome>;
   };
   registerSession(
     scope: TrustedSupervisorMessageV2Scope,
@@ -2296,6 +2311,12 @@ export const createSupervisorA2AV2Service = async (
           publishResult: (scope, command) =>
             ownedService.publishResult(scope, command),
         }),
+        lifecycle: (identity, command) =>
+          runSupervisorMessageV2RecipientLifecycle(
+            { governance, resolveAssignment },
+            identity,
+            command
+          ),
       };
     }
     const inboxHub = options.allSupervisors?.inboxStream;

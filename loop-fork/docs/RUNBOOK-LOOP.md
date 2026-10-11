@@ -360,6 +360,78 @@ them, the route's early code, the client's wait, the code allowlist, the
 on-demand renewal and its liveness check, and the renewal-race recheck with
 its epoch and revision conditions.
 
+### Mailbox readers acknowledge V2 messages (ra2, claude/ra2-mailbox-v2-ack)
+
+Seen live before ra2: a V2 message delivered to a mailbox-only recipient
+stayed open until someone ran `loop a2a ack`, and the V2 recovery sweep grew
+with those messages. The V1 mailbox reconciler never matches a V2 workflow
+id, and `loop mailbox ack` held every V2 key when the session could not reach
+the recipient route (no config, no `a2aV2` section, or the supervisor's own
+token not in that session), so the reader could not acknowledge at all.
+
+- The server's reconcile tick now also carries the recipient's own cursor to
+  V2: for each key in a mailbox recipient's cursor whose envelope is a V2
+  delivery addressed to it, it claims and acknowledges on the recipient
+  route's own logic, in process, as that recipient (the configured
+  `principal` and `supervisorId`, never the operator). The route still
+  resolves the assignment and reachability, and in process it also refuses
+  a delivery key the workflow did not issue under the message's own scope.
+  The request ids are `loop a2a ack`'s (`a2a-ack:<op>:<workflow-id>`), so
+  whichever path acknowledges first, the other replays it. It never
+  publishes a result: an ACK is not completion.
+- It runs beside V1 reconciliation, not inside it: a hung or failing V2 pass
+  never delays V1 or changes `/healthz`, and it is reported once per change
+  (`orchestration A2A V2 mailbox ACK pass failed: ...` / `... recovered`).
+  Per message: early refusals wait for the server's retry time, other
+  failures back off (1 s doubling to 5 min) and log once, and a refusal the
+  workflow or authority decided is logged once and not retried. At most 8
+  messages per pass. Nothing V2 runs while the plane is disabled.
+- `loop mailbox ack` in a session that cannot resolve the route now moves
+  the cursor anyway and reports the keys under `v2.deferred` (stderr: `N V2
+  message(s) acknowledged in the mailbox cursor only ...`); the server
+  records the ACK from the cursor. A route that answered with a refusal, an
+  unreachable server, and fix9's multi-token refusal still hold the key.
+- Deferral is only for a session that cannot be anyone else (review fix,
+  2026-10-11). The resolver stops at the target's missing token before its
+  fix9 check, so a session acting as `supervisor:alice` (only `ALICE_TOKEN`
+  set) running `loop mailbox ack --id supervisor:bob` used to defer Bob's
+  key, and the server then recorded Bob's ACK: a confused deputy. Now a
+  session holding another configured supervisor's token or an endpoint
+  recipient run token (`LOOP_RECIPIENT_API_TOKEN`) is refused and the key is
+  held, and so is a session that cannot read the orchestration config to
+  show it holds neither. Only a token-less reader with a readable config
+  defers.
+- Limit: the evidence is the same as V1's, a key in the recipient's cursor
+  for an envelope in its registered mailbox. Anyone who can write both files
+  can make that recipient's ACK. An older server without this reconciler
+  leaves a deferred ACK unrecorded; upgrade the server before the clients.
+
+The reconcile tick also stopped re-reading `threads.jsonl` (3.6 MB live) up
+to six times per 250 ms pass: the thread store parses the journal only when
+its signature (inode, size, mtime and ctime in ns) changed, extends its
+parse in place after its own append when the file grew by exactly that row,
+hands each caller a structural copy instead of a structuredClone, and each
+reconciler reads the board once per pass and again only after it wrote. On
+a synthetic 3.6 MB journal (5,735 events, this laptop, 2026-10-11) a read
+went from 18 to 25 ms (parse every time) to about 3 ms (stat and copy). Not
+measured on the live host.
+
+Tests: `supervisor-mailbox-v2-acknowledgement.test.ts`,
+`loop-orchestration-server-ra2-mailbox-ack.test.ts`,
+`supervisor-reconcile-board.test.ts`, `supervisor-thread-store.test.ts`, and
+`supervisor-a2a-v2-service.test.ts` (the in-process route on PostgreSQL and
+Temporal). Mutation-checked (20, all killed): the cache signature's times,
+cache reuse, the own-append size check, the defensive copy (whole and per
+item), the per-pass
+board and its refresh after a write (both reconcilers), cursor-only
+evidence, the target check, settling, retrying only undecided refusals, the
+delivery-key check (unit and end to end), transient classification, the
+sweep's isolation, the disabled-plane gate, deferral instead of holding, the
+unresolved-route classification, and the multi-token refusal. The
+confused-deputy fix adds three (all killed): no foreign-credential check, no
+recipient-run-token check, and an unreadable config treated as no foreign
+credential.
+
 ### RA1: origin policy and session tokens (claude/ra1-tokens-tls)
 
 Nothing here exposes the server: it still binds exactly the configured

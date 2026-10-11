@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  A2AMultiTokenEnvironmentError,
   acknowledgeA2AWorkflows,
+  foreignIdentityCredentialEnvs,
   resolveA2AClientEndpoint,
 } from "./a2a-session-client";
 import { isSupervisorMessageV2WorkflowId } from "./recipient-api-client";
@@ -64,8 +66,31 @@ export interface MailboxCommandResult {
 
 export interface MailboxV2Acknowledgement {
   acknowledged: { phase: string; workflowId: string }[];
+  /**
+   * ra2: V2 workflows this session could not reach the recipient route for
+   * (no V2 section, or this supervisor's token not in this environment),
+   * from a session that holds no other identity's credential (no other
+   * configured supervisor's token, no endpoint recipient run token) and can
+   * read the orchestration config to show that. Their keys still move the
+   * cursor: the cursor IS this reader's acknowledgement, and the
+   * orchestration server's mailbox consumption reconciler records it on the
+   * recipient route as this supervisor. Not acknowledged yet, and never
+   * completion.
+   */
+  deferred?: { reason: string; workflowId: string }[];
   refused: { reason: string; workflowId: string }[];
   workResultCompleted: false;
+}
+
+/**
+ * The recipient route cannot be resolved from this session at all, as
+ * opposed to a route that answered (or failed to answer) a command.
+ */
+export class MailboxV2RouteUnresolvedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MailboxV2RouteUnresolvedError";
+  }
 }
 
 // A receipt is a function of the recipient and the exact key set, so a partial
@@ -370,17 +395,49 @@ export interface MailboxCommandDeps {
     supervisorId: string,
     workflowIds: readonly string[]
   ) => Promise<MailboxV2Acknowledgement>;
+  /** The environment the default route resolution reads (process.env). */
+  env?: NodeJS.ProcessEnv;
   now?: () => string;
 }
 
 const defaultAcknowledgeV2 = async (
   supervisorId: string,
-  workflowIds: readonly string[]
-): Promise<MailboxV2Acknowledgement> =>
-  await acknowledgeA2AWorkflows(
-    resolveA2AClientEndpoint(supervisorId),
-    workflowIds
-  );
+  workflowIds: readonly string[],
+  env?: NodeJS.ProcessEnv
+): Promise<MailboxV2Acknowledgement> => {
+  let endpoint: ReturnType<typeof resolveA2AClientEndpoint>;
+  try {
+    endpoint = resolveA2AClientEndpoint(supervisorId, env ? { env } : {});
+  } catch (error) {
+    if (error instanceof A2AMultiTokenEnvironmentError) {
+      // fix9: one identity per session. Refused, so the keys are held.
+      throw error;
+    }
+    // Messages name variables and paths, never a token value.
+    const reason =
+      error instanceof Error ? error.message : "recipient route unresolved";
+    // Deferral lets the server record this cursor as `supervisorId`'s ACK, so
+    // it is only for a session that cannot be anyone else. The resolver
+    // stops at a missing own token before its fix9 check, so a session acting
+    // as another supervisor (its token set, this one's not) would otherwise
+    // land here and become a confused deputy for `supervisorId`.
+    let foreign: string[];
+    try {
+      foreign = foreignIdentityCredentialEnvs(supervisorId, env ? { env } : {});
+    } catch (configError) {
+      throw new Error(
+        `${reason}; this session cannot show that it holds no other identity's credential (${configError instanceof Error ? configError.message : "orchestration config unreadable"}), so the V2 key is held`
+      );
+    }
+    if (foreign.length > 0) {
+      throw new A2AMultiTokenEnvironmentError(
+        `this session holds another identity's credential (${foreign.join(", ")}); it cannot acknowledge ${supervisorId}'s V2 messages, so the keys are held`
+      );
+    }
+    throw new MailboxV2RouteUnresolvedError(reason);
+  }
+  return await acknowledgeA2AWorkflows(endpoint, workflowIds);
+};
 
 /**
  * `loop mailbox` with V2 envelopes acknowledged on the recipient route. The
@@ -390,6 +447,21 @@ const defaultAcknowledgeV2 = async (
  * moves the cursor; a refused one stays unread for the retry. Every refusal of
  * the plain ack (unknown key, receipt mismatch, unreadable mailbox) happens
  * before any route call. Acknowledgement is never completion.
+ *
+ * ra2: a session that cannot resolve the route at all (no V2 section here,
+ * or not holding this supervisor's own token, the usual case for a
+ * mailbox-only recipient) used to hold every V2 key forever, so the reader
+ * could never acknowledge and the message stayed open until someone ran
+ * `loop a2a ack` with the token. Such keys now move the cursor and are
+ * reported as `v2.deferred`: the orchestration server's mailbox consumption
+ * reconciler sees the cursor advance and records the ACK on the recipient
+ * route as this supervisor. Deferral is only for a session that cannot be
+ * anyone else: one holding another configured supervisor's token or an
+ * endpoint recipient run token, or one that cannot read the orchestration
+ * config to show it holds neither, is refused and its keys are held (no
+ * confused deputy). A route that was reached and refused, or could not be
+ * reached, still holds the key, as before, and so does fix9's refusal of an
+ * environment holding other supervisors' tokens.
  */
 export const runMailboxCommandWithV2Ack = async (
   argv: string[],
@@ -434,25 +506,42 @@ export const runMailboxCommandWithV2Ack = async (
   const workflowIds = [...new Set(v2Entries.map((entry) => entry.workflowId))];
   let v2: MailboxV2Acknowledgement;
   try {
-    v2 = await (deps.acknowledgeV2 ?? defaultAcknowledgeV2)(
-      supervisorId,
-      workflowIds
-    );
+    v2 = deps.acknowledgeV2
+      ? await deps.acknowledgeV2(supervisorId, workflowIds)
+      : await defaultAcknowledgeV2(supervisorId, workflowIds, deps.env);
   } catch (error) {
     const reason =
       error instanceof Error ? error.message : "recipient route unavailable";
-    v2 = {
-      acknowledged: [],
-      refused: workflowIds.map((workflowId) => ({ reason, workflowId })),
-      workResultCompleted: false,
-    };
+    v2 =
+      error instanceof MailboxV2RouteUnresolvedError
+        ? {
+            acknowledged: [],
+            deferred: workflowIds.map((workflowId) => ({ reason, workflowId })),
+            refused: [],
+            workResultCompleted: false,
+          }
+        : {
+            acknowledged: [],
+            refused: workflowIds.map((workflowId) => ({ reason, workflowId })),
+            workResultCompleted: false,
+          };
   }
+  // A deferred workflow is not held: its key moves the cursor, and the
+  // server's consumption reconciler carries that acknowledgement.
+  const deferred = new Set(
+    (v2.deferred ?? []).map((entry) => entry.workflowId)
+  );
   const acknowledged = new Set(
     v2.acknowledged.map((entry) => entry.workflowId)
   );
   const holdKeys = new Set(
     v2Entries
-      .filter((entry) => !acknowledged.has(entry.workflowId))
+      .filter(
+        (entry) =>
+          !(
+            acknowledged.has(entry.workflowId) || deferred.has(entry.workflowId)
+          )
+      )
       .map((entry) => entry.idempotencyKey)
   );
   const result = runMailboxCommand(argv, now, { holdKeys });

@@ -183,6 +183,19 @@ const staticBearer = (token: string): A2ABearerSource => ({
 });
 
 /**
+ * fix9's one-identity refusal: the environment also holds another configured
+ * supervisor's token. Its own class so a caller can tell it from "the route
+ * cannot be resolved here" (ra2: `loop mailbox ack` defers the latter to the
+ * server and still refuses this one). Names variables, never values.
+ */
+export class A2AMultiTokenEnvironmentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "A2AMultiTokenEnvironmentError";
+  }
+}
+
+/**
  * The acting supervisor's connection to its own orchestration server. The
  * token is held behind a private field (a static value, or a session
  * credential source), so `JSON.stringify`, `inspect` and string conversion
@@ -519,7 +532,7 @@ export const resolveA2AClientEndpoint = (
   const assertOneIdentity = (): void => {
     const others = otherSupervisorTokenEnvs(client.config, tokenEnv ?? "", env);
     if (others.length > 0 && deps.allowMultiTokenEnv !== true) {
-      throw new Error(
+      throw new A2AMultiTokenEnvironmentError(
         `the environment also holds other supervisors' token variables (${others.join(", ")}); run each session with only ${tokenEnv ?? "its own token"} set, or pass --allow-multi-token-env`
       );
     }
@@ -567,6 +580,57 @@ export const resolveA2AClientEndpoint = (
     token,
     ...(trustCa === undefined ? {} : { trustCa }),
   });
+};
+
+/** An endpoint recipient run's own route credential (recipient-api-client). */
+const RECIPIENT_RUN_TOKEN_ENV = "LOOP_RECIPIENT_API_TOKEN";
+
+/**
+ * ra2 fix: the names (never the values) of the identity credentials `env`
+ * holds that are NOT `supervisorId`'s own: every other configured
+ * supervisor's token variable that is set, and an endpoint recipient run's
+ * route token. A session holding any of them has a fixed identity of its own
+ * that is not (or cannot be shown to be) `supervisorId`, so it must not stand
+ * in for `supervisorId`'s reader. Throws when the config cannot be read: then
+ * no absence can be shown, and the caller treats that as a refusal.
+ */
+export const foreignIdentityCredentialEnvs = (
+  supervisorIdValue: string,
+  deps: Pick<A2AClientDeps, "env" | "uid"> = {}
+): string[] => {
+  const env = deps.env ?? process.env;
+  const supervisorId = requireSupervisorEndpointRecipient(supervisorIdValue);
+  const configPath = orchestrationConfigPathFromEnv(env);
+  const text = readOrchestrationConfigText(configPath, env, deps);
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    throw new Error(`orchestration config is unavailable: ${configPath}`);
+  }
+  if (!isRecord(config)) {
+    throw new Error(`orchestration config is invalid: ${configPath}`);
+  }
+  const own = Array.isArray(config.supervisors)
+    ? config.supervisors.find(
+        (entry) => isRecord(entry) && entry.supervisorId === supervisorId
+      )
+    : undefined;
+  const ownTokenEnv =
+    isRecord(own) &&
+    typeof own.tokenEnv === "string" &&
+    TOKEN_ENV_RE.test(own.tokenEnv)
+      ? own.tokenEnv
+      : "";
+  const names = otherSupervisorTokenEnvs(config, ownTokenEnv, env);
+  if (
+    env[RECIPIENT_RUN_TOKEN_ENV] &&
+    RECIPIENT_RUN_TOKEN_ENV !== ownTokenEnv &&
+    !names.includes(RECIPIENT_RUN_TOKEN_ENV)
+  ) {
+    names.push(RECIPIENT_RUN_TOKEN_ENV);
+  }
+  return names;
 };
 
 const routeErrorCode = (value: unknown): A2AV2RouteErrorCode | undefined => {
