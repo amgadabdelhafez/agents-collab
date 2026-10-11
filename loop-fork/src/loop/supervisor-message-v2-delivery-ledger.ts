@@ -62,6 +62,14 @@ export class SupervisorMessageV2WorkflowIdFormatError extends Error {
   override readonly name = "SupervisorMessageV2WorkflowIdFormatError";
 }
 
+/**
+ * No start intent of this workflow id in this exact scope: absent, or another
+ * tenant's or principal's (one answer for both). Distinct from a ledger that
+ * cannot answer, which surfaces as the database's own error. The message (and
+ * the error name) are unchanged from the plain Error it replaces.
+ */
+export class SupervisorMessageV2StartIntentScopeError extends Error {}
+
 const isWorkflowIdFormat = (
   value: unknown
 ): value is SupervisorMessageV2WorkflowIdFormat =>
@@ -1927,7 +1935,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         typeof input === "object"
       )
     ) {
-      throw new Error(
+      throw new SupervisorMessageV2StartIntentScopeError(
         "V2 workflow scope does not match its durable start intent"
       );
     }

@@ -65,6 +65,7 @@ import {
   PostgresSupervisorMessageV2DeliveryLedger,
   type PostgresSupervisorMessageV2DeliveryLedgerOptions,
   type SupervisorMessageV2SettledResultBindingCheck,
+  SupervisorMessageV2StartIntentScopeError,
   type SupervisorMessageV2UnpublishableResultBinding,
   type SupervisorMessageV2WorkflowIdFormat,
   SupervisorMessageV2WorkflowIdFormatError,
@@ -191,6 +192,13 @@ export interface SupervisorA2AV2ServiceDependencies {
     databaseUrl: string;
     now: () => string;
     resolveLocator: SupervisorEndpointLocatorResolver;
+    /**
+     * The opened (and migrated) session store: the lease store shares its
+     * connection, descriptor table and rebind authority, so a claim's
+     * descriptor register/rebind is decided by the same authority.
+     */
+    sessions: SessionResource &
+      Partial<Pick<PostgresSupervisorSessionV2Store, "endpointLeases">>;
   }): Promise<LeaseResource>;
   /**
    * `options.deployment` is the workflow-id discriminator: the host's Temporal
@@ -1707,8 +1715,13 @@ const createAllSupervisorsRoute = (input: {
       try {
         // Absent, or another tenant's or principal's: one answer, 404.
         await input.ledger.assertStartIntent(workflowId, scope);
-      } catch {
-        return undefined;
+      } catch (error) {
+        if (error instanceof SupervisorMessageV2StartIntentScopeError) {
+          return undefined;
+        }
+        // A ledger that cannot answer is 503 v2-unavailable (the contract),
+        // never "no such message".
+        throw error;
       }
       return input.statusCoordinator.status(scope, workflowId);
     },
@@ -1779,6 +1792,7 @@ const openAllSupervisorsRouting = async (input: {
       databaseUrl: input.options.databaseUrl,
       now: input.options.now,
       resolveLocator: all.resolveLocator,
+      sessions: input.sessions,
     });
     input.onLeases(leases);
     await leases.migrate?.();

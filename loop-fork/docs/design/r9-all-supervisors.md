@@ -190,7 +190,7 @@ All routes sit under `a2aV2.routePath`. The bare routePath and the r8 sub-routes
 |---|---|---|
 | POST | `/sessions/{claim,renew,release}` | The bearer identity's supervisorId must equal the body's supervisorId. |
 | POST | `/supervisors/<slug>` | The SDK JSON-RPC ingress. The slug is the id without `supervisor:`. `harness.dev/from` must equal the authenticated id, and grants decide. |
-| GET | `/messages/<messageId>` | The messageId is URI-encoded. The route answers only within {route tenant, authenticated principal}; any other id gets a 404. |
+| GET | `/messages/<messageId>` | The id is the message's V2 **workflow id** (the `workflowId` a send returns), URI-encoded; an A2A message id is not looked up. The route answers only within {route tenant, authenticated principal}; any other id gets a 404, and a ledger that cannot answer gets 503 `v2-unavailable`. |
 
 - **Agent card:** none is served. Clients build the card with `agentCardFor` and use `ClientFactory.createFromAgentCard`.
 - **Session bodies** use exact keys (claim takes optional takeover and ttlMs; renew takes optional ttlMs) and are decoded by `parseA2AV2SessionRequest` on both sides. A claim's locator is ids only.
@@ -201,3 +201,27 @@ All routes sit under `a2aV2.routePath`. The bare routePath and the r8 sub-routes
   - `lease-fenced` adds the reason.
   - `locator-refused` (403) carries no detail.
   - `v2-unavailable` (503) means V2 is disabled by a fault or its store cannot answer. V1 is unaffected.
+
+## Integration (claude/fix-integration-r9-2026-10-11)
+
+T1 to T4 merged with `--no-ff` onto `claude/fix9-contracts` without textual conflicts. The integration wires the real parts together and fixes what the sandbox E2E (T5) found.
+
+### Wiring
+
+- **Lease store:** `defaultA2AV2EndpointFactories.connectLeases` opens T1's store from the service's own session store (`sessions.endpointLeases`), so a claim's descriptor register or rebind runs on the same connection and under the same rebind authority. The session store's `migrate` creates the lease table; the service closes the connection.
+- **Endpoint delivery:** `defaultA2AV2EndpointFactories.endpointDelivery` builds T2's `SupervisorEndpointMessageV2Delivery`, with the V1 mailbox writer behind the V2 envelope. The mailbox wake is the existing wake sweep's; no wake is added.
+- **One set of kind adapters per server** (`A2AV2EndpointFactories.adapters`, default `createSupervisorEndpointKindAdapters()`) serves delivery, the provider readiness of a lease-backed descriptor, and the lease sweep's observation.
+- **Provider readiness:** `LoopCodexSessionV2ProviderReadiness` gets T2's `SupervisorEndpointDescriptorReadiness`, which reads the lease store once it is open. Before that, or without one, a lease-backed descriptor is not ready. Without it, every live lease was unreachable for the recipient route and for result publication.
+
+### Defects found and fixed
+
+- **An expired lease was never renewed.** The sweep's observation went through delivery routing, which reports an expired lease as `deferred`, never `endpoint-ready`. So a lease that lapsed while its session was down, or while the server was down longer than the TTL, stayed expired after the session came back. The observation is now the lease's own endpoint check: descriptor identity, a fresh locator resolution, then the kind's no-turn probe.
+- **A ledger outage on `GET /messages/<id>` answered 404.** The route treated every `assertStartIntent` failure as "no such message". The ledger now throws `SupervisorMessageV2StartIntentScopeError` (same message) for absent or foreign; anything else is 503 `v2-unavailable`, as the route contract says.
+- **`loop a2a send` reported a refused turn as accepted.** The SDK returns a FAILED task when the server's executor refuses the turn (an invalid policy, for one). The client now throws, with the server's reason in the error detail.
+
+### Found, not changed (owner decisions)
+
+- **Completion is control-principal only.** The result-graph and assignment routes accept only `a2aV2.principal`, so a message whose sender has another principal can be delivered and acknowledged but never completed. T5 runs the three session supervisors under the control principal.
+- **`maxDeliveryAttempts` above 20 is accepted by the config parser (up to 100), but the message workflow refuses it.** Every V2 send then fails. This predates r9.
+- **A recipient can see a message before its delivery is recorded.** A Claude session or a mailbox reader sees the entry before the workflow records the delivery on its next attempt (up to `retryDelayMs` later). An acknowledgement in that window is refused and must be retried.
+- **`loop a2a status --message-id` takes the workflow id** that send prints, not the A2A message id; see the route table.

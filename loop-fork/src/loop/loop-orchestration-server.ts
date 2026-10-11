@@ -85,7 +85,15 @@ import {
 import {
   SUPERVISOR_ENDPOINT_REASONS,
   type SupervisorEndpointDeliveryPort,
+  type SupervisorEndpointKindAdapters,
 } from "./supervisor-message-v2-endpoint-contract";
+import {
+  checkSupervisorEndpointLease,
+  createSupervisorEndpointKindAdapters,
+  createSupervisorEndpointMailboxPort,
+  SupervisorEndpointDescriptorReadiness,
+  SupervisorEndpointMessageV2Delivery,
+} from "./supervisor-message-v2-endpoint-delivery";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
   SupervisorControlSurfaceAuthenticator,
@@ -275,8 +283,16 @@ interface ServerConfig {
  * lease-backed recipient is unready while mailbox-held ones are delivered.
  */
 export interface A2AV2EndpointFactories {
+  /**
+   * The per-kind adapters (probe and delivery) every endpoint path of one
+   * server shares: delivery, the provider readiness of a lease-backed
+   * descriptor, and the lease sweep's observation. Default: the bridge's own
+   * effects (createSupervisorEndpointKindAdapters()).
+   */
+  adapters?(): SupervisorEndpointKindAdapters;
   connectLeases?: SupervisorA2AV2ServiceDependencies["connectLeases"];
   endpointDelivery?(input: {
+    adapters: SupervisorEndpointKindAdapters;
     leases: SupervisorEndpointLeaseReader;
     mailboxes: ReadonlyMap<string, string>;
     principalForRecipient(recipient: string): string | undefined;
@@ -291,8 +307,43 @@ export interface A2AV2EndpointFactories {
   }): SupervisorEndpointDeliveryPort;
 }
 
-/** The factories a production server uses; T1 and T2 register here. */
-export const defaultA2AV2EndpointFactories: A2AV2EndpointFactories = {};
+/**
+ * The factories a production server uses: T1's PostgreSQL lease store over
+ * the service's own session store (same connection, descriptor table and
+ * rebind authority), and T2's per-kind endpoint delivery with the V1 mailbox
+ * writer behind the V2 envelope. Mailbox wake stays the existing wake sweep's.
+ */
+export const defaultA2AV2EndpointFactories: A2AV2EndpointFactories = {
+  connectLeases: ({ resolveLocator, sessions }) => {
+    if (typeof sessions.endpointLeases !== "function") {
+      return Promise.reject(
+        new Error("session store has no endpoint lease store")
+      );
+    }
+    const store = sessions.endpointLeases({ resolveLocator });
+    return Promise.resolve({
+      ...store,
+      // The session store owns the connection and created the table in its
+      // own migrate; the service closes it.
+      close: () => Promise.resolve(),
+    });
+  },
+  endpointDelivery: (input) => {
+    const mailboxes = {
+      resolveMailbox: (recipient: string) => input.mailboxes.get(recipient),
+    };
+    return new SupervisorEndpointMessageV2Delivery({
+      adapters: input.adapters,
+      leases: input.leases,
+      mailbox: createSupervisorEndpointMailboxPort(mailboxes),
+      mailboxes,
+      now: () => new Date(),
+      principalForRecipient: input.principalForRecipient,
+      resolveLocator: input.resolveLocator,
+      sessions: input.sessions,
+    });
+  },
+};
 
 export interface LoopOrchestrationServerOptions {
   /** Test seam: the server's own endpoint roots (default: its home's). */
@@ -1999,6 +2050,26 @@ const createDefaultRuntimeHost = async (input: {
     const factories = input.endpoints;
     const connectLeases = factories.connectLeases;
     const endpointDelivery = factories.endpointDelivery;
+    // The lease store opens after the session store whose provider readiness
+    // needs it, so a lease-backed descriptor's readiness reads it late. Before
+    // it is open (or without one) such a descriptor is not ready.
+    let endpointLeaseReader: SupervisorEndpointLeaseReader | undefined;
+    const endpointAdapters =
+      factories.adapters?.() ?? createSupervisorEndpointKindAdapters();
+    const endpointDescriptorReadiness = {
+      ready: (descriptor: SupervisorSessionDescriptorV2) => {
+        if (!endpointLeaseReader) {
+          return Promise.reject(
+            new Error(SUPERVISOR_ENDPOINT_REASONS.noEndpoint)
+          );
+        }
+        return new SupervisorEndpointDescriptorReadiness({
+          adapters: endpointAdapters,
+          leases: endpointLeaseReader,
+          resolveLocator,
+        }).ready(descriptor);
+      },
+    };
     let r8Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
     let leaseEnrollment: SupervisorEndpointLeaseEnrollment | undefined;
     let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
@@ -2007,14 +2078,17 @@ const createDefaultRuntimeHost = async (input: {
         authenticator: controlAuthenticator,
         ...(endpointDelivery
           ? {
-              endpointDelivery: ({ leases, sessions }) =>
-                endpointDelivery({
+              endpointDelivery: ({ leases, sessions }) => {
+                endpointLeaseReader = leases;
+                return endpointDelivery({
+                  adapters: endpointAdapters,
                   leases,
                   mailboxes: input.mailboxes,
                   principalForRecipient,
                   resolveLocator,
                   sessions,
-                }),
+                });
+              },
             }
           : {}),
         hasMailbox: (id) => input.mailboxes.has(id),
@@ -2104,6 +2178,7 @@ const createDefaultRuntimeHost = async (input: {
       // every live endpoint lease current.
       enrollSessions: async (sessions) => {
         const leases = sessions.endpointLeases;
+        endpointLeaseReader ??= leases;
         if (recipient) {
           r8Enrollment = new ConfiguredA2AV2SessionEnrollment({
             config: a2aConfig,
@@ -2121,26 +2196,26 @@ const createDefaultRuntimeHost = async (input: {
           });
         }
         if (leases) {
-          const readiness = sessions.endpointReadiness;
           leaseEnrollment = new SupervisorEndpointLeaseEnrollment({
             leases,
             log: (line) => console.error(line),
             now: () => new Date().toISOString(),
             observe: createSupervisorEndpointLeaseObserver({
-              ...(readiness
-                ? {
-                    probe: async (lease: SupervisorEndpointLeaseV2) =>
-                      (
-                        await readiness.readiness(
-                          {
-                            principal: lease.principal,
-                            tenantId: lease.tenantId,
-                          },
-                          lease.recipient
-                        )
-                      ).state === "endpoint-ready",
-                  }
-                : {}),
+              // The lease's own endpoint check (descriptor identity, a fresh
+              // locator resolution, the kind's no-turn probe), not delivery
+              // routing: routing reports an expired lease "deferred", which
+              // would keep an expired lease whose session is back from ever
+              // being renewed (a server down longer than the TTL).
+              probe: async (lease: SupervisorEndpointLeaseV2) =>
+                (await checkSupervisorEndpointLease({
+                  adapters: endpointAdapters,
+                  descriptor: await sessions.currentSession(
+                    { principal: lease.principal, tenantId: lease.tenantId },
+                    lease.recipient
+                  ),
+                  lease,
+                  resolveLocator,
+                })) === "ready",
               resolveLocator,
             }),
             principalForRecipient,
@@ -2181,6 +2256,7 @@ const createDefaultRuntimeHost = async (input: {
       policy: a2aConfig.policy,
       providerReadiness: new LoopCodexSessionV2ProviderReadiness({
         directory: input.directory,
+        endpoints: endpointDescriptorReadiness,
       }),
       rebindAuthority: configuredA2AV2RebindAuthority(
         a2aConfig,

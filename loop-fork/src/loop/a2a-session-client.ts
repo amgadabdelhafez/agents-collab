@@ -12,7 +12,10 @@ import { join } from "node:path";
 import { type Message, Role, type Task } from "@a2a-js/sdk";
 import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
 import { agentCardFor, FROM_METADATA_KEY } from "./a2a-supervisor-adapter";
-import { WORKFLOW_ID_METADATA_KEY } from "./a2a-supervisor-executor";
+import {
+  TASK_STATE_METADATA_KEY,
+  WORKFLOW_ID_METADATA_KEY,
+} from "./a2a-supervisor-executor";
 import {
   A2A_V2_MESSAGE_STATUS_SCHEMA,
   A2A_V2_ROUTE_ERROR_STATUS,
@@ -614,6 +617,20 @@ export const sendA2AMessage = async (
     );
   }
   const taskState = a2aV2TaskStateName(result.status?.state);
+  // The server's executor answers a refused turn (an invalid message or
+  // policy, a refused start) with a task that has already ended: that is a
+  // refusal, never acceptance.
+  if (
+    taskState === "TASK_STATE_FAILED" ||
+    taskState === "TASK_STATE_REJECTED"
+  ) {
+    const reason = result.metadata?.[TASK_STATE_METADATA_KEY];
+    throw new A2AClientError(
+      `send refused by the recipient's server (${taskState}); nothing is claimed delivered`,
+      "unavailable",
+      typeof reason === "string" ? { reason: reason.slice(0, 200) } : undefined
+    );
+  }
   const workflowId = result.metadata?.[WORKFLOW_ID_METADATA_KEY];
   return {
     accepted: true,

@@ -16,7 +16,7 @@ import { TaskState } from "@a2a-js/sdk";
 import { InMemoryTaskStore } from "@a2a-js/sdk/server";
 import { serve } from "bun";
 import {
-  type A2AClientError,
+  A2AClientError,
   a2aIngressFetch,
   a2aMessageStatus,
   acknowledgeA2AWorkflows,
@@ -683,7 +683,7 @@ test("a channel session is claimed by its id under the caller's own sessions roo
 
 test("send goes through the SDK client to the recipient's own ingress as the authenticated sender", async () => {
   const routed: { from: unknown; principal: string; tenant: string }[] = [];
-  const handlerFor = (recipient: string) => {
+  const handlerFor = (recipient: string, refuse = false) => {
     const pathname = `${ROUTE}/supervisors/${recipient.slice("supervisor:".length)}`;
     const card = agentCardFor({
       description: "fake ingress",
@@ -712,6 +712,10 @@ test("send goes through the SDK client to the recipient's own ingress as the aut
                 principal: input.principal,
                 tenant: input.tenant,
               });
+              if (refuse) {
+                // The executor ends a refused turn as a FAILED task.
+                return Promise.reject(new Error("policy refused"));
+              }
               return Promise.resolve({
                 scopeId: "scope:1",
                 state: TaskState.TASK_STATE_SUBMITTED,
@@ -726,20 +730,21 @@ test("send goes through the SDK client to the recipient's own ingress as the aut
       tenant: "tenant:t4",
     });
   };
-  const bobIngress = handlerFor(BOB);
+  const ingress: Record<string, ReturnType<typeof handlerFor>> = {
+    [`${ROUTE}/supervisors/bob`]: handlerFor(BOB),
+    [`${ROUTE}/supervisors/dave`]: handlerFor("supervisor:dave", true),
+  };
   const h = harness((seen) =>
-    seen.path === `${ROUTE}/supervisors/bob`
-      ? bobIngress(
-          new Request(`http://127.0.0.1${seen.path}`, {
-            body: JSON.stringify(seen.body),
-            headers: {
-              authorization: seen.authorization ?? "",
-              "content-type": "application/json",
-            },
-            method: seen.method,
-          })
-        )
-      : undefined
+    ingress[seen.path]?.(
+      new Request(`http://127.0.0.1${seen.path}`, {
+        body: JSON.stringify(seen.body),
+        headers: {
+          authorization: seen.authorization ?? "",
+          "content-type": "application/json",
+        },
+        method: seen.method,
+      })
+    )
   );
   const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
   const receipt = await sendA2AMessage(endpoint, {
@@ -780,6 +785,20 @@ test("send goes through the SDK client to the recipient's own ingress as the aut
     await expect(sendA2AMessage(endpoint, bad)).rejects.toThrow();
   }
   expect(h.server.seen.length).toBe(2);
+  // r9 integration: a turn the server refused comes back as a FAILED task;
+  // that is a refusal with the server's reason, never acceptance.
+  const refused = await sendA2AMessage(endpoint, {
+    body: "hi",
+    messageId: "msg-4",
+    to: "supervisor:dave",
+  }).catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(A2AClientError);
+  expect((refused as A2AClientError).message).toContain(
+    "nothing is claimed delivered"
+  );
+  expect((refused as A2AClientError).detail).toEqual({
+    reason: "policy refused",
+  });
   expect(A2A_SESSION_TOOLS.map((tool) => tool.name)).toEqual([
     "a2a_enroll",
     "a2a_release",

@@ -34,7 +34,7 @@ import {
  *                    (each: [--takeover] [--ttl-ms <ms>])
  *   loop a2a release --as supervisor:x (--run <run-id> | --session <id>)
  *   loop a2a send    --as supervisor:x --to supervisor:y --body-file <path> [--message-id <id>] [--context <id>]
- *   loop a2a status  --as supervisor:x --message-id <id>
+ *   loop a2a status  --as supervisor:x --message-id <workflow-id>  (the workflowId send prints)
  *   loop a2a ack     --as supervisor:x --workflow <workflow-id> [--workflow <id>...]
  *
  * The server and token come from the orchestration config and the
@@ -51,7 +51,7 @@ const USAGE = [
   "  enroll  --kind loop-run --run <run-id> [--seat claude|codex] | --kind codex-thread --run <run-id> | --kind claude-channel --session <id> [--provider-session <id>]; [--takeover] [--ttl-ms <ms>]",
   "  release --run <run-id> | --session <id>",
   "  send    --to <supervisor:id> --body-file <path> [--message-id <id>] [--context <id>]",
-  "  status  --message-id <id>",
+  "  status  --message-id <workflow-id> (the workflowId that send prints)",
   "  ack     --workflow <workflow-id> (repeatable)",
 ].join("\n");
 
@@ -470,7 +470,7 @@ export const A2A_SESSION_TOOLS = [
   {
     annotations: { ...MUTATING, readOnlyHint: true },
     description:
-      "Status of a message this supervisor sent: delivery, the recipient's acknowledgement and work completion, reported separately.",
+      "Status of a message this supervisor sent: delivery, the recipient's acknowledgement and work completion, reported separately. message_id is the workflowId that a2a_send returned.",
     inputSchema: {
       additionalProperties: false,
       properties: { message_id: { type: "string" } },

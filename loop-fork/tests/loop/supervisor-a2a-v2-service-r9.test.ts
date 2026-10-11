@@ -45,6 +45,7 @@ import {
   supervisorEndpointRoots,
 } from "../../src/loop/supervisor-endpoint-lease";
 import type { SupervisorMessageV2DeliveryEnvelope } from "../../src/loop/supervisor-message-v2-contract";
+import { SupervisorMessageV2StartIntentScopeError } from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import { SUPERVISOR_ENDPOINT_REASONS } from "../../src/loop/supervisor-message-v2-endpoint-contract";
 import {
   type SupervisorMessageV2DeliveryOutcome,
@@ -1089,7 +1090,14 @@ const fakeService = (input: {
       connectLedger: () =>
         Promise.resolve({
           ...closable("ledger"),
-          assertStartIntent: () => Promise.reject(new Error("absent")),
+          // r9 integration: "not in this scope" is the ledger's typed
+          // refusal; anything else is the ledger failing to answer.
+          assertStartIntent: (workflowId: string) =>
+            Promise.reject(
+              workflowId === "supervisor-message:v2:down"
+                ? new Error("connect ECONNREFUSED 127.0.0.1:5432")
+                : new SupervisorMessageV2StartIntentScopeError("absent")
+            ),
           deployment: "r9-queue",
         }) as never,
       connectSessions: () =>
@@ -1189,6 +1197,18 @@ test("the service mounts every supervisor's gated ingress, the session routes an
     )
   );
   expect(status.status).toBe(404);
+  // A ledger that cannot answer is an outage (503), never "no such message",
+  // and its error text is not disclosed.
+  const outage = await handle(
+    new Request(
+      "http://127.0.0.1:7321/a2a/v2/messages/supervisor-message%3Av2%3Adown",
+      {
+        headers: { authorization: "Bearer token-alpha" },
+      }
+    )
+  );
+  expect(outage.status).toBe(503);
+  expect(await outage.json()).toEqual({ error: { code: "v2-unavailable" } });
   // No r8 recipient: the bare route is not served.
   expect(service.pathnames).toEqual([]);
   expect(
