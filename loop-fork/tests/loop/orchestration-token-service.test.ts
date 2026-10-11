@@ -923,4 +923,71 @@ describe("RA2 unauthenticated enrollment", () => {
     expect(codePrefixes.retryAfterSeconds(realBucket)).toBe(0);
     expect((await enrollAs("203.0.113.4", real.code)).status).toBe(200);
   });
+
+  test("a code-prefix bucket burned by wrong guesses never refuses a real code", async () => {
+    const { host, service } = setup();
+    const codePrefixes = new EnrollmentAttemptLimiter({ limit: 3 });
+    const routes = createTokenRoutes(service, { codePrefixes });
+    const enrollAs = (source: string, code: string) =>
+      enrollWith(routes, source, enrollRequest(JSON.stringify({ code })));
+    const real = service.issueEnrollmentCode(host, WORKER);
+    const prefix = real.code.slice(0, 2);
+    // An unauthenticated caller burns the real code's bucket from a few
+    // sources, without ever knowing the code.
+    for (const source of ["203.0.113.1", "203.0.113.2", "203.0.113.3"]) {
+      expect(
+        (await enrollAs(source, `${prefix}${"x".repeat(41)}`)).status
+      ).toBe(401);
+    }
+    expect(
+      (await enrollAs("203.0.113.4", `${prefix}${"y".repeat(41)}`)).status
+    ).toBe(429);
+    // The holder of the real code still enrolls.
+    expect((await enrollAs("198.51.100.20", real.code)).status).toBe(200);
+  });
+
+  test("an IPv6 /64 is one enroll source, and a mapped IPv4 is its IPv4", async () => {
+    const { service } = setup();
+    const sources = new EnrollmentAttemptLimiter({ limit: 2 });
+    const routes = createTokenRoutes(service, { sources });
+    const enrollAs = (source: string) =>
+      enrollWith(
+        routes,
+        source,
+        enrollRequest(JSON.stringify({ code: BOGUS }))
+      );
+    // One /64 is one attacker however many addresses it uses.
+    expect((await enrollAs("2001:db8:0:1::1")).status).toBe(401);
+    expect((await enrollAs("2001:db8:0:1::2")).status).toBe(401);
+    expect((await enrollAs("2001:db8:0:1:ffff:ffff:ffff:3")).status).toBe(429);
+    expect((await enrollAs("[2001:DB8:0:1::4]")).status).toBe(429);
+    // Another /64 is another source.
+    expect((await enrollAs("2001:db8:0:2::1")).status).toBe(401);
+    expect((await enrollAs("203.0.113.9")).status).toBe(401);
+    expect((await enrollAs("::ffff:203.0.113.9")).status).toBe(401);
+    expect((await enrollAs("::ffff:cb00:7109")).status).toBe(429);
+  });
+
+  test("a full limiter answers a new key without rescanning every key", () => {
+    let reads = 0;
+    const limiter = new EnrollmentAttemptLimiter({
+      maxSources: 512,
+      now: () => {
+        reads += 1;
+        return 0;
+      },
+    });
+    for (let index = 0; index < 512; index += 1) {
+      limiter.recordFailure(`198.51.${Math.floor(index / 256)}.${index % 256}`);
+    }
+    expect(limiter.size).toBe(512);
+    reads = 0;
+    for (let index = 0; index < 100; index += 1) {
+      limiter.retryAfterSeconds(`203.0.113.${index}`);
+      limiter.recordFailure(`203.0.113.${index}`);
+    }
+    // A constant number of clock reads per attempt, not one per known key.
+    expect(reads).toBeLessThan(100 * 8);
+    expect(limiter.size).toBe(513);
+  });
 });

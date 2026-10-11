@@ -240,7 +240,9 @@ describe("RA2 messaging policy", () => {
         ...(options.inReplyTo ? { inReplyTo: options.inReplyTo } : {}),
         operation: options.operation ?? "receive",
         principal: options.principal ?? principalOf(from),
-        ...(options.replyKey ? { replyKey: options.replyKey } : {}),
+        ...(options.replyKey
+          ? { replyKey: options.replyKey, replyPlane: "v1" as const }
+          : {}),
         ...(options.threadId ? { threadId: options.threadId } : {}),
         to,
       },
@@ -339,6 +341,7 @@ describe("RA2 messaging policy", () => {
     const query = (from: string) => ({
       inReplyTo: OWNER_MESSAGE,
       owner: OWNER,
+      plane: "v1" as const,
       replier: from,
       replyKey: "r-other",
     });
@@ -390,6 +393,7 @@ describe("RA2 messaging policy", () => {
       operation: "receive" as const,
       principal: principalOf(SUP),
       replyKey: "r-1",
+      replyPlane: "v1" as const,
       to: OWNER,
     };
     expect(orchestrationGrantDecision(parsed, request, flaky)).toEqual(
@@ -404,8 +408,20 @@ describe("RA2 messaging policy", () => {
       )
     ).toEqual(denied);
     expect(taken).toEqual([
-      { inReplyTo: OWNER_MESSAGE, owner: OWNER, replier: SUP, replyKey: "r-1" },
+      {
+        inReplyTo: OWNER_MESSAGE,
+        owner: OWNER,
+        plane: "v1",
+        replier: SUP,
+        replyKey: "r-1",
+      },
     ]);
+    // A reply that names no plane names no reply identity.
+    const { replyPlane: _plane, ...planeless } = request;
+    expect(orchestrationGrantDecision(parsed, planeless, flaky)).toEqual(
+      replyOnly
+    );
+    expect(taken.length).toBe(1);
   });
 
   test("the other operations on a reply are not re-gated by the ledger", () => {
@@ -454,6 +470,7 @@ describe("RA2 owner reply ledger", () => {
   const query = (replyKey: string, inReplyTo = "owner-m-1") => ({
     inReplyTo,
     owner: OWNER,
+    plane: "v1" as const,
     replier: SUP,
     replyKey,
   });
@@ -731,9 +748,15 @@ describe("RA2 owner messages are recorded only once accepted", () => {
       },
       store,
     });
+    const input = {
+      from: OWNER,
+      messageId: "owner-m-1",
+      threadId: "t",
+      to: SUP,
+    };
     const command = {
       inReplyTo: "owner-m-0",
-      input: {} as never,
+      input: input as never,
       messageKind: "question" as const,
       principal: principalOf(OWNER),
       requestId: "request-1",
@@ -741,7 +764,7 @@ describe("RA2 owner messages are recorded only once accepted", () => {
     await runtime.receive(command);
     expect(calls[0]).toEqual([
       principalOf(OWNER),
-      {},
+      input,
       "request-1",
       { inReplyTo: "owner-m-0" },
     ]);
@@ -805,6 +828,133 @@ describe("RA2 owner messages are recorded only once accepted", () => {
     await expect(send()).rejects.toThrow("start intent refused");
     expect(seen.length).toBe(1);
   });
+
+  test("a reply key spent on one plane is not a retry on the other", () => {
+    for (const first of ["v1", "a2a"] as const) {
+      const replies = ledger();
+      recordAcceptedOwnerMessage(parsed, replies, {
+        from: OWNER,
+        messageId: "owner-m-1",
+        to: SUP,
+      });
+      const v1 = (replyKey: string) => {
+        const decision = orchestrationAuthority(parsed, replies).decide({
+          from: SUP,
+          inReplyTo: "owner-m-1",
+          operation: "receive",
+          principal: principalOf(SUP),
+          replyKey,
+          threadId: "t-reply",
+          to: OWNER,
+        });
+        return "allowed" in decision && decision.allowed;
+      };
+      const a2a = (messageId: string) =>
+        orchestrationA2AReceive(parsed, replies, {
+          from: SUP,
+          inReplyTo: "owner-m-1",
+          messageId,
+          principal: principalOf(SUP),
+          to: OWNER,
+        }) === true;
+      const [spend, other] = first === "v1" ? [v1, a2a] : [a2a, v1];
+      expect(spend("r-1")).toBe(true);
+      // A retry on the same plane is the same reply.
+      expect(spend("r-1")).toBe(true);
+      // The same key on the other plane is a second, distinct message.
+      expect(other("r-1")).toBe(false);
+    }
+  });
+
+  test("a V1 receive that dedupes onto another message writes no board item and reopens no owner message", async () => {
+    const clock = { now: 0 };
+    const replies = new OwnerReplyLedger({
+      file: join(scratch(), "owner-replies.json"),
+      now: () => clock.now,
+      policy: { windowMs: 1000 },
+    });
+    const store = new JsonlSupervisorThreadStore(
+      join(scratch(), "threads.jsonl")
+    );
+    const ownerMessage = projection({
+      from: OWNER,
+      messageId: "owner-m-1",
+      threadId: "t-owner",
+      to: SUP,
+    });
+    const seen: unknown[] = [];
+    const runtime = new SupervisorOrchestrationRuntime({
+      governed: {
+        // The dedupe key names the owner's existing workflow: the
+        // coordinator answers with that message, not the one sent.
+        receive: () =>
+          Promise.resolve({
+            created: false,
+            projection: ownerMessage,
+            workflowId: `supervisor-message:${"b".repeat(64)}`,
+          }),
+      } as never,
+      onReceived: (accepted) => {
+        seen.push(accepted);
+        recordAcceptedOwnerMessage(parsed, replies, accepted, () => undefined);
+      },
+      store,
+    });
+    const query = (replyKey: string) => ({
+      inReplyTo: "owner-m-1",
+      owner: OWNER,
+      plane: "v1" as const,
+      replier: SUP,
+      replyKey,
+    });
+    replies.recordOwnerMessage({
+      messageId: "owner-m-1",
+      owner: OWNER,
+      recipient: SUP,
+    });
+    expect(replies.takeReply(query("r-1"))).toBe(true);
+    // The window ends; a later owner message prunes the spent one.
+    clock.now = 1000;
+    replies.recordOwnerMessage({
+      messageId: "owner-m-2",
+      owner: OWNER,
+      recipient: SUP,
+    });
+    // The supervisor sends to an operator (allowed) under the owner
+    // message's dedupe key.
+    await expect(
+      runtime.receive({
+        input: {
+          dedupeKey: "owner-dedupe-1",
+          from: SUP,
+          messageId: "sup-m-1",
+          threadId: "t-sup",
+          to: OPERATOR,
+        } as never,
+        messageKind: "question",
+        principal: principalOf(SUP),
+        requestId: "request-collide",
+      })
+    ).rejects.toThrow();
+    expect(store.read().threads).toEqual([]);
+    expect(seen).toEqual([]);
+    expect(replies.replyAvailable(query("r-2"))).toBe(false);
+    // The owner's own retry of its message is not a new acceptance either.
+    await runtime.receive({
+      input: {
+        dedupeKey: "owner-dedupe-1",
+        from: OWNER,
+        messageId: "owner-m-1",
+        threadId: "t-owner",
+        to: SUP,
+      } as never,
+      messageKind: "question",
+      principal: principalOf(OWNER),
+      requestId: "request-retry",
+    });
+    expect(seen).toEqual([]);
+    expect(replies.replyAvailable(query("r-2"))).toBe(false);
+  });
 });
 
 describe("RA2 owner reply configuration", () => {
@@ -847,6 +997,7 @@ describe("RA2 owner reply configuration", () => {
       ledger.takeReply({
         inReplyTo: "owner-m-1",
         owner: OWNER,
+        plane: "v1",
         replier: SUP,
         replyKey,
       });
@@ -865,6 +1016,7 @@ describe("RA2 owner reply configuration", () => {
       ledger.replyAvailable({
         inReplyTo: "owner-m-2",
         owner: OWNER,
+        plane: "v1",
         replier: SUP,
         replyKey: "r-4",
       })

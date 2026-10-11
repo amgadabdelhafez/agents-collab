@@ -50,16 +50,26 @@ export const ownerReplyOnlyResponse = (): Response =>
     { headers: { "cache-control": "no-store" }, status: 403 }
   );
 
+/**
+ * The message plane a reply travels on. Each plane names its messages in
+ * its own namespace (V1: a global dedupe key; A2A V2: a message id scoped
+ * to the sender), so a reply's identity is only meaningful with its plane.
+ */
+export type OwnerReplyPlane = "a2a" | "v1";
+
 export interface OwnerReplyQuery {
   /** The owner message the reply answers (its message id). */
   inReplyTo: string;
   owner: string;
+  /** The plane `replyKey` names a message on. */
+  plane: OwnerReplyPlane;
   /** The supervisor that would reply. */
   replier: string;
   /**
-   * The reply's own durable identity (V1: its dedupe key; A2A: its message
-   * id, which the V2 dedupe key derives from). A retry of the same reply
-   * takes no second allowance.
+   * The reply's own durable identity on its plane (V1: its dedupe key; A2A:
+   * its message id, which the V2 dedupe key derives from). A retry of the
+   * same reply on the same plane takes no second allowance; the same key on
+   * the other plane is another message and does.
    */
   replyKey: string;
 }
@@ -92,7 +102,7 @@ interface OwnerMessageEntry {
   messageId: string;
   owner: string;
   recipient: string;
-  /** The reply keys that took an allowance, oldest first. */
+  /** The plane-qualified reply keys that took an allowance, oldest first. */
   replies: string[];
 }
 
@@ -107,6 +117,27 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
+
+const OWNER_REPLY_PLANES: readonly string[] = ["a2a", "v1"];
+
+/**
+ * The plane-qualified reply identity the ledger stores and matches, or
+ * undefined when the query names no plane or no reply (or one too long for
+ * the ledger file to read back).
+ */
+const qualifiedReplyKey = (query: OwnerReplyQuery): string | undefined => {
+  if (
+    !(
+      OWNER_REPLY_PLANES.includes(query.plane) &&
+      typeof query.replyKey === "string" &&
+      query.replyKey.length > 0
+    )
+  ) {
+    return undefined;
+  }
+  const qualified = `${query.plane}:${query.replyKey}`;
+  return isNonEmptyString(qualified) ? qualified : undefined;
+};
 
 const parseEntry = (value: unknown): OwnerMessageEntry => {
   if (
@@ -214,26 +245,29 @@ export class OwnerReplyLedger implements OwnerReplyAuthority {
 
   replyAvailable(query: OwnerReplyQuery): boolean {
     const entry = this.#live(query);
+    const replyKey = qualifiedReplyKey(query);
     return (
       entry !== undefined &&
-      (entry.replies.includes(query.replyKey) ||
+      replyKey !== undefined &&
+      (entry.replies.includes(replyKey) ||
         entry.replies.length < this.#policy.maxReplies)
     );
   }
 
   takeReply(query: OwnerReplyQuery): boolean {
     const entry = this.#live(query);
-    if (!entry) {
+    const replyKey = qualifiedReplyKey(query);
+    if (!(entry && replyKey)) {
       return false;
     }
-    if (entry.replies.includes(query.replyKey)) {
+    if (entry.replies.includes(replyKey)) {
       return true;
     }
     if (entry.replies.length >= this.#policy.maxReplies) {
       return false;
     }
     const before = this.#snapshot();
-    entry.replies.push(query.replyKey);
+    entry.replies.push(replyKey);
     return this.#commit(before);
   }
 

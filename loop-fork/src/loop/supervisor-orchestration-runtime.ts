@@ -66,6 +66,16 @@ const projectionInstant = (projection: SupervisorMessageProjection): string =>
   projection.deliveredAt ??
   projection.receivedAt;
 
+/** Whether the projection is the message the caller sent (not a collision). */
+const sameMessage = (
+  input: SupervisorMessageInput,
+  projection: SupervisorMessageProjection
+): boolean =>
+  projection.from === input.from &&
+  projection.to === input.to &&
+  projection.messageId === input.messageId &&
+  projection.threadId === input.threadId;
+
 export class SupervisorOrchestrationRuntime {
   readonly #governed: GovernedSupervisorMessageService;
   readonly #onReceived: SupervisorOrchestrationRuntimeOptions["onReceived"];
@@ -86,6 +96,14 @@ export class SupervisorOrchestrationRuntime {
       command.requestId,
       command.inReplyTo === undefined ? {} : { inReplyTo: command.inReplyTo }
     );
+    // RA2: governance authorized the message the caller sent. A dedupe key
+    // that names another message's workflow answers with that message: it
+    // is not this caller's to write to a thread or to report as accepted.
+    if (!sameMessage(command.input, result.projection)) {
+      throw new Error(
+        `receive ${command.requestId}: the dedupe key names another message`
+      );
+    }
     this.#persist(
       "receive",
       command.requestId,
@@ -93,6 +111,11 @@ export class SupervisorOrchestrationRuntime {
       result.projection,
       command.messageKind
     );
+    if (!result.created) {
+      // A retry of a message already accepted: it was reported then. A
+      // resend never opens anything a second time.
+      return structuredClone(result);
+    }
     try {
       this.#onReceived?.({
         from: result.projection.from,

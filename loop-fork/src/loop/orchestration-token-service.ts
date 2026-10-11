@@ -20,6 +20,7 @@ import {
   statSync,
   writeSync,
 } from "node:fs";
+import { isIPv4, isIPv6 } from "node:net";
 import { join } from "node:path";
 import { readBoundedRequestText } from "./bounded-request-body";
 import { isSupervisorRepoKey } from "./supervisor-id";
@@ -679,22 +680,32 @@ export class OrchestrationTokenService {
   }
 
   /**
+   * RA2: whether the code matches a pending record, from a lock-free read:
+   * no lock, no write. Not proof it will enroll (expiry and the binding are
+   * checked under the lock).
+   */
+  hasPendingCode(code: string): boolean {
+    if (!CODE_RE.test(code)) {
+      return false;
+    }
+    const hash = hashCode(code);
+    return this.#options.store
+      .read()
+      .codes.some((entry) => entry.hash === hash);
+  }
+
+  /**
    * Exchanges a code (consumed whatever the outcome) for a session token.
    * RA2: a code that matches no record is refused from a lock-free read, so
    * an unauthenticated caller can neither hold the store lock nor make the
    * store be rewritten. A match is re-checked under the lock.
    */
   enroll(code: string): IssuedToken | undefined {
-    if (!CODE_RE.test(code)) {
+    if (!this.hasPendingCode(code)) {
       return undefined;
     }
     const now = this.#now();
     const hash = hashCode(code);
-    if (
-      !this.#options.store.read().codes.some((entry) => entry.hash === hash)
-    ) {
-      return undefined;
-    }
     return this.#options.store.update(now, (state) => {
       const index = state.codes.findIndex((entry) => entry.hash === hash);
       const record = index === -1 ? undefined : state.codes[index];
@@ -891,6 +902,68 @@ export const enrollmentCodeBucket = (code: string): string =>
     ? `code:${code.slice(0, ENROLL_CODE_PREFIX_LENGTH)}`
     : MALFORMED_CODE_BUCKET;
 
+const EMBEDDED_IPV4_RE = /(\d+\.\d+\.\d+\.\d+)$/;
+const BRACKETED_RE = /^\[(.*)\]$/;
+const ZONE_RE = /%.*$/;
+
+/** The eight 16-bit groups of an IPv6 literal (`isIPv6` already holds). */
+const ipv6Groups = (address: string): number[] => {
+  let text = address;
+  const dotted = EMBEDDED_IPV4_RE.exec(text);
+  if (dotted?.[1]) {
+    const [a, b, c, d] = dotted[1].split(".").map(Number) as [
+      number,
+      number,
+      number,
+      number,
+    ];
+    text = `${text.slice(0, -dotted[1].length)}${(a * 256 + b).toString(16)}:${(c * 256 + d).toString(16)}`;
+  }
+  const [head = "", tail] = text.split("::");
+  const parse = (part: string) =>
+    part ? part.split(":").map((group) => Number.parseInt(group, 16)) : [];
+  const left = parse(head);
+  const right = tail === undefined ? [] : parse(tail);
+  return [
+    ...left,
+    ...new Array<number>(8 - left.length - right.length).fill(0),
+    ...right,
+  ];
+};
+
+/**
+ * RA2: the key an enroll source is limited under. An IPv6 client is limited
+ * per /64 (one end site holds a whole /64, so per address one client would
+ * be unbounded keys); an IPv4-mapped IPv6 address is its IPv4 address. Any
+ * other value is used as it is.
+ */
+export const enrollmentSourceKey = (source: string): string => {
+  const bare = source.replace(BRACKETED_RE, "$1").replace(ZONE_RE, "");
+  if (isIPv4(bare)) {
+    return bare;
+  }
+  if (!isIPv6(bare)) {
+    return source;
+  }
+  const groups = ipv6Groups(bare.toLowerCase());
+  if (
+    groups.slice(0, 5).every((group) => group === 0) &&
+    groups[5] === 0xff_ff
+  ) {
+    const [high = 0, low = 0] = groups.slice(6);
+    return [
+      Math.floor(high / 256),
+      high % 256,
+      Math.floor(low / 256),
+      low % 256,
+    ].join(".");
+  }
+  return `${groups
+    .slice(0, 4)
+    .map((group) => group.toString(16))
+    .join(":")}::/64`;
+};
+
 interface FailureRecord {
   count: number;
   lastFailureAt: number;
@@ -905,6 +978,8 @@ interface FailureRecord {
  * most `maxSources` keys plus one shared overflow key. When the map is full
  * (after dropping forgotten keys) a new key shares the overflow key, so
  * flooding keys cannot evict a slowed one; the flood only slows itself.
+ * The map is kept in last-failure order, so dropping forgotten keys visits
+ * only those (no per-attempt scan of every key).
  */
 export class EnrollmentAttemptLimiter {
   readonly #baseDelayMs: number;
@@ -950,6 +1025,8 @@ export class EnrollmentAttemptLimiter {
     const record = this.#current(slot) ?? { count: 0, lastFailureAt: 0 };
     record.count += 1;
     record.lastFailureAt = this.#now();
+    // Re-inserted, so the map stays ordered by last failure, oldest first.
+    this.#records.delete(slot);
     this.#records.set(slot, record);
   }
 
@@ -973,8 +1050,14 @@ export class EnrollmentAttemptLimiter {
       return key;
     }
     if (this.#records.size >= this.#maxSources) {
-      for (const known of [...this.#records.keys()]) {
-        this.#current(known);
+      // RA2: oldest first, so only the forgotten front is visited: each
+      // attempt costs O(1) amortized, never a scan of every known key.
+      const now = this.#now();
+      for (const [known, record] of this.#records) {
+        if (now - record.lastFailureAt < 2 * this.#windowMs) {
+          break;
+        }
+        this.#records.delete(known);
       }
     }
     return this.#records.size >= this.#maxSources ? OVERFLOW_SOURCE : key;
@@ -1097,9 +1180,12 @@ export const createEnrollmentLimits = (
 });
 
 /**
- * The code is the credential: no bearer is read. RA2: a source being slowed
- * is refused (429, retry-after) before its body is read; a code whose prefix
- * bucket is being slowed is refused before it is looked up. Every attempt
+ * The code is the credential: no bearer is read. RA2: a source (an IPv6
+ * one per /64, `enrollmentSourceKey`) being slowed is refused (429,
+ * retry-after) before its body is read. A wrong code whose prefix bucket is
+ * being slowed is refused without being charged; a code that matches a
+ * pending record (a lock-free read) is never refused by its bucket, so
+ * wrong guesses from anywhere cannot shut a real code out. Every attempt
  * that is evaluated and does not issue a token counts as a failure: against
  * its source always (a body that cannot be read or parsed included), and
  * against its code-prefix bucket when it named a code.
@@ -1108,8 +1194,9 @@ const enrollRoute = async (
   service: OrchestrationTokenService,
   request: Request,
   limits: EnrollmentLimits,
-  source: string
+  rawSource: string
 ): Promise<Response> => {
+  const source = enrollmentSourceKey(rawSource);
   const retryAfter = limits.sources.retryAfterSeconds(source);
   if (retryAfter > 0) {
     return tooManyAttempts(retryAfter);
@@ -1123,7 +1210,7 @@ const enrollRoute = async (
     if (code !== undefined) {
       const candidate = enrollmentCodeBucket(code);
       const bucketRetryAfter = limits.codePrefixes.retryAfterSeconds(candidate);
-      if (bucketRetryAfter > 0) {
+      if (bucketRetryAfter > 0 && !service.hasPendingCode(code)) {
         // Not evaluated, so not counted against anyone.
         evaluated = false;
         return tooManyAttempts(bucketRetryAfter);

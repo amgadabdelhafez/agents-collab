@@ -57,6 +57,7 @@ import {
   type OwnerMessageAccepted,
   type OwnerReplyAuthority,
   OwnerReplyLedger,
+  type OwnerReplyPlane,
   type OwnerReplyPolicy,
 } from "./orchestration-owner-messaging";
 import {
@@ -1691,6 +1692,11 @@ interface GrantRequest {
   principal: string;
   /** RA2: the reply's own durable identity; see `OwnerReplyQuery.replyKey`. */
   replyKey?: string;
+  /**
+   * RA2: the plane `replyKey` names a message on (V1 dedupe key or A2A
+   * message id). A reply to the owner without one is refused.
+   */
+  replyPlane?: OwnerReplyPlane;
   /** The message's thread (V1) or A2A context id. */
   threadId?: string;
   to: string;
@@ -1727,10 +1733,11 @@ const decided = (allowed: boolean): OrchestrationGrantDecision =>
  * when the request names no owner message (or no reply identity).
  */
 const ownerReplyQuery = (request: GrantRequest) =>
-  request.inReplyTo && request.replyKey
+  request.inReplyTo && request.replyKey && request.replyPlane
     ? {
         inReplyTo: request.inReplyTo,
         owner: request.to,
+        plane: request.replyPlane,
         replier: request.from,
         replyKey: request.replyKey,
       }
@@ -1903,7 +1910,9 @@ export const orchestrationA2AReceive = (
       ...(request.inReplyTo ? { inReplyTo: request.inReplyTo } : {}),
       operation: "receive",
       principal: request.principal,
-      ...(request.messageId ? { replyKey: request.messageId } : {}),
+      ...(request.messageId
+        ? { replyKey: request.messageId, replyPlane: "a2a" as const }
+        : {}),
       ...(request.threadId ? { threadId: request.threadId } : {}),
       to: request.to,
     },
@@ -2025,7 +2034,10 @@ export const orchestrationAuthority = (
   decide(request) {
     const { allowed, reasonCode } = orchestrationGrantDecision(
       config,
-      request,
+      // Governance names a V1 reply by its dedupe key.
+      request.replyKey === undefined
+        ? request
+        : { ...request, replyPlane: "v1" },
       ownerReplies
     );
     return {
