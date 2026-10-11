@@ -24,7 +24,17 @@
 // file journal, which is always complete, is backfilled into the new id
 // instead. The close path (governess-beat-close.ts) still closes an owned
 // legacy execution.
+//
+// DEFAULT ON (fix8): with neither variable set, the address and namespace come
+// from the orchestration service's config and the task queue is
+// `loop-governess-<host>` (resolveGovernessTemporalConfig). The connection is
+// preflighted with a short bound; an absent config or an unreachable server
+// leaves the file journal as the only journal, with one log line, and never
+// stops the governess. LOOP_GOVERNESS_TEMPORAL=off opts out.
 
+import { readFileSync } from "node:fs";
+import { homedir, hostname } from "node:os";
+import { join } from "node:path";
 import type { WorkflowClient } from "@temporalio/client";
 import {
   GOVERNESS_BEAT_MEMO,
@@ -105,6 +115,161 @@ export const governessTemporalConfigFromEnv = (
   }
   return { address, namespace, taskQueue };
 };
+
+export const GOVERNESS_TEMPORAL_SWITCH_ENV = "LOOP_GOVERNESS_TEMPORAL";
+export const ORCHESTRATION_CONFIG_PATH_ENV = "LOOP_ORCHESTRATION_CONFIG";
+export const GOVERNESS_TEMPORAL_PREFLIGHT_TIMEOUT_MS = 3000;
+const OFF_VALUES: ReadonlySet<string> = new Set([
+  "0",
+  "disabled",
+  "false",
+  "no",
+  "off",
+]);
+const QUEUE_LABEL_INVALID_RE = /[^a-z0-9-]+/g;
+const QUEUE_LABEL_EDGE_RE = /^-+|-+$/g;
+
+/** The orchestration config the default journal reads its server from. */
+export const orchestrationConfigPathFromEnv = (
+  env: NodeJS.ProcessEnv
+): string =>
+  env[ORCHESTRATION_CONFIG_PATH_ENV]?.trim() ||
+  join(env.HOME?.trim() || homedir(), ".loop", "orchestration", "config.json");
+
+/**
+ * `loop-governess-<host>`: the first label of the host name, lower-cased, with
+ * anything outside [a-z0-9-] replaced. Only the first label: macOS appends a
+ * network-dependent suffix (`.local`, a DHCP domain) to the rest, and the
+ * queue names the journal's workflow id, so it must not drift mid-run.
+ */
+export const governessHostTaskQueue = (host: string = hostname()): string => {
+  const label = (host.split(".")[0] ?? "")
+    .toLowerCase()
+    .replace(QUEUE_LABEL_INVALID_RE, "-")
+    .replace(QUEUE_LABEL_EDGE_RE, "")
+    .slice(0, 64);
+  return `${GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE}-${label || "host"}`;
+};
+
+export type GovernessTemporalResolution =
+  | {
+      config: GovernessTemporalConfig;
+      kind: "configured";
+      source: "env";
+    }
+  | {
+      config: GovernessTemporalConfig;
+      configPath: string;
+      kind: "configured";
+      source: "orchestration-config";
+    }
+  | { kind: "off"; reason: string };
+
+const isErrno = (error: unknown, code: string): boolean =>
+  (error as { code?: unknown })?.code === code;
+
+/**
+ * Where this run's governess journal goes.
+ *
+ * 1. `LOOP_GOVERNESS_TEMPORAL=off` (or 0/false/no/disabled): the file journal.
+ * 2. `LOOP_GOVERNESS_TEMPORAL_ADDRESS`/`_NAMESPACE` set: exactly as before
+ *    (both or neither; one alone throws).
+ * 3. Otherwise the default: address and namespace from the orchestration
+ *    config (`LOOP_ORCHESTRATION_CONFIG`, default
+ *    `~/.loop/orchestration/config.json`), task queue
+ *    `LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE` or `loop-governess-<host>`. An
+ *    absent or unusable config is `off` with the reason, never an error.
+ *
+ * Nothing here dials the server; the governess preflights the connection.
+ */
+export const resolveGovernessTemporalConfig = (
+  env: NodeJS.ProcessEnv,
+  deps: {
+    hostname?: () => string;
+    readFile?: (path: string) => string;
+  } = {}
+): GovernessTemporalResolution => {
+  const toggle = env[GOVERNESS_TEMPORAL_SWITCH_ENV]?.trim() ?? "";
+  if (OFF_VALUES.has(toggle.toLowerCase())) {
+    return {
+      kind: "off",
+      reason: `${GOVERNESS_TEMPORAL_SWITCH_ENV}=${toggle}`,
+    };
+  }
+  const explicit = governessTemporalConfigFromEnv(env);
+  if (explicit) {
+    return { config: explicit, kind: "configured", source: "env" };
+  }
+  const configPath = orchestrationConfigPathFromEnv(env);
+  let text: string;
+  try {
+    text = (deps.readFile ?? ((path) => readFileSync(path, "utf8")))(
+      configPath
+    );
+  } catch (error) {
+    return {
+      kind: "off",
+      reason: isErrno(error, "ENOENT")
+        ? `orchestration config ${configPath} is absent`
+        : `orchestration config ${configPath} is unreadable`,
+    };
+  }
+  let parsed: { address?: unknown; namespace?: unknown; schema?: unknown };
+  try {
+    parsed = JSON.parse(text) as typeof parsed;
+  } catch {
+    return {
+      kind: "off",
+      reason: `orchestration config ${configPath} is not JSON`,
+    };
+  }
+  const address = typeof parsed?.address === "string" ? parsed.address : "";
+  const namespace =
+    typeof parsed?.namespace === "string" ? parsed.namespace : "";
+  if (
+    parsed?.schema !== "loop-orchestration-server.v1" ||
+    !ADDRESS_RE.test(address) ||
+    !NAME_RE.test(namespace)
+  ) {
+    return {
+      kind: "off",
+      reason: `orchestration config ${configPath} names no usable Temporal address and namespace`,
+    };
+  }
+  const taskQueue =
+    env.LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE?.trim() ||
+    governessHostTaskQueue((deps.hostname ?? hostname)());
+  if (!NAME_RE.test(taskQueue)) {
+    throw new Error("LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE is invalid");
+  }
+  return {
+    config: { address, namespace, taskQueue },
+    configPath,
+    kind: "configured",
+    source: "orchestration-config",
+  };
+};
+
+/** The resolved config, or undefined when the journal is off. */
+export const governessTemporalConfigOrDefault = (
+  env: NodeJS.ProcessEnv
+): GovernessTemporalConfig | undefined => {
+  const resolution = resolveGovernessTemporalConfig(env);
+  return resolution.kind === "configured" ? resolution.config : undefined;
+};
+
+/**
+ * The server could not be dialled, or the namespace described, within the
+ * preflight bound. The governess falls back to its file journal on this.
+ */
+export class GovernessTemporalUnreachableError extends Error {
+  constructor(address: string, namespace: string, detail: string) {
+    super(
+      `governess Temporal journal ${address}/${namespace} is unreachable: ${detail}`
+    );
+    this.name = "GovernessTemporalUnreachableError";
+  }
+}
 
 /** The two operations the journal needs from Temporal. */
 export interface GovernessTemporalJournalClient {
@@ -412,12 +577,43 @@ export const createGovernessTemporalJournalClient = (input: {
  */
 export const connectGovernessTemporalJournal = async (
   config: GovernessTemporalConfig,
-  ownerRepoId: string
+  ownerRepoId: string,
+  preflightTimeoutMs: number = GOVERNESS_TEMPORAL_PREFLIGHT_TIMEOUT_MS
 ): Promise<GovernessTemporalJournalClient> => {
   const { Connection, WorkflowClient, defaultPayloadConverter } = await import(
     "@temporalio/client"
   );
-  const connection = await Connection.connect({ address: config.address });
+  const detail = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
+  // Preflight: a bounded dial, then a bounded describe of the namespace, so an
+  // unreachable or wrong server costs at most two bounds, never a hang.
+  let connection: Awaited<ReturnType<typeof Connection.connect>>;
+  try {
+    connection = await Connection.connect({
+      address: config.address,
+      connectTimeout: preflightTimeoutMs,
+    });
+  } catch (error) {
+    throw new GovernessTemporalUnreachableError(
+      config.address,
+      config.namespace,
+      detail(error)
+    );
+  }
+  try {
+    await connection.withDeadline(Date.now() + preflightTimeoutMs, () =>
+      connection.workflowService.describeNamespace({
+        namespace: config.namespace,
+      })
+    );
+  } catch (error) {
+    await connection.close().catch(() => undefined);
+    throw new GovernessTemporalUnreachableError(
+      config.address,
+      config.namespace,
+      detail(error)
+    );
+  }
   try {
     return createGovernessTemporalJournalClient({
       client: new WorkflowClient({ connection, namespace: config.namespace }),

@@ -8,8 +8,12 @@ const RESULT_GRAPH_KEY_FINGERPRINTS_COMMAND = "result-graph-key-fingerprints";
 const QUARANTINE_COMMAND = "v2-quarantine";
 const RELEASE_COMMAND = "v2-quarantine-release";
 const LIST_COMMAND = "v2-quarantine-list";
+const A2A_V2_COMMAND = "a2a-v2";
+const A2A_V2_INIT_USAGE =
+  "loop orchestration a2a-v2 init <config-path> [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]... [--ledger-name <name>] [--ledger-port <port>] [--database-url-env <NAME>]";
 const USAGE = [
   "Usage: loop orchestration serve <config-path>",
+  A2A_V2_INIT_USAGE,
   "loop orchestration result-graph-id <config-path> <message-workflow-id>",
   "loop orchestration result-graph-key-fingerprints <config-path>",
   "loop orchestration v2-quarantine <config-path> <workflow-id> --reason <text> [--by <operator>]",
@@ -33,11 +37,82 @@ export type OrchestrationCommandRequest =
       reason: string;
       workflowId: string;
     }
-  | { command: "v2-quarantine-list"; configPath: string };
+  | { command: "v2-quarantine-list"; configPath: string }
+  | {
+      command: "a2a-v2-init";
+      configPath: string;
+      containerName?: string;
+      databaseUrlEnv?: string;
+      ledgerPort?: number;
+      manifests: Record<string, string>;
+      recipient?: string;
+    };
+
+const INIT_VALUE_FLAGS = new Set([
+  "--database-url-env",
+  "--ledger-name",
+  "--ledger-port",
+  "--manifest",
+  "--recipient",
+]);
+
+/** `a2a-v2 init` flags; every one but --manifest at most once. */
+const parseA2AV2Init = (
+  configPath: string,
+  args: readonly string[]
+): Extract<OrchestrationCommandRequest, { command: "a2a-v2-init" }> => {
+  const single = new Map<string, string>();
+  const manifests: Record<string, string> = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const name = args[index] ?? "";
+    const value = args[index + 1];
+    if (
+      !(INIT_VALUE_FLAGS.has(name) && value?.trim()) ||
+      value.startsWith("--")
+    ) {
+      throw new Error(`Usage: ${A2A_V2_INIT_USAGE}`);
+    }
+    if (name === "--manifest") {
+      const equals = value.indexOf("=");
+      const id = equals > 0 ? value.slice(0, equals) : "";
+      if (!id || id in manifests) {
+        throw new Error(`Usage: ${A2A_V2_INIT_USAGE}`);
+      }
+      manifests[id] = value.slice(equals + 1);
+      continue;
+    }
+    if (single.has(name)) {
+      throw new Error(`Usage: ${A2A_V2_INIT_USAGE}`);
+    }
+    single.set(name, value);
+  }
+  return initRequest(configPath, single, manifests);
+};
+
+const initRequest = (
+  configPath: string,
+  single: ReadonlyMap<string, string>,
+  manifests: Record<string, string>
+): Extract<OrchestrationCommandRequest, { command: "a2a-v2-init" }> => {
+  const port = single.get("--ledger-port");
+  const named = (flag: string, key: string) =>
+    single.has(flag) ? { [key]: single.get(flag) } : {};
+  return {
+    command: "a2a-v2-init",
+    configPath,
+    ...named("--ledger-name", "containerName"),
+    ...named("--database-url-env", "databaseUrlEnv"),
+    ...(port === undefined ? {} : { ledgerPort: Number(port) }),
+    manifests,
+    ...named("--recipient", "recipient"),
+  };
+};
 
 export type OrchestrationServerRunner = (configPath: string) => Promise<void>;
 
 export interface OrchestrationCommandIo {
+  /** Test seam for `a2a-v2 init`: replaces the real Docker, probe and clock. */
+  a2aV2InitDeps?: Partial<import("./a2a-v2-init").A2AV2InitDeps>;
   /** Where the configured key and database environment variables are read. */
   env?: NodeJS.ProcessEnv;
   write?(text: string): void;
@@ -72,6 +147,17 @@ export const parseOrchestrationCommand = (
     return undefined;
   }
   const [command, configPath, ...rest] = argv.slice(1);
+  if (command === A2A_V2_COMMAND) {
+    const [initConfig, ...initArgs] = rest;
+    if (
+      configPath !== "init" ||
+      !initConfig?.trim() ||
+      initConfig.startsWith("--")
+    ) {
+      throw new Error(`Usage: ${A2A_V2_INIT_USAGE}`);
+    }
+    return parseA2AV2Init(resolve(cwd, initConfig), initArgs);
+  }
   if (command === SERVE_COMMAND && configPath?.trim() && rest.length === 0) {
     return { command: "serve", configPath: resolve(cwd, configPath) };
   }
@@ -178,6 +264,20 @@ export const runOrchestrationCommand = async (
     return false;
   }
   const write = io.write ?? ((text: string) => process.stdout.write(text));
+  if (request.command === "a2a-v2-init") {
+    // Paths, names, ports and variable names only; never a secret.
+    const { defaultA2AV2InitDeps, runA2AV2Init } = await import(
+      "./a2a-v2-init"
+    );
+    const { command: _command, ...options } = request;
+    await runA2AV2Init(options, {
+      ...defaultA2AV2InitDeps(),
+      ...(io.env ? { env: io.env } : {}),
+      log: (line) => write(`${line}\n`),
+      ...io.a2aV2InitDeps,
+    });
+    return true;
+  }
   if (request.command === "result-graph-key-fingerprints") {
     // One line per configured key: variable, role, fingerprint. Never a key.
     const { resultGraphKeyFingerprintsForConfig } = await import(

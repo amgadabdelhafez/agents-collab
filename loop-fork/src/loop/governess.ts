@@ -127,7 +127,8 @@ import {
   type GovernessJournalBackend,
   type GovernessTemporalConfig,
   type GovernessTemporalJournalClient,
-  governessTemporalConfigFromEnv,
+  GovernessTemporalUnreachableError,
+  resolveGovernessTemporalConfig,
 } from "./governess-temporal-journal";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
@@ -310,6 +311,12 @@ export interface GovernessConfig {
   // gov-6: when set, the journal is written through the governess-beat.v1
   // Temporal workflow and recovered from its history on start.
   journalTemporal?: GovernessTemporalConfig;
+  // fix8: why the journal is file-only when journalTemporal is unset
+  // (opt-out, absent orchestration config), logged once at start.
+  journalTemporalOff?: string;
+  // fix8: where journalTemporal came from. The default ("orchestration-config")
+  // never stops the governess: any failure to arm it falls back to the file.
+  journalTemporalSource?: "env" | "orchestration-config";
   judgeMode: LocalLlmJudgeMode;
   judges?: LocalLlmJudgeConfig[];
   // Explicit compatibility switch; quota observations never change drivers
@@ -7855,6 +7862,7 @@ export const resolveGovernessConfig = (
   const budget = Number.parseFloat(env.LOOP_GOVERNESS_BUDGET ?? "");
   const stateFile = join(storage.runDir, "governess-state.json");
   migrateLegacyGovernessState(storage.runDir, stateFile);
+  const journal = resolveGovernessTemporalConfig(env);
   return {
     agentRenameEnabled: agentRenameEnabledFromEnv(env),
     agents,
@@ -7886,7 +7894,12 @@ export const resolveGovernessConfig = (
     helperCavemanMode: manifest?.helperCavemanMode,
     escalationFile: join(storage.runDir, "escalations.jsonl"),
     journalFile: join(storage.runDir, "governess-control.jsonl"),
-    journalTemporal: governessTemporalConfigFromEnv(env),
+    ...(journal.kind === "configured"
+      ? {
+          journalTemporal: journal.config,
+          journalTemporalSource: journal.source,
+        }
+      : { journalTemporalOff: journal.reason }),
     logFile: join(storage.runDir, "governess.jsonl"),
     llmDecodeConcurrency: envPositiveInt(
       env,
@@ -7979,26 +7992,64 @@ export const runGoverness = async (
     // governess must not issue controls after losing idempotency evidence.
     readGovernessJournal(config.journalFile);
     maintainGovernessJournal(config.journalFile);
+    if (!config.journalTemporal && config.journalTemporalOff) {
+      // fix8: one line saying why this run journals to the file only.
+      deps.appendLog(config.logFile, {
+        at: new Date().toISOString(),
+        event: "journal-temporal-off",
+        reason: config.journalTemporalOff,
+      });
+    }
     if (config.journalTemporal) {
       // Recover from history before the epoch is acquired: a pane that died
       // may have left the file behind or missing, and history is authoritative.
       const journalFile = config.journalFile;
-      const backend = await attachGovernessJournalBackend({
-        ...(deps.connectTemporalJournal
-          ? { connect: deps.connectTemporalJournal }
-          : {}),
-        journalFile,
-        onSinkError: (error, record) =>
-          deps.appendLog(config.logFile, {
-            at: new Date().toISOString(),
-            error: error instanceof Error ? error.message : String(error),
-            event: "journal-temporal-append-failed",
-            sequence: record.sequence,
-          }),
-        ...(config.repoId ? { ownerRepoId: config.repoId } : {}),
-        runId: config.runId,
-        temporal: config.journalTemporal,
-      });
+      const temporal = config.journalTemporal;
+      let backend: GovernessJournalBackend;
+      try {
+        backend = await attachGovernessJournalBackend({
+          ...(deps.connectTemporalJournal
+            ? { connect: deps.connectTemporalJournal }
+            : {}),
+          journalFile,
+          onSinkError: (error, record) =>
+            deps.appendLog(config.logFile, {
+              at: new Date().toISOString(),
+              error: error instanceof Error ? error.message : String(error),
+              event: "journal-temporal-append-failed",
+              sequence: record.sequence,
+            }),
+          ...(config.repoId ? { ownerRepoId: config.repoId } : {}),
+          runId: config.runId,
+          temporal,
+        });
+      } catch (error) {
+        // fix8: the default journal never stops the governess, and neither
+        // does an unreachable server under explicit settings. Anything else
+        // under explicit settings (a foreign execution, a missing repo id) is
+        // still the operator's to see, so it still throws.
+        if (
+          !(
+            config.journalTemporalSource === "orchestration-config" ||
+            error instanceof GovernessTemporalUnreachableError
+          )
+        ) {
+          throw error;
+        }
+        deps.appendLog(config.logFile, {
+          address: temporal.address,
+          at: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error),
+          event: "journal-temporal-fallback",
+          journal: "file",
+          namespace: temporal.namespace,
+          source: config.journalTemporalSource ?? "env",
+          taskQueue: temporal.taskQueue,
+        });
+        // Nothing reached Temporal, so there is no beat for teardown to close.
+        config.journalTemporal = undefined;
+        backend = { close: async () => undefined, kind: "file" };
+      }
       config.journalBackend = backend;
       if (backend.kind === "temporal") {
         deps.appendLog(config.logFile, {

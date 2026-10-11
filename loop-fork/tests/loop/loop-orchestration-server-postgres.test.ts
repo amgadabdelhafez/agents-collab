@@ -395,6 +395,8 @@ const compositionFixture = (input: {
   /** Extra a2aV2 config fields and the environment they name. */
   a2aExtra?: Record<string, unknown>;
   envExtra?: Record<string, string>;
+  /** The config identity; the live one carries an `@` (fix8). */
+  identity?: string;
   /** Also configure the run's Claude seat as a peer recipient. */
   peer?: boolean;
   /** The run starts with no Claude pane: the directory has no route to the
@@ -410,7 +412,12 @@ const compositionFixture = (input: {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "loop-orch-compose-")));
   const runDir = join(root, "run");
   const manifestPath = join(runDir, "manifest.json");
-  const writeSeat = (thread: string, claudeSessionId = "", claudePane = true) =>
+  const writeSeat = (
+    thread: string,
+    claudeSessionId = "",
+    claudePane = true,
+    state: "stopped" | "working" = "working"
+  ) =>
     writeRunManifest(
       manifestPath,
       createRunManifest(
@@ -424,7 +431,7 @@ const compositionFixture = (input: {
           primaryAgent: "codex",
           repoId: "repo-compose",
           runId: "1",
-          state: "working",
+          state,
           ...(claudePane
             ? { tmuxPaneLeft: "%1", tmuxPaneLeftAgent: "claude" as const }
             : {}),
@@ -475,7 +482,7 @@ const compositionFixture = (input: {
         },
       ],
       hostname: "127.0.0.1",
-      identity: "orchestration-composition",
+      identity: input.identity ?? "orchestration-composition",
       namespace: "default",
       port,
       schema: "loop-orchestration-server.v1",
@@ -513,6 +520,7 @@ const compositionFixture = (input: {
       ...input.envExtra,
     } as Record<string, string>,
     port,
+    manifestPath,
     remove: () => rmSync(root, { force: true, recursive: true }),
     writeSeat,
   };
@@ -654,37 +662,122 @@ test("the orchestration server enrolls at start and keeps the enrollment current
   }
 }, 120_000);
 
-test("the orchestration server refuses to start when a configured seat cannot be enrolled", async () => {
+test("the orchestration server starts V2 under the live identity shape loop-orchestration@<host> (fix8)", async () => {
   const environment = await temporalEnvironment();
   const config = a2aConfig(tenant());
-  // No Codex thread in the run manifest: the seat's session is unavailable.
+  const fixture = compositionFixture({
+    address: environment.address,
+    identity: "loop-orchestration@sweetmac14",
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(await health(fixture)).toMatchObject({
+      a2aV2: "ready",
+      state: "ready",
+    });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    fixture.remove();
+  }
+}, 120_000);
+
+/**
+ * fix8: the configured recipient that cannot be enrolled at start never
+ * refuses it. The server starts V1 and V2, reports the recipient not
+ * enrolled (one log line, a count on /healthz, the id on the authenticated
+ * status), and the existing sweep enrolls it once `recover` makes it live.
+ */
+const recipientRecoversFromTheSweep = async (input: {
+  /** What makes the recipient unenrollable before start. */
+  prepare: (fixture: ReturnType<typeof compositionFixture>) => void;
+  cause: string;
+}) => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
   const fixture = compositionFixture({
     address: environment.address,
     tenant: config.tenant,
-    thread: "",
+    thread: "thread-a",
   });
+  input.prepare(fixture);
   const admin = await connectStore(config);
+  const errors = spyOn(console, "error");
+  const lines = () => errors.mock.calls.map(([line]) => String(line));
   const stop = new AbortController();
-  const timer = setTimeout(() => stop.abort(), 30_000);
+  let running: Promise<void> | undefined;
   try {
-    const outcome = await runLoopOrchestrationServer(
-      fixture.configPath,
-      fixture.env,
-      { signal: stop.signal }
-    ).then(
-      () => "started",
-      (error: unknown) => (error instanceof Error ? error.message : "")
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(await health(fixture)).toMatchObject({
+      a2aV2: "ready",
+      notEnrolledCount: 1,
+      state: "ready",
+    });
+    expect(await assignmentStatus(fixture)).toMatchObject({
+      notEnrolled: [config.recipient],
+    });
+    expect(lines()).toContain(
+      `orchestration A2A V2 session enrollment failed for ${config.recipient}: ${input.cause}`
     );
-    expect(outcome).toBe("configured A2A V2 recipient session is unavailable");
     expect(
       await admin.current(scopeOf(config), config.recipient)
     ).toBeUndefined();
+    // The run comes (back) up while the server runs: the sweep enrolls it.
+    fixture.writeSeat("thread-a");
+    const enrolled = await waitFor("the sweep to enroll the recipient", () =>
+      admin.current(scopeOf(config), config.recipient)
+    );
+    expect(enrolled).toMatchObject({ sessionRef: "session:thread-a" });
+    await waitFor("the recovery line", () =>
+      Promise.resolve(
+        lines().includes(
+          `orchestration A2A V2 session enrollment recovered for ${config.recipient}`
+        )
+          ? true
+          : undefined
+      )
+    );
+    expect(await health(fixture)).toMatchObject({
+      a2aV2: "ready",
+      notEnrolledCount: 0,
+    });
   } finally {
-    clearTimeout(timer);
     stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
     await admin.close();
     fixture.remove();
   }
+};
+
+test("the orchestration server starts when the configured recipient's session is unavailable, and enrolls it from the sweep (fix8)", async () => {
+  await recipientRecoversFromTheSweep({
+    // No Codex thread in the run manifest: the seat's session is unavailable.
+    cause: "configured A2A V2 recipient session is unavailable",
+    prepare: (fixture) => fixture.writeSeat(""),
+  });
+}, 120_000);
+
+test("the orchestration server starts when the configured recipient's run is stopped, and enrolls it from the sweep (fix8)", async () => {
+  await recipientRecoversFromTheSweep({
+    cause: "configured A2A V2 recipient seat is not running",
+    prepare: (fixture) => fixture.writeSeat("thread-a", "", true, "stopped"),
+  });
+}, 120_000);
+
+test("the orchestration server starts when the configured recipient's run manifest is missing, and enrolls it from the sweep once it exists (fix8)", async () => {
+  await recipientRecoversFromTheSweep({
+    cause: "configured A2A V2 recipient seat is not running",
+    prepare: (fixture) => rmSync(fixture.manifestPath),
+  });
 }, 120_000);
 
 test("the orchestration server starts with a stopped peer seat, reports it not enrolled, and enrolls it from the sweep", async () => {
@@ -716,6 +809,8 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
     // /healthz stays ready for the live recipient and counts the peer,
     // without naming it: the seat id is for the control principal only.
     expect(await health(fixture)).toEqual({
+      // fix8: V2 is mounted, so /healthz says so.
+      a2aV2: "ready",
       a2aV2NotEnrolledDeferral: {
         boundMs: 900_000,
         deferredDeliveries: 0,
@@ -760,6 +855,8 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
       )
     );
     expect(await health(fixture)).toEqual({
+      // fix8: V2 is mounted, so /healthz says so.
+      a2aV2: "ready",
       a2aV2NotEnrolledDeferral: {
         boundMs: 900_000,
         deferredDeliveries: 0,
@@ -851,7 +948,7 @@ test("the orchestration server starts with a peer seat that is not running (no r
   }
 }, 120_000);
 
-test("the orchestration server refuses to start when a running peer seat is refused by the governed rebind authority", async () => {
+test("the orchestration server starts when a running peer seat is refused by the governed rebind authority: that peer alone is not enrolled (fix8)", async () => {
   const environment = await temporalEnvironment();
   const config = a2aConfig(tenant());
   const fixture = compositionFixture({
@@ -863,8 +960,9 @@ test("the orchestration server refuses to start when a running peer seat is refu
   // The peer's Claude session is running: this is not a stopped seat.
   fixture.writeSeat("thread-a", "claude-peer-session");
   const admin = await connectStore(config);
+  const errors = spyOn(console, "error");
   const stop = new AbortController();
-  const timer = setTimeout(() => stop.abort(), 30_000);
+  let running: Promise<void> | undefined;
   try {
     // A descriptor recorded for the peer under another provider: rebinding
     // it to the Claude session is outside the configured rebind grant.
@@ -878,23 +976,33 @@ test("the orchestration server refuses to start when a running peer seat is refu
       descriptorId: deriveSupervisorSessionDescriptorV2Id(peerScope, PEER),
       recipient: PEER,
     });
-    const outcome = await runLoopOrchestrationServer(
-      fixture.configPath,
-      fixture.env,
-      { signal: stop.signal }
-    ).then(
-      () => "started",
-      (error: unknown) => (error instanceof Error ? error.message : "")
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(await health(fixture)).toMatchObject({
+      a2aV2: "ready",
+      notEnrolledCount: 1,
+      state: "ready",
+    });
+    expect(await assignmentStatus(fixture)).toMatchObject({
+      notEnrolled: [PEER],
+    });
+    expect(errors.mock.calls.map(([line]) => String(line))).toContain(
+      `orchestration A2A V2 session enrollment failed for ${PEER}: session rebind denied: no-configured-session-rebind`
     );
-    expect(outcome).toBe("session rebind denied: no-configured-session-rebind");
-    // The refused rebind left the peer's descriptor as it was.
+    // The recipient itself enrolled; the refused rebind left the peer's
+    // descriptor as it was.
+    expect(
+      await admin.current(scopeOf(config), config.recipient)
+    ).toMatchObject({ sessionRef: "session:thread-a" });
     expect(await admin.current(peerScope, PEER)).toMatchObject({
       provider: "codex-app-server",
       revision: 1,
     });
   } finally {
-    clearTimeout(timer);
     stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
     await admin.close();
     fixture.remove();
   }
@@ -1101,7 +1209,7 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
   }
 }, 120_000);
 
-test("the orchestration server refuses to start while its own queue holds another workflow type under a recorded V2 id, names the quarantine command, and starts once an operator quarantines it", async () => {
+test("the orchestration server disables V2 (V1 serves) while its own queue holds another workflow type under a recorded V2 id, names the quarantine command, and starts V2 once an operator quarantines it", async () => {
   const environment = await temporalEnvironment();
   const config = a2aConfig(tenant());
   const fixture = compositionFixture({
@@ -1173,11 +1281,23 @@ test("the orchestration server refuses to start while its own queue holds anothe
       workflowId,
     });
 
+    // fix8: the recovery refusal disables V2 only; V1 serves meanwhile.
     const refused = startServer(fixture, refusedStop.signal);
     refusedRun = refused.running;
-    expect(await refused.ready).toBe(
-      "server failed: Supervisor A2A V2 service initialization failed at runtime-host (SupervisorMessageV2RecoveryStartupError)"
-    );
+    expect(await refused.ready).toBe("ready");
+    expect(await health(fixture)).toMatchObject({
+      a2aV2: "disabled",
+      a2aV2Reason: "start-failed",
+      state: "ready",
+    });
+    expect(
+      lines().filter((line) => line.startsWith("A2A V2 disabled"))
+    ).toEqual([
+      "A2A V2 disabled (start-failed): Supervisor A2A V2 service initialization failed at runtime-host (SupervisorMessageV2RecoveryStartupError). Fix the cause, then restart; V1 continues",
+    ]);
+    refusedStop.abort();
+    await refusedRun.catch(() => undefined);
+    refusedRun = undefined;
     expect(lines()).toContain(
       `V2 initial recovery failed for 1 recorded start: workflow ${workflowId} for ${fixtureV2.input.to}: WorkflowError (conflict): workflow ${workflowId} already exists as ${SUPERVISOR_MESSAGE_WORKFLOW_TYPE} [to start without it: loop orchestration v2-quarantine ${fixture.configPath} ${workflowId} --reason '<why>']`
     );
@@ -1664,6 +1784,7 @@ test("the orchestration server reports its configured deferral bounds and counte
       await fetch(`http://127.0.0.1:${fixture.port}/healthz`)
     ).json();
     expect(body).toEqual({
+      a2aV2: "ready",
       a2aV2NotEnrolledDeferral: {
         boundMs: 60_000,
         deferredDeliveries: 0,
@@ -1688,7 +1809,7 @@ test("the orchestration server reports its configured deferral bounds and counte
   }
 }, 120_000);
 
-test("the orchestration server writes its configured V2 workflow id format and refuses a return to legacy over unsettled intents, verbatim", async () => {
+test("the orchestration server writes its configured V2 workflow id format and disables V2 (V1 serves) on a return to legacy over unsettled intents, naming the refusal verbatim", async () => {
   const [fixtureV2] = supervisorMessageV2ReplayFixtures;
   if (!fixtureV2) {
     throw new Error("missing V2 fixture");
@@ -1772,22 +1893,28 @@ test("the orchestration server writes its configured V2 workflow id format and r
       thread: "thread-a",
     });
     const refusal = new AbortController();
-    const timer = setTimeout(() => refusal.abort(), 30_000);
+    const errors = spyOn(console, "error");
+    let refusedRun: Promise<void> | undefined;
     try {
-      const outcome = await runLoopOrchestrationServer(
-        returning.configPath,
-        returning.env,
-        { signal: refusal.signal }
-      ).then(
-        () => "started",
-        (error: unknown) => (error instanceof Error ? error.message : "")
-      );
-      expect(outcome).toBe(
-        'Supervisor A2A V2 service initialization failed at delivery-ledger: V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle'
-      );
+      const refused = startServer(returning, refusal.signal);
+      refusedRun = refused.running;
+      // fix8: V1 serves; V2 is disabled with the refusal, verbatim.
+      expect(await refused.ready).toBe("ready");
+      expect(await health(returning)).toMatchObject({
+        a2aV2: "disabled",
+        a2aV2Reason: "start-failed",
+      });
+      expect(
+        errors.mock.calls
+          .map(([line]) => String(line))
+          .filter((line) => line.startsWith("A2A V2 disabled"))
+      ).toEqual([
+        'A2A V2 disabled (start-failed): Supervisor A2A V2 service initialization failed at delivery-ledger: V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle. Fix the cause, then restart; V1 continues',
+      ]);
     } finally {
-      clearTimeout(timer);
       refusal.abort();
+      await refusedRun?.catch(() => undefined);
+      errors.mockRestore();
       returning.remove();
     }
   } finally {

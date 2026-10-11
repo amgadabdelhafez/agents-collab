@@ -40,6 +40,7 @@ import {
 import { readGovernessJournal } from "../../src/loop/governess-journal";
 import type { GovernessControlRecord } from "../../src/loop/governess-journal-core";
 import type { EscalationEvent } from "../../src/loop/governess-notify";
+import { GovernessTemporalUnreachableError } from "../../src/loop/governess-temporal-journal";
 import {
   appendNativeFallbackRequest,
   createNativeFallbackRequest,
@@ -3909,6 +3910,212 @@ test("runGoverness keeps the file journal and never connects when Temporal is no
         (entry as { event?: string }).event === "journal-temporal-recovered"
     )
   ).toBe(false);
+});
+
+// fix8: the journal is on by default and must never stop the governess.
+const DERIVED_TEMPORAL = {
+  address: "192.0.2.10:7233",
+  namespace: "harness",
+  taskQueue: "loop-governess-testhost",
+};
+
+const runWithJournal = async (
+  overrides: Parameters<typeof baseConfig>[0],
+  connect: NonNullable<ReturnType<typeof makeDeps>["connectTemporalJournal"]>
+) => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  let connects = 0;
+  deps.connectTemporalJournal = (...args) => {
+    connects += 1;
+    return connect(...args);
+  };
+  const keys = ["x", "e"];
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+  const journalFile = join(
+    mkdtempSync(join(tmpdir(), "fix8-run-")),
+    "governess-control.jsonl"
+  );
+  const config = baseConfig({ journalFile, ...overrides });
+  await runGoverness(config, deps);
+  const events = spies.logs.filter(
+    (entry) =>
+      typeof (entry as { event?: unknown }).event === "string" &&
+      String((entry as { event: string }).event).startsWith("journal-temporal")
+  );
+  return { config, connects, events, journalFile };
+};
+
+test("runGoverness falls back to the file journal, with one log line, when the default journal's server is unreachable (fix8)", async () => {
+  const result = await runWithJournal(
+    {
+      journalTemporal: DERIVED_TEMPORAL,
+      journalTemporalSource: "orchestration-config",
+      repoId: "repo-fix8",
+    },
+    () =>
+      Promise.reject(
+        new GovernessTemporalUnreachableError(
+          DERIVED_TEMPORAL.address,
+          DERIVED_TEMPORAL.namespace,
+          "connect ECONNREFUSED"
+        )
+      )
+  );
+  expect(result.connects).toBe(1);
+  expect(result.events).toEqual([
+    expect.objectContaining({
+      address: DERIVED_TEMPORAL.address,
+      event: "journal-temporal-fallback",
+      journal: "file",
+      source: "orchestration-config",
+      taskQueue: DERIVED_TEMPORAL.taskQueue,
+    }),
+  ]);
+  // The run went on journaling to the file, and teardown has no beat to close.
+  expect(readGovernessJournal(result.journalFile).length).toBeGreaterThan(0);
+  expect(result.config.journalTemporal).toBeUndefined();
+  expect(result.config.journalBackend?.kind).toBe("file");
+});
+
+test("runGoverness falls back on any failure to arm the default journal, including a missing repo id (fix8)", async () => {
+  const foreign = await runWithJournal(
+    {
+      journalTemporal: DERIVED_TEMPORAL,
+      journalTemporalSource: "orchestration-config",
+      repoId: "repo-fix8",
+    },
+    () =>
+      Promise.reject(new Error("governess beat x is not this run's journal"))
+  );
+  expect(foreign.events).toEqual([
+    expect.objectContaining({ event: "journal-temporal-fallback" }),
+  ]);
+  const noRepo = await runWithJournal(
+    {
+      journalTemporal: DERIVED_TEMPORAL,
+      journalTemporalSource: "orchestration-config",
+    },
+    () => Promise.reject(new Error("must not connect"))
+  );
+  expect(noRepo.connects).toBe(0);
+  expect(noRepo.events).toEqual([
+    expect.objectContaining({
+      error: expect.stringContaining("needs the run's repo id"),
+      event: "journal-temporal-fallback",
+    }),
+  ]);
+});
+
+test("runGoverness under explicit settings falls back only when the server is unreachable (fix8)", async () => {
+  const unreachable = await runWithJournal(
+    {
+      journalTemporal: DERIVED_TEMPORAL,
+      journalTemporalSource: "env",
+      repoId: "repo-fix8",
+    },
+    () =>
+      Promise.reject(
+        new GovernessTemporalUnreachableError("a", "b", "deadline exceeded")
+      )
+  );
+  expect(unreachable.events).toEqual([
+    expect.objectContaining({
+      event: "journal-temporal-fallback",
+      source: "env",
+    }),
+  ]);
+  const refusal = await runWithJournal(
+    {
+      journalTemporal: DERIVED_TEMPORAL,
+      journalTemporalSource: "env",
+      repoId: "repo-fix8",
+    },
+    () =>
+      Promise.reject(new Error("governess beat x is not this run's journal"))
+  ).then(
+    () => "resolved",
+    (error: unknown) => (error instanceof Error ? error.message : String(error))
+  );
+  expect(refusal).toContain("is not this run's journal");
+});
+
+test("runGoverness logs once why the journal is file-only when it resolved off (fix8)", async () => {
+  const result = await runWithJournal(
+    { journalTemporalOff: "LOOP_GOVERNESS_TEMPORAL=off" },
+    () => Promise.reject(new Error("must not connect"))
+  );
+  expect(result.connects).toBe(0);
+  expect(result.events).toEqual([
+    expect.objectContaining({
+      event: "journal-temporal-off",
+      reason: "LOOP_GOVERNESS_TEMPORAL=off",
+    }),
+  ]);
+});
+
+test("resolveGovernessConfig turns the journal on from the orchestration config by default (fix8)", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-fix8-"));
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("92", cwd, home);
+  mkdirSync(dirname(storage.manifestPath), { recursive: true });
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      cwd,
+      mode: "paired",
+      pid: 1234,
+      repoId: storage.repoId,
+      runId: "92",
+      status: "running",
+      tmuxPaneLeft: "%0",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "%1",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-92",
+    })
+  );
+  const configPath = join(home, ".loop", "orchestration", "config.json");
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      address: "192.0.2.10:7233",
+      namespace: "harness",
+      schema: "loop-orchestration-server.v1",
+    })
+  );
+  try {
+    const derived = resolveGovernessConfig("92", { HOME: home }, cwd, home);
+    expect(derived.journalTemporal).toMatchObject({
+      address: "192.0.2.10:7233",
+      namespace: "harness",
+    });
+    expect(derived.journalTemporal?.taskQueue).toStartWith("loop-governess-");
+    expect(derived.journalTemporalSource).toBe("orchestration-config");
+    const optedOut = resolveGovernessConfig(
+      "92",
+      { HOME: home, LOOP_GOVERNESS_TEMPORAL: "off" },
+      cwd,
+      home
+    );
+    expect(optedOut.journalTemporal).toBeUndefined();
+    expect(optedOut.journalTemporalOff).toBe("LOOP_GOVERNESS_TEMPORAL=off");
+    rmSync(configPath);
+    const absent = resolveGovernessConfig("92", { HOME: home }, cwd, home);
+    expect(absent.journalTemporal).toBeUndefined();
+    expect(absent.journalTemporalOff).toBe(
+      `orchestration config ${configPath} is absent`
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("Nanny row counts only Nanny task usage, never Governess judge inference", async () => {

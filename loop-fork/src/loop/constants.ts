@@ -61,6 +61,9 @@ Usage:
                                            Hand back a dead stopped or failed run's workspace, only once its tmux session and every recorded process are gone
   ${STOP_USAGE}
                                            Tear a run down like the Governess does: mark it stopped, end its own verified processes, kill its session, release its workspace (--yes skips the prompt)
+  loop orchestration serve <config>        Run the orchestration service (A2A V2 on when the config has an a2aV2 section)
+  loop orchestration a2a-v2 init <config> [--recipient <supervisor-id>] [--manifest <supervisor-id>=<path>]
+                                           Provision the local A2A V2 ledger and add the a2aV2 section (backup + atomic replace)
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only
@@ -112,6 +115,8 @@ Options:
   -h, --help                               Show this help
 
 Environment:
+  LOOP_GOVERNESS_TEMPORAL=off                Keep the governess journal in the run's file only (default: on, via the orchestration config)
+  LOOP_ORCHESTRATION_CONFIG=<path>           Orchestration config the journal default reads (default: ~/.loop/orchestration/config.json)
   LOOP_GOVERNESS_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
   LOOP_GOVERNESS_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
   LOOP_GOVERNESS_AGENT_RENAME=1              Legacy opt-in for guarded /rename; pane-border task labels are preferred
