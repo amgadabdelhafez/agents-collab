@@ -112,7 +112,12 @@ const writeConfig = (
   return { configPath, original };
 };
 
-/** Init with the real Docker; mailbox-only, so it ends incomplete. */
+/**
+ * Init with the real Docker, naming an r8 recipient that is mailbox-only (no
+ * Loop binding), so it provisions the ledger and ends incomplete. r9: without
+ * a recipient, init writes the all-supervisors section instead (proved at the
+ * end of the first test), and a rerun would no longer reach the ledger.
+ */
 const init = async (
   configPath: string,
   containerName: string,
@@ -120,7 +125,7 @@ const init = async (
   lines: string[]
 ): Promise<A2AV2InitIncompleteError> => {
   const outcome = await runA2AV2Init(
-    { configPath, containerName, ledgerPort },
+    { configPath, containerName, ledgerPort, recipient: "supervisor:a" },
     { ...defaultA2AV2InitDeps(), log: (line: string) => lines.push(line) }
   ).then(
     () => undefined,
@@ -218,6 +223,26 @@ test("init provisions a loopback-only ledger whose password reaches the containe
   expect(readFileSync(passwordFile, "utf8")).toBe(password);
   expect(await probeA2AV2Database(url)).toBe(true);
   expect(lines.some((line) => line.includes("POSTGRES_PASSWORD"))).toBe(false);
+  // r9: without a recipient, init reuses the ledger and writes the section
+  // with no recipient under the first supervisor's principal; the grant pairs
+  // it lacks are reported, never written.
+  const written = await runA2AV2Init(
+    { configPath, containerName: NAME, ledgerPort: port },
+    { ...defaultA2AV2InitDeps(), log: (line: string) => lines.push(line) }
+  );
+  expect(written).toMatchObject({
+    configWritten: true,
+    controlSupervisor: "supervisor:a",
+    ledger: "reused",
+  });
+  expect(written.missingGrants).toHaveLength(2);
+  const section = JSON.parse(readFileSync(configPath, "utf8")).a2aV2;
+  expect(section).toMatchObject({
+    principal: "principal:a",
+    workflowIdFormat: "legacy",
+  });
+  expect(section).not.toHaveProperty("recipient");
+  expect(lines.join("\n")).not.toContain(password);
 }, 180_000);
 
 test("a ledger the first fix8 build created (password in its container environment) is reused with one line naming the recreate command, and that command keeps the data and the password", async () => {
