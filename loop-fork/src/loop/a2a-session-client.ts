@@ -55,6 +55,7 @@ import {
   serverOriginFor,
 } from "./orchestration-origin-policy";
 import {
+  IN_REPLY_TO_METADATA_KEY,
   OWNER_NOTIFICATION_PATH,
   OWNER_REPLY_ONLY,
   OWNER_REPLY_ONLY_MESSAGE,
@@ -930,6 +931,11 @@ const MAX_BODY_BYTES = 64 * 1024;
 export interface A2ASendInput {
   body: string;
   contextId?: string;
+  /**
+   * RA2: the owner message this message replies to (its message id). A
+   * message to the owner is accepted only as such a reply.
+   */
+  inReplyTo?: string;
   messageId: string;
   to: string;
 }
@@ -1019,6 +1025,9 @@ export const sendA2AMessage = async (
   if (input.contextId !== undefined && !CONTEXT_ID_RE.test(input.contextId)) {
     throw new Error("context id is invalid");
   }
+  if (input.inReplyTo !== undefined && !MESSAGE_ID_RE.test(input.inReplyTo)) {
+    throw new Error("in-reply-to message id is invalid");
+  }
   if (
     !input.body.trim() ||
     new TextEncoder().encode(input.body).byteLength > MAX_BODY_BYTES
@@ -1051,7 +1060,12 @@ export const sendA2AMessage = async (
     contextId: input.contextId ?? input.messageId,
     extensions: [],
     messageId: input.messageId,
-    metadata: { [FROM_METADATA_KEY]: endpoint.supervisorId },
+    metadata: {
+      [FROM_METADATA_KEY]: endpoint.supervisorId,
+      ...(input.inReplyTo === undefined
+        ? {}
+        : { [IN_REPLY_TO_METADATA_KEY]: input.inReplyTo }),
+    },
     parts: [
       {
         content: { $case: "text", value: input.body },

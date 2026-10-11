@@ -43,6 +43,7 @@ import {
 } from "./a2a-v2-routes-contract";
 import { readBoundedRequestText } from "./bounded-request-body";
 import {
+  IN_REPLY_TO_METADATA_KEY,
   OWNER_REPLY_ONLY,
   ownerReplyOnlyResponse,
 } from "./orchestration-owner-messaging";
@@ -1332,6 +1333,13 @@ export type A2AV2ReceiveDecision = boolean | typeof OWNER_REPLY_ONLY;
 
 export interface A2AV2ReceiveRequest {
   from: string;
+  /**
+   * RA2: the owner message a reply to the owner answers, from the message's
+   * `harness.dev/inReplyTo` metadata, when it carries one.
+   */
+  inReplyTo?: string;
+  /** The message's A2A message id, when it carries one. */
+  messageId?: string;
   principal: string;
   /** The message's A2A context id, when it carries one. */
   threadId?: string;
@@ -1351,13 +1359,25 @@ export interface A2AV2SupervisorIngressGateOptions {
 /** The SDK methods that carry a message to the path's supervisor. */
 const SENDING_METHODS = new Set(["SendMessage", "SendStreamingMessage"]);
 
+const nonBlank = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value : undefined;
+
 /**
- * `harness.dev/from` and the context id of the message a JSON-RPC request
+ * `harness.dev/from`, the context id, the message id and (RA2) the
+ * `harness.dev/inReplyTo` owner message of the message a JSON-RPC request
  * sends, if it sends.
  */
 const sentFrom = (
   parsed: unknown
-): { contextId?: string; from: unknown; sends: true } | { sends: false } => {
+):
+  | {
+      contextId?: string;
+      from: unknown;
+      inReplyTo?: string;
+      messageId?: string;
+      sends: true;
+    }
+  | { sends: false } => {
   if (!isPlainRecord(parsed)) {
     return { sends: false };
   }
@@ -1369,13 +1389,14 @@ const sentFrom = (
   const metadata = isPlainRecord(message?.metadata)
     ? message.metadata
     : undefined;
-  const contextId =
-    typeof message?.contextId === "string" && message.contextId.trim()
-      ? message.contextId
-      : undefined;
+  const contextId = nonBlank(message?.contextId);
+  const messageId = nonBlank(message?.messageId);
+  const inReplyTo = nonBlank(metadata?.[IN_REPLY_TO_METADATA_KEY]);
   return {
     ...(contextId ? { contextId } : {}),
     from: metadata?.[FROM_METADATA_KEY],
+    ...(inReplyTo ? { inReplyTo } : {}),
+    ...(messageId ? { messageId } : {}),
     sends: true,
   };
 };
@@ -1409,6 +1430,8 @@ const ingressSendRefusal = (
   }
   const decision = options.mayReceive({
     from: identity.supervisorId,
+    ...(sent.inReplyTo ? { inReplyTo: sent.inReplyTo } : {}),
+    ...(sent.messageId ? { messageId: sent.messageId } : {}),
     principal: identity.principal,
     ...(sent.contextId ? { threadId: sent.contextId } : {}),
     to,
@@ -1605,6 +1628,11 @@ export interface SupervisorA2AV2AllSupervisorsOptions {
   legacySeats: readonly string[];
   log?: (line: string) => void;
   mayReceive(input: A2AV2ReceiveRequest): A2AV2ReceiveDecision;
+  /**
+   * RA2: told of each message a supervisor ingress durably accepted (after
+   * its V2 start intent), never by the gate before delivery.
+   */
+  onAccepted?: SupervisorA2AV2IngressOptions["onAccepted"];
   principalForRecipient(recipient: string): string | undefined;
   /** See SupervisorMessageV2RecipientEndpoints.renewExpiredLease. */
   renewExpiredLease?(recipient: string): Promise<boolean>;
@@ -1819,6 +1847,7 @@ const createAllSupervisorsRoute = (input: {
         supervisorId,
         url: new URL(pathname, input.card.url).toString(),
       },
+      ...(all.onAccepted ? { onAccepted: all.onAccepted } : {}),
       supervisorId,
     });
     seats.set(supervisorId, seatIngress);

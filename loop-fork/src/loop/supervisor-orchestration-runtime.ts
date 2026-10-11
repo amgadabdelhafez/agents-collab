@@ -20,6 +20,11 @@ import type {
 
 export interface SupervisorMessageReceiveCommand {
   input: SupervisorMessageInput;
+  /**
+   * RA2: the owner message a reply to the owner answers (its message id).
+   * Governance resolves it server-side; it is not part of the message.
+   */
+  inReplyTo?: string;
   messageKind: SupervisorThreadMessageKind;
   principal: string;
   requestId: string;
@@ -27,6 +32,16 @@ export interface SupervisorMessageReceiveCommand {
 
 export interface SupervisorOrchestrationRuntimeOptions {
   governed: GovernedSupervisorMessageService;
+  /**
+   * RA2: told of each message once it is durably accepted (governed receive
+   * and thread-board append both done). A throw is swallowed: the message
+   * is accepted either way.
+   */
+  onReceived?: (accepted: {
+    from: string;
+    messageId: string;
+    to: string;
+  }) => void;
   store: JsonlSupervisorThreadStore;
 }
 
@@ -53,10 +68,12 @@ const projectionInstant = (projection: SupervisorMessageProjection): string =>
 
 export class SupervisorOrchestrationRuntime {
   readonly #governed: GovernedSupervisorMessageService;
+  readonly #onReceived: SupervisorOrchestrationRuntimeOptions["onReceived"];
   readonly #store: JsonlSupervisorThreadStore;
 
   constructor(options: SupervisorOrchestrationRuntimeOptions) {
     this.#governed = options.governed;
+    this.#onReceived = options.onReceived;
     this.#store = options.store;
   }
 
@@ -66,7 +83,8 @@ export class SupervisorOrchestrationRuntime {
     const result = await this.#governed.receive(
       command.principal,
       command.input,
-      command.requestId
+      command.requestId,
+      command.inReplyTo === undefined ? {} : { inReplyTo: command.inReplyTo }
     );
     this.#persist(
       "receive",
@@ -75,6 +93,15 @@ export class SupervisorOrchestrationRuntime {
       result.projection,
       command.messageKind
     );
+    try {
+      this.#onReceived?.({
+        from: result.projection.from,
+        messageId: result.projection.messageId,
+        to: result.projection.to,
+      });
+    } catch {
+      // Accepted either way; the hook owns its own failure.
+    }
     return structuredClone(result);
   }
 

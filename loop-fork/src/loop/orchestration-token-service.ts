@@ -861,39 +861,69 @@ const denyJti = (
 
 // --------------------------------------------------------- enroll rate limit
 
+/** Failures a key may make before it is slowed. */
 export const ENROLL_FAILURE_LIMIT = 10;
+/**
+ * The longest delay a key is slowed to; a key quiet for twice this long is
+ * forgotten (it starts over with its free failures).
+ */
 export const ENROLL_FAILURE_WINDOW_MS = 60_000;
+/** The first delay past the limit; it doubles with each further failure. */
+export const ENROLL_BACKOFF_BASE_MS = 1000;
 export const ENROLL_LIMITER_MAX_SOURCES = 1024;
-/** The one shared window every new source lands in while the map is full. */
+/**
+ * RA2: failures per code-prefix bucket (the code's first two characters),
+ * across every source: a bound on guessing that no number of sources
+ * (or forwarded addresses) widens.
+ */
+export const ENROLL_CODE_PREFIX_FAILURE_LIMIT = 20;
+export const ENROLL_CODE_PREFIX_LENGTH = 2;
+/** Every two-character base64url prefix, plus the one malformed bucket. */
+export const ENROLL_CODE_PREFIX_BUCKETS = 64 * 64 + 1;
+/** The one shared key every new source lands in while the map is full. */
 const OVERFLOW_SOURCE = "\u0000overflow";
+const MALFORMED_CODE_BUCKET = "\u0000malformed";
+const CODE_PREFIX_RE = /^[A-Za-z0-9_-]{2}/;
 
-interface FailureWindow {
+/** The code-prefix bucket an enrollment attempt counts against. */
+export const enrollmentCodeBucket = (code: string): string =>
+  CODE_PREFIX_RE.test(code)
+    ? `code:${code.slice(0, ENROLL_CODE_PREFIX_LENGTH)}`
+    : MALFORMED_CODE_BUCKET;
+
+interface FailureRecord {
   count: number;
-  startedAt: number;
+  lastFailureAt: number;
 }
 
 /**
- * RA2: failed enrollments per source address, in a fixed window, in memory.
- * Bounded: at most `maxSources` addresses plus one shared overflow window.
- * When the map is full (after dropping expired windows) a new address shares
- * the overflow window, so flooding addresses cannot evict a blocked one; it
- * only blocks the flood sooner.
+ * RA2: failed enrollments per key (a source address, or a code-prefix
+ * bucket), in memory. A key's first `limit` failures are free; past them
+ * the key is slowed, not locked out: each further attempt must wait a delay
+ * that starts at `baseDelayMs` and doubles per failure, capped at
+ * `windowMs`. A key quiet for twice `windowMs` is forgotten. Bounded: at
+ * most `maxSources` keys plus one shared overflow key. When the map is full
+ * (after dropping forgotten keys) a new key shares the overflow key, so
+ * flooding keys cannot evict a slowed one; the flood only slows itself.
  */
 export class EnrollmentAttemptLimiter {
+  readonly #baseDelayMs: number;
   readonly #limit: number;
   readonly #maxSources: number;
   readonly #now: () => number;
+  readonly #records = new Map<string, FailureRecord>();
   readonly #windowMs: number;
-  readonly #windows = new Map<string, FailureWindow>();
 
   constructor(
     options: {
+      baseDelayMs?: number;
       limit?: number;
       maxSources?: number;
       now?: () => number;
       windowMs?: number;
     } = {}
   ) {
+    this.#baseDelayMs = options.baseDelayMs ?? ENROLL_BACKOFF_BASE_MS;
     this.#limit = options.limit ?? ENROLL_FAILURE_LIMIT;
     this.#maxSources = options.maxSources ?? ENROLL_LIMITER_MAX_SOURCES;
     this.#now = options.now ?? Date.now;
@@ -901,45 +931,53 @@ export class EnrollmentAttemptLimiter {
   }
 
   get size(): number {
-    return this.#windows.size;
+    return this.#records.size;
   }
 
-  /** Seconds until the source may try again, or 0 when it may now. */
-  retryAfterSeconds(source: string): number {
-    const window = this.#current(this.#keyFor(source));
-    if (!window || window.count < this.#limit) {
+  /** Seconds until the key may try again, or 0 when it may now. */
+  retryAfterSeconds(key: string): number {
+    const record = this.#current(this.#keyFor(key));
+    if (!record || record.count < this.#limit) {
       return 0;
     }
-    const remaining = window.startedAt + this.#windowMs - this.#now();
-    return Math.max(1, Math.ceil(remaining / 1000));
+    const remaining =
+      record.lastFailureAt + this.#delayMs(record.count) - this.#now();
+    return remaining > 0 ? Math.max(1, Math.ceil(remaining / 1000)) : 0;
   }
 
-  recordFailure(source: string): void {
-    const key = this.#keyFor(source);
-    const window = this.#current(key) ?? { count: 0, startedAt: this.#now() };
-    window.count += 1;
-    this.#windows.set(key, window);
+  recordFailure(key: string): void {
+    const slot = this.#keyFor(key);
+    const record = this.#current(slot) ?? { count: 0, lastFailureAt: 0 };
+    record.count += 1;
+    record.lastFailureAt = this.#now();
+    this.#records.set(slot, record);
   }
 
-  #current(key: string): FailureWindow | undefined {
-    const window = this.#windows.get(key);
-    if (window && this.#now() - window.startedAt >= this.#windowMs) {
-      this.#windows.delete(key);
+  /** The wait after a key's `count`th failure. */
+  #delayMs(count: number): number {
+    const doublings = Math.min(count - this.#limit, 30);
+    return Math.min(this.#windowMs, this.#baseDelayMs * 2 ** doublings);
+  }
+
+  #current(key: string): FailureRecord | undefined {
+    const record = this.#records.get(key);
+    if (record && this.#now() - record.lastFailureAt >= 2 * this.#windowMs) {
+      this.#records.delete(key);
       return undefined;
     }
-    return window;
+    return record;
   }
 
-  #keyFor(source: string): string {
-    if (this.#windows.has(source)) {
-      return source;
+  #keyFor(key: string): string {
+    if (this.#records.has(key)) {
+      return key;
     }
-    if (this.#windows.size >= this.#maxSources) {
-      for (const key of [...this.#windows.keys()]) {
-        this.#current(key);
+    if (this.#records.size >= this.#maxSources) {
+      for (const known of [...this.#records.keys()]) {
+        this.#current(known);
       }
     }
-    return this.#windows.size >= this.#maxSources ? OVERFLOW_SOURCE : source;
+    return this.#records.size >= this.#maxSources ? OVERFLOW_SOURCE : key;
   }
 }
 
@@ -1031,32 +1069,75 @@ const issuedResponse = (
 /** The source key of a request whose peer address is unknown. */
 const UNKNOWN_SOURCE = "unknown";
 
+const tooManyAttempts = (retryAfter: number): Response =>
+  Response.json(
+    { error: { code: "too-many-attempts" } },
+    {
+      headers: { ...noStore, "retry-after": String(retryAfter) },
+      status: 429,
+    }
+  );
+
+/** RA2: the two enroll limits: per source, and per code-prefix bucket. */
+export interface EnrollmentLimits {
+  codePrefixes: EnrollmentAttemptLimiter;
+  sources: EnrollmentAttemptLimiter;
+}
+
+export const createEnrollmentLimits = (
+  overrides: Partial<EnrollmentLimits> = {}
+): EnrollmentLimits => ({
+  codePrefixes:
+    overrides.codePrefixes ??
+    new EnrollmentAttemptLimiter({
+      limit: ENROLL_CODE_PREFIX_FAILURE_LIMIT,
+      maxSources: ENROLL_CODE_PREFIX_BUCKETS,
+    }),
+  sources: overrides.sources ?? new EnrollmentAttemptLimiter(),
+});
+
 /**
- * The code is the credential: no bearer is read. RA2: a source over its
- * failure window is refused (429) before its body is read, and every refused
- * enrollment counts against its source.
+ * The code is the credential: no bearer is read. RA2: a source being slowed
+ * is refused (429, retry-after) before its body is read; a code whose prefix
+ * bucket is being slowed is refused before it is looked up. Every attempt
+ * that is evaluated and does not issue a token counts as a failure: against
+ * its source always (a body that cannot be read or parsed included), and
+ * against its code-prefix bucket when it named a code.
  */
 const enrollRoute = async (
   service: OrchestrationTokenService,
   request: Request,
-  limiter: EnrollmentAttemptLimiter,
+  limits: EnrollmentLimits,
   source: string
 ): Promise<Response> => {
-  const retryAfter = limiter.retryAfterSeconds(source);
+  const retryAfter = limits.sources.retryAfterSeconds(source);
   if (retryAfter > 0) {
-    return Response.json(
-      { error: { code: "too-many-attempts" } },
-      {
-        headers: { ...noStore, "retry-after": String(retryAfter) },
-        status: 429,
-      }
-    );
+    return tooManyAttempts(retryAfter);
   }
-  const body = await readRouteBody(request);
-  const code = body ? onlyKey(body, "code") : undefined;
-  const issued = code === undefined ? undefined : service.enroll(code);
-  if (!issued) {
-    limiter.recordFailure(source);
+  let issued: IssuedToken | undefined;
+  let bucket: string | undefined;
+  let evaluated = true;
+  try {
+    const body = await readRouteBody(request);
+    const code = body ? onlyKey(body, "code") : undefined;
+    if (code !== undefined) {
+      const candidate = enrollmentCodeBucket(code);
+      const bucketRetryAfter = limits.codePrefixes.retryAfterSeconds(candidate);
+      if (bucketRetryAfter > 0) {
+        // Not evaluated, so not counted against anyone.
+        evaluated = false;
+        return tooManyAttempts(bucketRetryAfter);
+      }
+      bucket = candidate;
+      issued = service.enroll(code);
+    }
+  } finally {
+    if (evaluated && !issued) {
+      limits.sources.recordFailure(source);
+      if (bucket !== undefined) {
+        limits.codePrefixes.recordFailure(bucket);
+      }
+    }
   }
   return issuedResponse(issued, "enrollment-refused");
 };
@@ -1091,15 +1172,19 @@ const sessionRoute = async (
 /**
  * The token routes under /api/v1/tokens, or undefined for any other path.
  * `enroll` is authenticated by its code and rate limited per `source` (the
- * request's peer address); every other route by a session token (a static
- * legacy token never mints, refreshes or revokes).
+ * request's peer address, or behind a trusted proxy the client address it
+ * forwarded) and per code-prefix bucket; every other route by a session
+ * token (a static legacy token never mints, refreshes or revokes). A bare
+ * limiter is the per-source one.
  */
-export const createTokenRoutes =
-  (
-    service: OrchestrationTokenService,
-    limiter: EnrollmentAttemptLimiter = new EnrollmentAttemptLimiter()
-  ) =>
-  async (
+export const createTokenRoutes = (
+  service: OrchestrationTokenService,
+  limiter: EnrollmentAttemptLimiter | Partial<EnrollmentLimits> = {}
+) => {
+  const limits = createEnrollmentLimits(
+    limiter instanceof EnrollmentAttemptLimiter ? { sources: limiter } : limiter
+  );
+  return async (
     request: Request,
     pathname: string,
     source: string = UNKNOWN_SOURCE
@@ -1118,7 +1203,7 @@ export const createTokenRoutes =
     }
     try {
       if (route === "enroll") {
-        return await enrollRoute(service, request, limiter, source);
+        return await enrollRoute(service, request, limits, source);
       }
       const token = bearer(request);
       if (route === "refresh") {
@@ -1134,3 +1219,4 @@ export const createTokenRoutes =
         : routeError(500, "internal-error");
     }
   };
+};

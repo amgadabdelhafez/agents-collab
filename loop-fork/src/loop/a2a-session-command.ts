@@ -34,7 +34,7 @@ import { supervisorIdFromSlug } from "./supervisor-id";
  *   loop a2a enroll  --as supervisor:x --kind claude-channel --session <id> [--provider-session <id>]
  *                    (each: [--takeover] [--ttl-ms <ms>])
  *   loop a2a release --as supervisor:x (--run <run-id> | --session <id>)
- *   loop a2a send    --as supervisor:x --to supervisor:y --body-file <path> [--message-id <id>] [--context <id>]
+ *   loop a2a send    --as supervisor:x --to supervisor:y --body-file <path> [--message-id <id>] [--context <id>] [--in-reply-to <owner-message-id>]
  *   loop a2a status  --as supervisor:x --message-id <workflow-id>  (the workflowId send prints)
  *   loop a2a ack     --as supervisor:x --workflow <workflow-id> [--workflow <id>...]
  *
@@ -59,7 +59,7 @@ const USAGE = [
   "Usage: loop a2a <enroll|release|send|status|ack> --as <supervisor:id> [--allow-multi-token-env] [--trust-file <ca.pem>] ...",
   "  enroll  --kind loop-run --run <run-id> [--seat claude|codex] | --kind codex-thread --run <run-id> | --kind claude-channel --session <id> [--provider-session <id>]; [--takeover] [--ttl-ms <ms>]",
   "  release --run <run-id> | --session <id>",
-  "  send    --to <supervisor:id> --body-file <path> [--message-id <id>] [--context <id>]",
+  "  send    --to <supervisor:id> --body-file <path> [--message-id <id>] [--context <id>] [--in-reply-to <owner-message-id>]",
   "  status  --message-id <workflow-id> (the workflowId that send prints)",
   "  ack     --workflow <workflow-id> (repeatable)",
 ].join("\n");
@@ -81,6 +81,7 @@ const VALUE_FLAGS: Record<A2AAction, readonly string[]> = {
     "--as",
     "--body-file",
     "--context",
+    "--in-reply-to",
     "--message-id",
     "--to",
     "--trust-file",
@@ -310,11 +311,13 @@ export const runA2ACommand = async (
       bodyFile
     );
     const context = one(flags, "--context");
+    const inReplyTo = one(flags, "--in-reply-to");
     const receipt = await sendA2AMessage(
       endpoint,
       {
         body,
         ...(context ? { contextId: context } : {}),
+        ...(inReplyTo ? { inReplyTo } : {}),
         messageId:
           one(flags, "--message-id") ??
           (deps.newMessageId ?? (() => `a2a-${randomUUID()}`))(),
@@ -485,11 +488,12 @@ export const A2A_SESSION_TOOLS = [
   {
     annotations: MUTATING,
     description:
-      "Send an A2A V2 message to another supervisor. Acceptance is not delivery, acknowledgement or completion; check a2a_status.",
+      "Send an A2A V2 message to another supervisor. Acceptance is not delivery, acknowledgement or completion; check a2a_status. A message to the owner is accepted only as a reply: in_reply_to names the owner's message id.",
     inputSchema: {
       additionalProperties: false,
       properties: {
         context_id: { type: "string" },
+        in_reply_to: { type: "string" },
         message: { type: "string" },
         message_id: { type: "string" },
         to: { type: "string" },
@@ -594,8 +598,9 @@ const releaseTool: A2ASessionTool = async (args, session, deps) => {
 };
 
 const sendTool: A2ASessionTool = async (args, session, deps) => {
-  exactArgs(args, ["context_id", "message", "message_id", "to"]);
+  exactArgs(args, ["context_id", "in_reply_to", "message", "message_id", "to"]);
   const contextId = optionalString(args.context_id, "context_id");
+  const inReplyTo = optionalString(args.in_reply_to, "in_reply_to");
   const messageId =
     optionalString(args.message_id, "message_id") ??
     (deps.newMessageId ?? (() => `a2a-${randomUUID()}`))();
@@ -605,6 +610,7 @@ const sendTool: A2ASessionTool = async (args, session, deps) => {
       {
         body: optionalString(args.message, "message") ?? "",
         ...(contextId ? { contextId } : {}),
+        ...(inReplyTo ? { inReplyTo } : {}),
         messageId,
         to: optionalString(args.to, "to") ?? "",
       },

@@ -13,7 +13,10 @@ import {
   createSupervisorOrchestrationHttpHandler,
   type SupervisorControlSurfaceAuthenticator,
 } from "./supervisor-orchestration-http";
-import { SupervisorOrchestrationRuntime } from "./supervisor-orchestration-runtime";
+import {
+  SupervisorOrchestrationRuntime,
+  type SupervisorOrchestrationRuntimeOptions,
+} from "./supervisor-orchestration-runtime";
 import type {
   SupervisorSessionV2DagGateQuery,
   SupervisorSessionV2DagGateStatus,
@@ -30,6 +33,11 @@ export interface TemporalSupervisorRuntimeOptions {
   identity: string;
   namespace: string;
   nativeConnection: unknown;
+  /**
+   * RA2: told of each message the V1 runtime durably accepted (after its
+   * governed receive and thread-board append). It must not throw.
+   */
+  onReceived?: SupervisorOrchestrationRuntimeOptions["onReceived"];
   receipts: SupervisorMessageGovernanceReceiptPort;
   store: JsonlSupervisorThreadStore;
   taskQueue: string;
@@ -223,6 +231,7 @@ export class TemporalSupervisorRuntimeHost {
     });
     const runtime = new SupervisorOrchestrationRuntime({
       governed,
+      ...(options.onReceived ? { onReceived: options.onReceived } : {}),
       store: options.store,
     });
     const tasks = new TaskGraphRuntime({ workflows });

@@ -1,26 +1,40 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FROM_METADATA_KEY } from "../../src/loop/a2a-supervisor-adapter";
+import { SupervisorA2AV2Adapter } from "../../src/loop/a2a-supervisor-v2-adapter";
 import {
   createConfiguredTokenService,
   createLoopOrchestrationFetchHandler,
+  createOwnerReplyLedger,
+  enrollmentSource,
+  forwardedRequest,
   type OrchestrationGrantDecision,
   orchestrationA2AReceive,
   orchestrationAuthenticator,
   orchestrationAuthority,
   orchestrationGrantDecision,
   parseLoopOrchestrationConfig,
+  recordAcceptedOwnerMessage,
   staticTokensAccepted,
   validateConfiguredRuntimeEnvironment,
 } from "../../src/loop/loop-orchestration-server";
 import {
+  IN_REPLY_TO_METADATA_KEY,
   OWNER_NOTIFICATION_PATH,
+  OWNER_REPLY_DEFAULT_WINDOW_MS,
   OWNER_REPLY_ONLY,
-  OwnerContextRegistry,
-  type OwnerThreadQuery,
-  ownerThreadsFromBoard,
+  OwnerReplyLedger,
 } from "../../src/loop/orchestration-owner-messaging";
 import {
   type OrchestrationTokenService,
@@ -28,9 +42,9 @@ import {
 } from "../../src/loop/orchestration-token-service";
 import { createA2AV2SupervisorIngressGate } from "../../src/loop/supervisor-a2a-v2-service";
 import { SupervisorMessageGovernanceError } from "../../src/loop/supervisor-message-governance";
-import { SupervisorMessageReadModel } from "../../src/loop/supervisor-message-read-model";
 import type { SupervisorMessageProjection } from "../../src/loop/supervisor-message-workflow";
 import { createSupervisorOrchestrationHttpHandler } from "../../src/loop/supervisor-orchestration-http";
+import { SupervisorOrchestrationRuntime } from "../../src/loop/supervisor-orchestration-runtime";
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 
 const roots: string[] = [];
@@ -190,21 +204,31 @@ describe("RA2 static tokens", () => {
 
 describe("RA2 messaging policy", () => {
   const parsed = parseLoopOrchestrationConfig(config());
-  const asked: OwnerThreadQuery[] = [];
-  const started = (threads: string[]) => ({
-    ownerStarted: (query: OwnerThreadQuery) => {
-      asked.push(query);
-      return threads.includes(query.threadId);
-    },
-  });
+  const OWNER_MESSAGE = "owner-m-1";
+  /** A ledger in which the owner sent OWNER_MESSAGE to each recipient. */
+  const ledgerFor = (...recipients: string[]) => {
+    const ledger = new OwnerReplyLedger({
+      file: join(scratch(), "owner-replies.json"),
+    });
+    for (const recipient of recipients) {
+      ledger.recordOwnerMessage({
+        messageId: OWNER_MESSAGE,
+        owner: OWNER,
+        recipient,
+      });
+    }
+    return ledger;
+  };
   const decide = (
     from: string,
     to: string,
     options: {
       claimant?: string;
-      index?: ReturnType<typeof started>;
+      inReplyTo?: string;
+      ledger?: OwnerReplyLedger;
       operation?: "acknowledge" | "cancel" | "claim" | "receive" | "tick";
       principal?: string;
+      replyKey?: string;
       threadId?: string;
     } = {}
   ) =>
@@ -213,12 +237,14 @@ describe("RA2 messaging policy", () => {
       {
         ...(options.claimant ? { claimant: options.claimant } : {}),
         from,
+        ...(options.inReplyTo ? { inReplyTo: options.inReplyTo } : {}),
         operation: options.operation ?? "receive",
         principal: options.principal ?? principalOf(from),
+        ...(options.replyKey ? { replyKey: options.replyKey } : {}),
         ...(options.threadId ? { threadId: options.threadId } : {}),
         to,
       },
-      options.index
+      options.ledger
     );
   const allowed: OrchestrationGrantDecision = {
     allowed: true,
@@ -243,54 +269,146 @@ describe("RA2 messaging policy", () => {
     );
   });
 
-  test("a supervisor messages the owner only on a thread the owner started", () => {
-    asked.length = 0;
-    const index = started(["t-owner"]);
-    expect(decide(SUP, OWNER)).toEqual(replyOnly);
-    expect(decide(SUP, OWNER, { index })).toEqual(replyOnly);
-    expect(decide(SUP, OWNER, { index, threadId: "t-other" })).toEqual(
+  test("a supervisor replies to the owner only to an owner message sent to it, once", () => {
+    const ledger = ledgerFor(SUP);
+    const reply = (
+      replyKey: string,
+      extra: Parameters<typeof decide>[2] = {}
+    ) =>
+      decide(SUP, OWNER, {
+        inReplyTo: OWNER_MESSAGE,
+        ledger,
+        replyKey,
+        ...extra,
+      });
+    // No owner message named, no ledger, or one never sent to this replier.
+    expect(decide(SUP, OWNER, { ledger, replyKey: "r-1" })).toEqual(replyOnly);
+    expect(decide(SUP, OWNER, { inReplyTo: OWNER_MESSAGE, ledger })).toEqual(
       replyOnly
     );
-    expect(decide(SUP, OWNER, { threadId: "t-owner" })).toEqual(replyOnly);
-    expect(decide(SUP, OWNER, { index, threadId: "t-owner" })).toEqual(allowed);
-    expect(asked).toEqual([
-      { owner: OWNER, replier: SUP, threadId: "t-other" },
-      { owner: OWNER, replier: SUP, threadId: "t-owner" },
-    ]);
-    // Even on an owner thread, only as itself.
     expect(
-      decide(SUP, OWNER, {
-        index,
-        principal: principalOf(OTHER_SUP),
-        threadId: "t-owner",
+      decide(SUP, OWNER, { inReplyTo: OWNER_MESSAGE, replyKey: "r-1" })
+    ).toEqual(replyOnly);
+    expect(reply("r-1", { inReplyTo: "owner-m-other" })).toEqual(replyOnly);
+    expect(
+      decide(OTHER_SUP, OWNER, {
+        inReplyTo: OWNER_MESSAGE,
+        ledger,
+        replyKey: "r-1",
       })
-    ).toEqual(denied);
+    ).toEqual(replyOnly);
+    // The thread a caller names grants nothing on its own.
+    expect(decide(SUP, OWNER, { ledger, threadId: "t-owner" })).toEqual(
+      replyOnly
+    );
+    // A refused reply (not as itself) spends nothing.
+    expect(reply("r-0", { principal: principalOf(OTHER_SUP) })).toEqual(denied);
+    // Not as itself and naming no live owner message: the owner path.
+    expect(
+      reply("r-0", {
+        inReplyTo: "owner-m-other",
+        principal: principalOf(OTHER_SUP),
+      })
+    ).toEqual(replyOnly);
+    expect(reply("r-1")).toEqual(allowed);
+    // A retry of the same reply is the same reply; another one is refused.
+    expect(reply("r-1")).toEqual(allowed);
+    expect(reply("r-2")).toEqual(replyOnly);
+    expect(reply("r-2", { threadId: "t-owner" })).toEqual(replyOnly);
   });
 
-  test("a worker or an operator never messages the owner, thread or not", () => {
-    const index = started(["t-owner"]);
+  test("a worker or an operator gets the owner-reply-only refusal, reply or not", () => {
+    const ledger = ledgerFor(WORKER, OPERATOR);
     for (const from of [WORKER, OPERATOR]) {
-      expect(decide(from, OWNER, { index, threadId: "t-owner" })).toEqual(
-        denied
-      );
+      expect(decide(from, OWNER)).toEqual(replyOnly);
+      expect(
+        decide(from, OWNER, {
+          inReplyTo: OWNER_MESSAGE,
+          ledger,
+          replyKey: "r-1",
+        })
+      ).toEqual(replyOnly);
+      // Only a send is told the owner path; the other operations stay denied.
+      expect(decide(from, OWNER, { operation: "tick" })).toEqual(denied);
     }
   });
 
-  test("a sender without a role reaches the owner only by its grant and an owner thread", () => {
-    const index = started(["t-owner"]);
+  test("a sender without a role reaches the owner only by its grant and an owner message", () => {
+    const ledger = ledgerFor(LEGACY, LEGACY_NO_GRANT);
     expect(decide(LEGACY, OWNER)).toEqual(replyOnly);
-    expect(decide(LEGACY, OWNER, { index, threadId: "t-x" })).toEqual(
-      replyOnly
-    );
-    expect(decide(LEGACY, OWNER, { index, threadId: "t-owner" })).toEqual(
-      allowed
-    );
+    const query = (from: string) => ({
+      inReplyTo: OWNER_MESSAGE,
+      owner: OWNER,
+      replier: from,
+      replyKey: "r-other",
+    });
+    // No grant: denied, and the allowance is not spent.
     expect(
-      decide(LEGACY_NO_GRANT, OWNER, { index, threadId: "t-owner" })
+      decide(LEGACY_NO_GRANT, OWNER, {
+        inReplyTo: OWNER_MESSAGE,
+        ledger,
+        replyKey: "r-1",
+      })
     ).toEqual(denied);
+    expect(ledger.replyAvailable(query(LEGACY_NO_GRANT))).toBe(true);
+    // No grant and no live owner message: the owner path comes first.
+    expect(
+      decide(LEGACY_NO_GRANT, OWNER, {
+        inReplyTo: "owner-m-404",
+        ledger,
+        replyKey: "r-1",
+      })
+    ).toEqual(replyOnly);
+    expect(
+      decide(LEGACY, OWNER, {
+        inReplyTo: OWNER_MESSAGE,
+        ledger,
+        replyKey: "r-1",
+      })
+    ).toEqual(allowed);
+    expect(
+      decide(LEGACY, OWNER, {
+        inReplyTo: OWNER_MESSAGE,
+        ledger,
+        replyKey: "r-2",
+      })
+    ).toEqual(replyOnly);
   });
 
-  test("the other operations on a reply are not re-gated by the thread", () => {
+  test("a reply whose allowance cannot be taken durably is refused", () => {
+    const taken: unknown[] = [];
+    const flaky = {
+      replyAvailable: () => true,
+      takeReply: (query: unknown) => {
+        taken.push(query);
+        return false;
+      },
+    };
+    const request = {
+      from: SUP,
+      inReplyTo: OWNER_MESSAGE,
+      operation: "receive" as const,
+      principal: principalOf(SUP),
+      replyKey: "r-1",
+      to: OWNER,
+    };
+    expect(orchestrationGrantDecision(parsed, request, flaky)).toEqual(
+      replyOnly
+    );
+    // A refused request never reaches the take.
+    expect(
+      orchestrationGrantDecision(
+        parsed,
+        { ...request, principal: principalOf(OTHER_SUP) },
+        flaky
+      )
+    ).toEqual(denied);
+    expect(taken).toEqual([
+      { inReplyTo: OWNER_MESSAGE, owner: OWNER, replier: SUP, replyKey: "r-1" },
+    ]);
+  });
+
+  test("the other operations on a reply are not re-gated by the ledger", () => {
     expect(
       decide(SUP, OWNER, {
         claimant: OWNER,
@@ -306,24 +424,451 @@ describe("RA2 messaging policy", () => {
     );
   });
 
-  test("the V1 authority reports the owner-reply-only reason", () => {
-    const authority = orchestrationAuthority(parsed, started(["t-owner"]));
+  test("the V1 authority reports the owner-reply-only reason and spends one reply", () => {
+    const authority = orchestrationAuthority(parsed, ledgerFor(SUP));
     const request = {
       from: SUP,
       operation: "receive" as const,
       principal: principalOf(SUP),
+      threadId: "t-any",
       to: OWNER,
     };
-    expect(authority.decide({ ...request, threadId: "t-new" })).toEqual({
+    expect(authority.decide({ ...request, replyKey: "dedupe-1" })).toEqual({
       allowed: false,
       authorityRef: "authority:deny-default",
       reasonCode: OWNER_REPLY_ONLY,
     });
-    expect(authority.decide({ ...request, threadId: "t-owner" })).toEqual({
+    const reply = (replyKey: string) =>
+      authority.decide({ ...request, inReplyTo: OWNER_MESSAGE, replyKey });
+    expect(reply("dedupe-1")).toEqual({
       allowed: true,
       authorityRef: "authority:loop-orchestration-config",
       reasonCode: "configured-grant",
     });
+    expect(reply("dedupe-2")).toMatchObject({ reasonCode: OWNER_REPLY_ONLY });
+  });
+});
+
+describe("RA2 owner reply ledger", () => {
+  const sent = { messageId: "owner-m-1", owner: OWNER, recipient: SUP };
+  const query = (replyKey: string, inReplyTo = "owner-m-1") => ({
+    inReplyTo,
+    owner: OWNER,
+    replier: SUP,
+    replyKey,
+  });
+
+  test("it is a 0600 file a restart reads back, replies and all", () => {
+    const file = join(scratch(), "state", "owner-replies.json");
+    const clock = { now: 1000 };
+    const open = () =>
+      new OwnerReplyLedger({
+        file,
+        now: () => clock.now,
+        policy: { maxReplies: 2, windowMs: 10_000 },
+      });
+    const ledger = open();
+    expect(ledger.recordOwnerMessage(sent)).toBe(true);
+    // biome-ignore lint/suspicious/noBitwiseOperators: file mode bits.
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(ledger.takeReply(query("r-1"))).toBe(true);
+    const restarted = open();
+    expect(restarted.broken).toBeUndefined();
+    expect(restarted.size).toBe(1);
+    expect(restarted.takeReply(query("r-1"))).toBe(true);
+    expect(restarted.takeReply(query("r-2"))).toBe(true);
+    expect(restarted.replyAvailable(query("r-3"))).toBe(false);
+    expect(open().takeReply(query("r-3"))).toBe(false);
+  });
+
+  test("the allowance ends with its window, and a resend does not renew it", () => {
+    const clock = { now: 0 };
+    const ledger = new OwnerReplyLedger({
+      file: join(scratch(), "owner-replies.json"),
+      now: () => clock.now,
+      policy: { windowMs: 1000 },
+    });
+    ledger.recordOwnerMessage(sent);
+    clock.now = 600;
+    // The owner resends the same message: same id, same window.
+    ledger.recordOwnerMessage(sent);
+    clock.now = 999;
+    expect(ledger.replyAvailable(query("r-1"))).toBe(true);
+    clock.now = 1000;
+    expect(ledger.replyAvailable(query("r-1"))).toBe(false);
+    expect(ledger.takeReply(query("r-1"))).toBe(false);
+  });
+
+  test("the default allows one reply within 24 hours", () => {
+    const clock = { now: 0 };
+    const ledger = new OwnerReplyLedger({
+      file: join(scratch(), "owner-replies.json"),
+      now: () => clock.now,
+    });
+    ledger.recordOwnerMessage(sent);
+    clock.now = OWNER_REPLY_DEFAULT_WINDOW_MS - 1;
+    expect(ledger.takeReply(query("r-1"))).toBe(true);
+    expect(ledger.takeReply(query("r-2"))).toBe(false);
+    ledger.recordOwnerMessage({ ...sent, messageId: "owner-m-2" });
+    clock.now += OWNER_REPLY_DEFAULT_WINDOW_MS;
+    expect(ledger.takeReply(query("r-3", "owner-m-2"))).toBe(false);
+  });
+
+  test("it is bounded by count: the oldest owner message is forgotten", () => {
+    const ledger = new OwnerReplyLedger({
+      file: join(scratch(), "owner-replies.json"),
+      maxEntries: 2,
+    });
+    for (const messageId of ["a", "b", "c"]) {
+      ledger.recordOwnerMessage({ ...sent, messageId });
+    }
+    expect(ledger.size).toBe(2);
+    expect(
+      ["a", "b", "c"].map((id) => ledger.replyAvailable(query("r", id)))
+    ).toEqual([false, true, true]);
+  });
+
+  test("a ledger file that is not a valid 0600 regular file refuses everything and is kept", () => {
+    const valid = (file: string) => {
+      const ledger = new OwnerReplyLedger({ file });
+      ledger.recordOwnerMessage(sent);
+    };
+    const cases: [string, (file: string) => void][] = [
+      [
+        "group readable",
+        (file) => {
+          valid(file);
+          chmodSync(file, 0o640);
+        },
+      ],
+      [
+        "symlink",
+        (file) => {
+          const target = `${file}.target`;
+          valid(target);
+          symlinkSync(target, file);
+        },
+      ],
+      ["not json", (file) => writeFileSync(file, "{not json", { mode: 0o600 })],
+      [
+        "wrong schema",
+        (file) =>
+          writeFileSync(
+            file,
+            JSON.stringify({ entries: [], schema: "other.v1" }),
+            { mode: 0o600 }
+          ),
+      ],
+      [
+        "bad entry",
+        (file) =>
+          writeFileSync(
+            file,
+            JSON.stringify({
+              entries: [{ ...sent, acceptedAt: "now", replies: [] }],
+              schema: "loop-owner-replies.v1",
+            }),
+            { mode: 0o600 }
+          ),
+      ],
+    ];
+    for (const [label, make] of cases) {
+      const file = join(scratch(), "owner-replies.json");
+      make(file);
+      const before = readFileSync(file, "utf8");
+      const ledger = new OwnerReplyLedger({ file });
+      expect([label, ledger.broken]).toEqual([label, expect.any(String)]);
+      expect(ledger.recordOwnerMessage(sent)).toBe(false);
+      expect(ledger.replyAvailable(query("r-1"))).toBe(false);
+      expect(ledger.takeReply(query("r-1"))).toBe(false);
+      expect(readFileSync(file, "utf8")).toBe(before);
+    }
+  });
+
+  test("a ledger path that is not a regular file is refused as such, whatever its mode", () => {
+    const file = join(scratch(), "owner-replies.json");
+    mkdirSync(file, { mode: 0o700 });
+    const ledger = new OwnerReplyLedger({ file });
+    expect(ledger.broken).toContain("regular 0600 file");
+    expect(ledger.recordOwnerMessage(sent)).toBe(false);
+    expect(statSync(file).isDirectory()).toBe(true);
+  });
+
+  test("a write that fails is rolled back: nothing is recorded or spent", () => {
+    const dir = join(scratch(), "state");
+    const ledger = new OwnerReplyLedger({
+      file: join(dir, "owner-replies.json"),
+    });
+    expect(ledger.recordOwnerMessage(sent)).toBe(true);
+    chmodSync(dir, 0o500);
+    try {
+      expect(
+        ledger.recordOwnerMessage({ ...sent, messageId: "owner-m-2" })
+      ).toBe(false);
+      expect(ledger.replyAvailable(query("r-1", "owner-m-2"))).toBe(false);
+      expect(ledger.takeReply(query("r-1"))).toBe(false);
+      expect(ledger.replyAvailable(query("r-1"))).toBe(true);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+    expect(ledger.takeReply(query("r-1"))).toBe(true);
+  });
+});
+
+describe("RA2 owner messages are recorded only once accepted", () => {
+  const parsed = parseLoopOrchestrationConfig(config());
+  const ledger = () =>
+    createOwnerReplyLedger({ stateDir: join(scratch(), "state") });
+
+  test("the A2A gate decides without recording; acceptance records an owner's message only", () => {
+    const replies = ledger();
+    const send = (
+      from: string,
+      to: string,
+      extra: { inReplyTo?: string; messageId?: string; principal?: string } = {}
+    ) =>
+      orchestrationA2AReceive(parsed, replies, {
+        from,
+        principal: extra.principal ?? principalOf(from),
+        to,
+        ...(extra.inReplyTo ? { inReplyTo: extra.inReplyTo } : {}),
+        ...(extra.messageId ? { messageId: extra.messageId } : {}),
+      });
+    expect(send(SUP, OWNER, { messageId: "r-0" })).toBe(OWNER_REPLY_ONLY);
+    expect(send(OWNER, SUP, { messageId: "owner-m-1" })).toBe(true);
+    expect(
+      send(OWNER, SUP, { messageId: "owner-m-1", principal: principalOf(SUP) })
+    ).toBe(false);
+    // Allowed by the gate, not yet accepted: nothing to reply to.
+    expect(replies.size).toBe(0);
+    expect(send(SUP, OWNER, { inReplyTo: "owner-m-1", messageId: "r-1" })).toBe(
+      OWNER_REPLY_ONLY
+    );
+    const logged: string[] = [];
+    const accept = (from: string, to: string, messageId: string) =>
+      recordAcceptedOwnerMessage(
+        parsed,
+        replies,
+        { from, messageId, to },
+        (line) => logged.push(line)
+      );
+    accept(SUP, OPERATOR, "sup-m-1");
+    accept(LEGACY, OWNER, "legacy-m-1");
+    expect(replies.size).toBe(0);
+    accept(OWNER, SUP, "owner-m-1");
+    expect(replies.size).toBe(1);
+    expect(logged).toEqual([]);
+    expect(send(SUP, OWNER, { inReplyTo: "owner-m-1", messageId: "r-1" })).toBe(
+      true
+    );
+    expect(send(SUP, OWNER, { inReplyTo: "owner-m-1", messageId: "r-1" })).toBe(
+      true
+    );
+    expect(send(SUP, OWNER, { inReplyTo: "owner-m-1", messageId: "r-2" })).toBe(
+      OWNER_REPLY_ONLY
+    );
+    // A reply without its own message id names no reply identity.
+    accept(OWNER, SUP, "owner-m-2");
+    expect(send(SUP, OWNER, { inReplyTo: "owner-m-2" })).toBe(OWNER_REPLY_ONLY);
+    expect(
+      send(OTHER_SUP, OWNER, { inReplyTo: "owner-m-2", messageId: "r-9" })
+    ).toBe(OWNER_REPLY_ONLY);
+    expect(
+      send(WORKER, OWNER, { inReplyTo: "owner-m-2", messageId: "r-9" })
+    ).toBe(OWNER_REPLY_ONLY);
+  });
+
+  test("an owner message the ledger cannot record is logged and leaves no reply", () => {
+    const logged: string[] = [];
+    recordAcceptedOwnerMessage(
+      parsed,
+      {
+        recordOwnerMessage: () => {
+          throw new Error("disk full");
+        },
+      },
+      { from: OWNER, messageId: "owner-m-1", to: SUP },
+      (line) => logged.push(line)
+    );
+    recordAcceptedOwnerMessage(
+      parsed,
+      { recordOwnerMessage: () => false },
+      { from: OWNER, messageId: "owner-m-1", to: SUP },
+      (line) => logged.push(line)
+    );
+    expect(logged.length).toBe(2);
+    expect(logged[0]).toContain("cannot reply");
+  });
+
+  test("the V1 runtime tells its hook only after the governed receive and the board append", async () => {
+    const store = new JsonlSupervisorThreadStore(
+      join(scratch(), "threads.jsonl")
+    );
+    const seen: unknown[] = [];
+    const calls: unknown[] = [];
+    let refuse = false;
+    const workflowId = `supervisor-message:${"a".repeat(64)}`;
+    const runtime = new SupervisorOrchestrationRuntime({
+      governed: {
+        receive: (...args: unknown[]) => {
+          calls.push(args);
+          return refuse
+            ? Promise.reject(new Error("authority denied"))
+            : Promise.resolve({
+                created: true,
+                projection: projection({
+                  from: OWNER,
+                  messageId: "owner-m-1",
+                  to: SUP,
+                }),
+                workflowId,
+              });
+        },
+      } as never,
+      onReceived: (accepted) => {
+        seen.push({ accepted, board: store.read().threads.length });
+        throw new Error("a hook failure never fails the receive");
+      },
+      store,
+    });
+    const command = {
+      inReplyTo: "owner-m-0",
+      input: {} as never,
+      messageKind: "question" as const,
+      principal: principalOf(OWNER),
+      requestId: "request-1",
+    };
+    await runtime.receive(command);
+    expect(calls[0]).toEqual([
+      principalOf(OWNER),
+      {},
+      "request-1",
+      { inReplyTo: "owner-m-0" },
+    ]);
+    expect(seen).toEqual([
+      {
+        accepted: { from: OWNER, messageId: "owner-m-1", to: SUP },
+        board: 1,
+      },
+    ]);
+    refuse = true;
+    await expect(runtime.receive(command)).rejects.toThrow("authority denied");
+    expect(seen.length).toBe(1);
+  });
+
+  test("the A2A adapter tells its hook only once the V2 receive returned", async () => {
+    const seen: unknown[] = [];
+    let refuse = false;
+    const adapter = new SupervisorA2AV2Adapter({
+      coordinator: {
+        receive: () =>
+          refuse
+            ? Promise.reject(new Error("start intent refused"))
+            : Promise.resolve({
+                created: true,
+                projection: {
+                  from: OWNER,
+                  messageId: "owner-m-1",
+                  phase: "routed",
+                  to: SUP,
+                },
+                workflowId: "wf-1",
+              }),
+      } as never,
+      now: () => "2026-10-11T07:00:00.000Z",
+      onAccepted: (accepted) => {
+        seen.push(accepted);
+        throw new Error("a hook failure never fails the send");
+      },
+      policy: {
+        claimTimeoutMs: 60_000,
+        escalationTimeoutMs: 120_000,
+        maxDeliveryAttempts: 3,
+        retryDelayMs: 1000,
+      },
+      supervisorId: SUP,
+    });
+    const send = () =>
+      adapter.sendMessage({
+        message: {
+          contextId: "ctx-1",
+          messageId: "owner-m-1",
+          metadata: { [FROM_METADATA_KEY]: OWNER },
+          parts: [{ content: { $case: "text", value: "please review" } }],
+        } as never,
+        principal: principalOf(OWNER),
+        tenant: "tenant-1",
+      });
+    expect((await send()).taskId).toBe("wf-1");
+    expect(seen).toEqual([{ from: OWNER, messageId: "owner-m-1", to: SUP }]);
+    refuse = true;
+    await expect(send()).rejects.toThrow("start intent refused");
+    expect(seen.length).toBe(1);
+  });
+});
+
+describe("RA2 owner reply configuration", () => {
+  test("ownerReplies is optional and bounded", () => {
+    expect(parseLoopOrchestrationConfig(config()).ownerReplies).toBeUndefined();
+    expect(
+      parseLoopOrchestrationConfig(config({ ownerReplies: { maxReplies: 3 } }))
+        .ownerReplies
+    ).toEqual({ maxReplies: 3, windowMs: OWNER_REPLY_DEFAULT_WINDOW_MS });
+    for (const ownerReplies of [
+      { maxReplies: 0 },
+      { maxReplies: 21 },
+      { windowMs: 59_999 },
+      { windowMs: 31 * 24 * 60 * 60 * 1000 },
+      { maxReplies: 1.5 },
+      { other: 1 },
+      [],
+    ]) {
+      expect(() =>
+        parseLoopOrchestrationConfig(config({ ownerReplies }))
+      ).toThrow("ownerReplies");
+    }
+  });
+
+  test("the server's ledger applies the configured policy", () => {
+    const clock = { now: 0 };
+    const stateDir = join(scratch(), "state");
+    const ledger = createOwnerReplyLedger(
+      parseLoopOrchestrationConfig(
+        config({ ownerReplies: { maxReplies: 2, windowMs: 60_000 }, stateDir })
+      ),
+      () => clock.now
+    );
+    ledger.recordOwnerMessage({
+      messageId: "owner-m-1",
+      owner: OWNER,
+      recipient: SUP,
+    });
+    const take = (replyKey: string) =>
+      ledger.takeReply({
+        inReplyTo: "owner-m-1",
+        owner: OWNER,
+        replier: SUP,
+        replyKey,
+      });
+    expect([take("r-1"), take("r-2"), take("r-3")]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    ledger.recordOwnerMessage({
+      messageId: "owner-m-2",
+      owner: OWNER,
+      recipient: SUP,
+    });
+    clock.now = 60_000;
+    expect(
+      ledger.replyAvailable({
+        inReplyTo: "owner-m-2",
+        owner: OWNER,
+        replier: SUP,
+        replyKey: "r-4",
+      })
+    ).toBe(false);
   });
 });
 
@@ -350,146 +895,6 @@ const projection = (
   ...overrides,
 });
 
-describe("RA2 owner threads on the V1 board", () => {
-  const boardStore = () => {
-    const store = new JsonlSupervisorThreadStore(
-      join(scratch(), "threads.jsonl")
-    );
-    const messages: Partial<SupervisorMessageProjection>[] = [
-      { from: OWNER, threadId: "t-owner", to: SUP },
-      { from: SUP, threadId: "t-sup", to: WORKER },
-      {
-        from: OWNER,
-        receivedAt: "2026-10-11T07:05:00.000Z",
-        threadId: "t-sup",
-        to: SUP,
-      },
-      { from: OWNER, threadId: "t-aicur", to: OTHER_SUP },
-    ];
-    messages.forEach((overrides, index) => {
-      const workflowId = `supervisor-message:${String(index + 1).repeat(64)}`;
-      const model = new SupervisorMessageReadModel();
-      model.upsert(
-        workflowId,
-        projection({ ...overrides, messageId: `m-${index}` })
-      );
-      store.append({
-        item: model.board().items[0] as never,
-        messageKind: "question",
-        observedAt: "2026-10-11T07:10:00.000Z",
-        requestId: `append-${index}`,
-      });
-    });
-    return store;
-  };
-
-  test("only a thread the owner opened with the replier counts", async () => {
-    const store = boardStore();
-    const index = ownerThreadsFromBoard(() => store.read());
-    const query = (replier: string, threadId: string) =>
-      index.ownerStarted({ owner: OWNER, replier, threadId });
-    expect(query(SUP, "t-owner")).toBe(true);
-    expect(query(OTHER_SUP, "t-aicur")).toBe(true);
-    // The supervisor started it; the owner joining later does not count.
-    expect(query(SUP, "t-sup")).toBe(false);
-    // The owner opened it with someone else.
-    expect(query(SUP, "t-aicur")).toBe(false);
-    expect(query(SUP, "t-none")).toBe(false);
-    expect(
-      index.ownerStarted({ owner: OPERATOR, replier: SUP, threadId: "t-owner" })
-    ).toBe(false);
-    // The authority reads the same board.
-    const authority = orchestrationAuthority(
-      parseLoopOrchestrationConfig(config()),
-      index
-    );
-    const reply = async (threadId: string) =>
-      (
-        await authority.decide({
-          from: SUP,
-          operation: "receive",
-          principal: principalOf(SUP),
-          threadId,
-          to: OWNER,
-        })
-      ).reasonCode;
-    expect(await reply("t-owner")).toBe("configured-grant");
-    expect(await reply("t-sup")).toBe(OWNER_REPLY_ONLY);
-  });
-
-  test("an unreadable board answers no", () => {
-    const index = ownerThreadsFromBoard(() => {
-      throw new Error("journal is corrupt");
-    });
-    expect(
-      index.ownerStarted({ owner: OWNER, replier: SUP, threadId: "t-owner" })
-    ).toBe(false);
-  });
-});
-
-describe("RA2 owner contexts on the A2A plane", () => {
-  const parsed = parseLoopOrchestrationConfig(config());
-
-  test("only an allowed owner send opens a context, and only for its recipient", () => {
-    const contexts = new OwnerContextRegistry();
-    const send = (
-      from: string,
-      to: string,
-      threadId?: string,
-      principal?: string
-    ) =>
-      orchestrationA2AReceive(parsed, contexts, {
-        from,
-        principal: principal ?? principalOf(from),
-        ...(threadId ? { threadId } : {}),
-        to,
-      });
-    expect(send(SUP, OWNER, "ctx-1")).toBe(OWNER_REPLY_ONLY);
-    expect(send(SUP, OWNER)).toBe(OWNER_REPLY_ONLY);
-    expect(contexts.size).toBe(0);
-    // Refused or context-less owner sends and other pairs record nothing.
-    expect(send(OWNER, SUP, "ctx-1", principalOf(SUP))).toBe(false);
-    expect(send(OWNER, SUP)).toBe(true);
-    expect(send(SUP, WORKER, "ctx-9")).toBe(true);
-    expect(contexts.size).toBe(0);
-    expect(send(OWNER, SUP, "ctx-1")).toBe(true);
-    expect(contexts.size).toBe(1);
-    expect(send(SUP, OWNER, "ctx-1")).toBe(true);
-    expect(send(SUP, OWNER, "ctx-2")).toBe(OWNER_REPLY_ONLY);
-    expect(send(OTHER_SUP, OWNER, "ctx-1")).toBe(OWNER_REPLY_ONLY);
-    expect(send(WORKER, OWNER, "ctx-1")).toBe(false);
-    // A supervisor's own sends never open a context for it.
-    expect(send(SUP, OPERATOR, "ctx-3")).toBe(true);
-    expect(send(SUP, OWNER, "ctx-3")).toBe(OWNER_REPLY_ONLY);
-  });
-
-  test("the registry is bounded by count and age", () => {
-    const clock = { now: 0 };
-    const contexts = new OwnerContextRegistry({
-      maxEntries: 2,
-      now: () => clock.now,
-      ttlMs: 1000,
-    });
-    const has = (threadId: string) =>
-      contexts.ownerStarted({ owner: OWNER, replier: SUP, threadId });
-    for (const threadId of ["a", "b", "c"]) {
-      contexts.record({ owner: OWNER, recipient: SUP, threadId });
-    }
-    expect(contexts.size).toBe(2);
-    expect([has("a"), has("b"), has("c")]).toEqual([false, true, true]);
-    // Renewing moves a context to the newest.
-    clock.now = 500;
-    contexts.record({ owner: OWNER, recipient: SUP, threadId: "b" });
-    contexts.record({ owner: OWNER, recipient: SUP, threadId: "d" });
-    expect([has("b"), has("c"), has("d")]).toEqual([true, false, true]);
-    clock.now = 1499;
-    expect(has("b")).toBe(true);
-    clock.now = 1500;
-    expect(has("b")).toBe(false);
-    expect(contexts.size).toBe(1);
-  });
-});
-
 describe("RA2 refusal surfaces", () => {
   const ownerRefusal = {
     code: OWNER_REPLY_ONLY,
@@ -499,7 +904,7 @@ describe("RA2 refusal surfaces", () => {
     notifyVia: OWNER_NOTIFICATION_PATH,
   };
 
-  test("the A2A ingress names the attention-os path and passes the context id", async () => {
+  test("the A2A ingress names the attention-os path and passes the context, message and reply ids", async () => {
     const asked: unknown[] = [];
     const gate = createA2AV2SupervisorIngressGate({
       authenticator: {
@@ -518,7 +923,7 @@ describe("RA2 refusal surfaces", () => {
       sdkCalls += 1;
       return Promise.resolve(new Response("sdk"));
     };
-    const send = (to: string, contextId?: string) =>
+    const send = (to: string, contextId?: string, inReplyTo?: string) =>
       gate(
         new Request("http://127.0.0.1:7321/a2a/v2/supervisors/x", {
           body: JSON.stringify({
@@ -529,7 +934,12 @@ describe("RA2 refusal surfaces", () => {
               message: {
                 ...(contextId === undefined ? {} : { contextId }),
                 messageId: "m-1",
-                metadata: { [FROM_METADATA_KEY]: SUP },
+                metadata: {
+                  [FROM_METADATA_KEY]: SUP,
+                  ...(inReplyTo === undefined
+                    ? {}
+                    : { [IN_REPLY_TO_METADATA_KEY]: inReplyTo }),
+                },
                 parts: [{ text: "done" }],
                 role: "ROLE_USER",
               },
@@ -552,16 +962,22 @@ describe("RA2 refusal surfaces", () => {
       error: { code: "identity-mismatch" },
     });
     await send(OWNER);
+    await send(OWNER, undefined, "owner-m-1");
+    await send(OWNER, undefined, "  ");
+    const base = { from: SUP, messageId: "m-1", principal: principalOf(SUP) };
     expect(asked).toEqual([
-      { from: SUP, principal: principalOf(SUP), threadId: "ctx-1", to: OWNER },
-      { from: SUP, principal: principalOf(SUP), to: OPERATOR },
-      { from: SUP, principal: principalOf(SUP), to: OWNER },
+      { ...base, threadId: "ctx-1", to: OWNER },
+      { ...base, to: OPERATOR },
+      { ...base, to: OWNER },
+      { ...base, inReplyTo: "owner-m-1", to: OWNER },
+      { ...base, to: OWNER },
     ]);
     expect(sdkCalls).toBe(0);
   });
 
-  test("the V1 surface names the attention-os path for an owner-reply-only refusal", async () => {
+  test("the V1 surface passes inReplyTo through and names the attention-os path for an owner-reply-only refusal", async () => {
     let reasonCode = OWNER_REPLY_ONLY;
+    const received: unknown[] = [];
     const handler = createSupervisorOrchestrationHttpHandler({
       authenticator: {
         authenticate: () => ({
@@ -570,7 +986,8 @@ describe("RA2 refusal surfaces", () => {
         }),
       },
       messages: {
-        receive: () =>
+        receive: (command: unknown) =>
+          received.push(command) &&
           Promise.reject(
             new SupervisorMessageGovernanceError({
               allowed: false,
@@ -581,7 +998,7 @@ describe("RA2 refusal surfaces", () => {
       } as never,
       tasks: {} as never,
     });
-    const send = () =>
+    const send = (extra: Record<string, unknown> = {}) =>
       handler(
         new Request(
           "http://127.0.0.1:7321/api/v1/supervisor-messages/receive",
@@ -590,6 +1007,7 @@ describe("RA2 refusal surfaces", () => {
               input: { from: SUP, to: OWNER },
               messageKind: "informational",
               requestId: "request-1",
+              ...extra,
             }),
             headers: {
               authorization: "Bearer x",
@@ -606,9 +1024,21 @@ describe("RA2 refusal surfaces", () => {
     expect(await (await send()).json()).toEqual({
       error: { code: "authority-denied" },
     });
+    expect((await send({ inReplyTo: "owner-m-1" })).status).toBe(403);
+    expect(received.at(-1)).toMatchObject({ inReplyTo: "owner-m-1" });
+    expect(received[0]).not.toHaveProperty("inReplyTo");
+    const count = received.length;
+    for (const extra of [
+      { inReplyTo: "../x" },
+      { inReplyTo: 7 },
+      { other: "x" },
+    ]) {
+      expect((await send(extra)).status).toBe(400);
+    }
+    expect(received.length).toBe(count);
   });
 
-  test("the fetch handler gives the token routes the peer address", async () => {
+  test("the fetch handler gives the token routes the peer address, or its enroll source", async () => {
     const sources: (string | undefined)[] = [];
     const handler = createLoopOrchestrationFetchHandler({
       authenticator: { authenticate: () => undefined },
@@ -632,5 +1062,124 @@ describe("RA2 refusal surfaces", () => {
     await handler(request(), { requestIP: () => null });
     await handler(request());
     expect(sources).toEqual(["203.0.113.9", undefined, undefined]);
+    const keyed = createLoopOrchestrationFetchHandler({
+      authenticator: { authenticate: () => undefined },
+      enrollSource: (_request, peer) => `keyed:${peer}`,
+      host: {
+        httpHandler: () => () => Promise.resolve(new Response(null)),
+        workerState: () => "RUNNING",
+      } as never,
+      reconciliationHealthy: () => true,
+      tokenRoutes: (_request, _pathname, source) => {
+        sources.push(source);
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    });
+    await keyed(request(), { requestIP: () => ({ address: "127.0.0.1" }) });
+    expect(sources.at(-1)).toBe("keyed:127.0.0.1");
+  });
+});
+
+describe("RA2 requests through the trusted proxy", () => {
+  const proxied = config({
+    origin: "https://loop.home.lab",
+    trustedProxies: ["127.0.0.1", "::1"],
+  });
+  const request = (headers: Record<string, string> = {}) =>
+    new Request("http://127.0.0.1:7321/api/v1/tokens/enroll", {
+      headers,
+      method: "POST",
+    });
+
+  test("trustedProxies are IP literals and need an https origin", () => {
+    expect(parseLoopOrchestrationConfig(proxied).trustedProxies).toEqual([
+      "127.0.0.1",
+      "::1",
+    ]);
+    expect(
+      parseLoopOrchestrationConfig(
+        config({
+          origin: "https://loop.home.lab",
+          trustedProxies: ["::ffff:127.0.0.1", "127.0.0.1"],
+        })
+      ).trustedProxies
+    ).toEqual(["127.0.0.1"]);
+    expect(() =>
+      parseLoopOrchestrationConfig(config({ trustedProxies: ["127.0.0.1"] }))
+    ).toThrow("https origin");
+    for (const trustedProxies of [[], ["caddy"], ["10.0.0.0/8"], "127.0.0.1"]) {
+      expect(() =>
+        parseLoopOrchestrationConfig(
+          config({ origin: "https://loop.home.lab", trustedProxies })
+        )
+      ).toThrow("trustedProxies");
+    }
+  });
+
+  test("the enroll source is the right-most untrusted forwarded hop, only from a trusted proxy", () => {
+    const parsed = parseLoopOrchestrationConfig(proxied);
+    const source = (peer: string | undefined, xff?: string) =>
+      enrollmentSource(
+        parsed,
+        request(xff === undefined ? {} : { "x-forwarded-for": xff }),
+        peer
+      );
+    expect(source("127.0.0.1", "198.51.100.7")).toBe("198.51.100.7");
+    expect(source("::ffff:127.0.0.1", "198.51.100.7")).toBe("198.51.100.7");
+    // A client-supplied left part never decides the key.
+    expect(source("127.0.0.1", "10.9.9.9, 198.51.100.7")).toBe("198.51.100.7");
+    // Trusted hops are skipped from the right.
+    expect(source("127.0.0.1", "198.51.100.7, ::1, 127.0.0.1")).toBe(
+      "198.51.100.7"
+    );
+    // Nothing usable: the proxy is keyed as itself.
+    expect(source("127.0.0.1")).toBe("127.0.0.1");
+    expect(source("127.0.0.1", "127.0.0.1")).toBe("127.0.0.1");
+    expect(source("127.0.0.1", "198.51.100.7, garbage")).toBe("127.0.0.1");
+    // Any other peer: its own address, headers ignored.
+    expect(source("203.0.113.5", "198.51.100.7")).toBe("203.0.113.5");
+    expect(source(undefined, "198.51.100.7")).toBeUndefined();
+    // Without an https origin (or trusted proxies) nothing is forwarded.
+    for (const plain of [
+      parseLoopOrchestrationConfig(config()),
+      { ...parsed, origin: "http://127.0.0.1:7321" },
+    ]) {
+      expect(
+        enrollmentSource(
+          plain,
+          request({ "x-forwarded-for": "198.51.100.7" }),
+          "127.0.0.1"
+        )
+      ).toBe("127.0.0.1");
+    }
+  });
+
+  test("a static token is refused on any request that carries forwarding headers", () => {
+    const env = { LOOP_LEGACY_TOKEN: "legacy-fixture-token" };
+    const authenticator = orchestrationAuthenticator(
+      parseLoopOrchestrationConfig(config()),
+      env
+    );
+    const bearer = { authorization: "Bearer legacy-fixture-token" };
+    expect(authenticator.authenticate(request(bearer))).toEqual({
+      principal: "principal:legacy",
+      supervisorId: LEGACY,
+    });
+    for (const header of [
+      "forwarded",
+      "via",
+      "x-forwarded-for",
+      "x-forwarded-host",
+      "x-forwarded-proto",
+      "x-real-ip",
+    ]) {
+      const forwarded = request({ ...bearer, [header]: "198.51.100.7" });
+      expect([header, forwardedRequest(forwarded)]).toEqual([header, true]);
+      expect([header, authenticator.authenticate(forwarded)]).toEqual([
+        header,
+        undefined,
+      ]);
+    }
+    expect(forwardedRequest(request(bearer))).toBe(false);
   });
 });
