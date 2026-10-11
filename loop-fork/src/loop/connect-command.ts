@@ -1,0 +1,686 @@
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import {
+  type A2AClientDeps,
+  type A2AClientEndpoint,
+  acknowledgeA2AWorkflows,
+  claimA2ASession,
+  releaseA2ASession,
+  resolveA2AClientEndpoint,
+} from "./a2a-session-client";
+import { claudeChannelNotification } from "./bridge-runtime";
+import { readBridgeStatus } from "./bridge-store";
+import { BridgeSupervisorMessageDeliveryPort } from "./bridge-supervisor-message-delivery";
+import { injectCodexMessage } from "./codex-app-server";
+import { LOOP_VERSION } from "./constants";
+import { InboxStreamClient, type InboxStreamEnd } from "./inbox-stream-client";
+import { type RunStorage, resolveRunStorage } from "./run-state";
+import {
+  requireLoopbackCodexRemoteUrl,
+  requireSupervisorEndpointLeaseTtlMs,
+  requireSupervisorEndpointRecipient,
+  requireSupervisorEndpointRunId,
+  requireSupervisorEndpointThreadId,
+  type SupervisorEndpointInboxStreamLocator,
+  type SupervisorEndpointLeaseFence,
+} from "./supervisor-endpoint-lease";
+import type { SupervisorInboxEvent } from "./supervisor-inbox-stream";
+import { SupervisorMessageV2BridgeDeliveryPort } from "./supervisor-message-v2-bridge-delivery";
+
+/**
+ * `loop connect`: an MCP server (stdio, newline-delimited JSON-RPC) that holds
+ * one supervisor's outbound inbox stream (ra1) and delivers what arrives to
+ * its own session, so a session behind NAT or on another device receives
+ * without an inbound port.
+ *
+ *   loop connect --as supervisor:x --deliver claude --session <claude-session-id>
+ *   loop connect --as supervisor:x --deliver codex  --thread <id> --codex-remote ws://127.0.0.1:<port>
+ *   loop connect --as supervisor:x --deliver seat   --run <run-id> --seat claude|codex
+ *                (each: [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env])
+ *
+ * - Identity is fixed before any input is read: `--as`, its tokenEnv, and the
+ *   fence of the inbox-stream lease this process claims (holderRef
+ *   `connect:<uuid>`). Tool input never names an identity, a server or a
+ *   path. A live lease of another holder is refused unless `--takeover`;
+ *   losing the lease ends the stream (no automatic reclaim).
+ * - Delivery by kind: Claude gets the bridge's `notifications/claude/channel`
+ *   on this server's stdout (after `notifications/initialized`); Codex gets
+ *   `injectCodexMessage` on a loopback app-server thread; a Loop run seat
+ *   gets the run's bridge queue (the same V2 bridge port the server uses,
+ *   deduplicated per message).
+ * - The `inbox_ack` tool is the recipient's delivery/read ACK on the existing
+ *   recipient route. It is never completion; nothing here publishes a result.
+ * - The lease is kept alive by the server observing this stream; no renew
+ *   loop and no polling. The lease is released when stdin ends.
+ */
+export const CONNECT_COMMAND = "connect";
+export const ALLOW_MULTI_TOKEN_ENV_FLAG = "--allow-multi-token-env";
+
+const USAGE = [
+  "Usage: loop connect --as <supervisor:id> --deliver <claude|codex|seat> [--takeover] [--ttl-ms <ms>] [--allow-multi-token-env] ...",
+  "  --deliver claude --session <claude-session-id>",
+  "  --deliver codex  --thread <thread-id> --codex-remote ws://127.0.0.1:<port>",
+  "  --deliver seat   --run <run-id> --seat claude|codex",
+].join("\n");
+
+const VALUE_FLAGS = [
+  "--as",
+  "--codex-remote",
+  "--deliver",
+  "--run",
+  "--seat",
+  "--session",
+  "--thread",
+  "--ttl-ms",
+] as const;
+const BOOLEAN_FLAGS = [ALLOW_MULTI_TOKEN_ENV_FLAG, "--takeover"] as const;
+
+type DeliverKind = "claude" | "codex" | "seat";
+
+export type ConnectTarget =
+  | { kind: "claude"; sessionId: string }
+  | { kind: "codex"; remoteUrl: string; threadId: string }
+  | {
+      kind: "seat";
+      runDir: string;
+      seat: "claude" | "codex";
+      sessionId: string;
+    };
+
+export interface ConnectOptions {
+  allowMultiTokenEnv: boolean;
+  supervisorId: string;
+  takeover: boolean;
+  target: ConnectTarget;
+  ttlMs?: number;
+}
+
+const usageError = (detail?: string): Error =>
+  new Error(detail ? `${detail}\n${USAGE}` : USAGE);
+
+const parseFlags = (
+  args: readonly string[]
+): { booleans: Set<string>; values: Map<string, string> } => {
+  const values = new Map<string, string>();
+  const booleans = new Set<string>();
+  for (let index = 0; index < args.length; index++) {
+    const name = args[index] ?? "";
+    if ((BOOLEAN_FLAGS as readonly string[]).includes(name)) {
+      booleans.add(name);
+      continue;
+    }
+    const value = args[index + 1];
+    if (
+      !(VALUE_FLAGS as readonly string[]).includes(name) ||
+      value === undefined ||
+      value.startsWith("--") ||
+      !value.trim()
+    ) {
+      throw usageError(`invalid argument: ${name}`);
+    }
+    if (values.has(name)) {
+      throw usageError(`${name} given more than once`);
+    }
+    values.set(name, value);
+    index++;
+  }
+  return { booleans, values };
+};
+
+export interface ConnectDeps extends A2AClientDeps {
+  resolveRunStorage?: (runId: string) => RunStorage;
+  seatSessionId?: (runDir: string, seat: "claude" | "codex") => string;
+}
+
+const defaultSeatSessionId = (
+  runDir: string,
+  seat: "claude" | "codex"
+): string => {
+  const status = readBridgeStatus(runDir);
+  return seat === "claude" ? status.claudeSessionId : status.codexThreadId;
+};
+
+const ALLOWED_TARGET_FLAGS: Record<DeliverKind, readonly string[]> = {
+  claude: ["--session"],
+  codex: ["--codex-remote", "--thread"],
+  seat: ["--run", "--seat"],
+};
+const COMMON_FLAGS = ["--as", "--deliver", "--ttl-ms"];
+
+const seatTarget = (
+  need: (name: string) => string,
+  deps: ConnectDeps
+): ConnectTarget => {
+  const seat = need("--seat");
+  if (seat !== "claude" && seat !== "codex") {
+    throw usageError("--seat is claude or codex");
+  }
+  const storage = (deps.resolveRunStorage ?? resolveRunStorage)(
+    requireSupervisorEndpointRunId(need("--run"))
+  );
+  if (!existsSync(storage.manifestPath)) {
+    throw new Error(`run ${storage.runId} has no manifest`);
+  }
+  const sessionId = (deps.seatSessionId ?? defaultSeatSessionId)(
+    storage.runDir,
+    seat
+  );
+  if (!sessionId) {
+    throw new Error(`run ${storage.runId} has no ${seat} session yet`);
+  }
+  return {
+    kind: "seat",
+    runDir: storage.runDir,
+    seat,
+    sessionId: requireSupervisorEndpointThreadId(sessionId),
+  };
+};
+
+const connectTarget = (
+  deliver: DeliverKind,
+  values: Map<string, string>,
+  deps: ConnectDeps
+): ConnectTarget => {
+  const need = (name: string): string => {
+    const value = values.get(name);
+    if (!value) {
+      throw usageError(`${name} is required with --deliver ${deliver}`);
+    }
+    return value;
+  };
+  if (deliver === "claude") {
+    return {
+      kind: "claude",
+      sessionId: requireSupervisorEndpointThreadId(need("--session")),
+    };
+  }
+  if (deliver === "codex") {
+    return {
+      kind: "codex",
+      // Loopback only: this process dials the app-server it was given.
+      remoteUrl: requireLoopbackCodexRemoteUrl(need("--codex-remote")),
+      threadId: requireSupervisorEndpointThreadId(need("--thread")),
+    };
+  }
+  return seatTarget(need, deps);
+};
+
+/** Strict argv decode; every id checked before anything is sent. */
+export const parseConnectArgs = (
+  argv: readonly string[],
+  deps: ConnectDeps = {}
+): ConnectOptions => {
+  const [command, ...rest] = argv;
+  if (command !== CONNECT_COMMAND) {
+    throw usageError();
+  }
+  const { booleans, values } = parseFlags(rest);
+  const as = values.get("--as");
+  if (!as) {
+    throw usageError("--as is required");
+  }
+  const supervisorId = requireSupervisorEndpointRecipient(as);
+  const deliver = values.get("--deliver") as DeliverKind | undefined;
+  if (!(deliver && deliver in ALLOWED_TARGET_FLAGS)) {
+    throw usageError("--deliver is claude, codex or seat");
+  }
+  for (const name of values.keys()) {
+    if (
+      !(
+        COMMON_FLAGS.includes(name) ||
+        ALLOWED_TARGET_FLAGS[deliver].includes(name)
+      )
+    ) {
+      throw usageError(`${name} is not used with --deliver ${deliver}`);
+    }
+  }
+  const target = connectTarget(deliver, values, deps);
+  const ttl = values.get("--ttl-ms");
+  return {
+    allowMultiTokenEnv: booleans.has(ALLOW_MULTI_TOKEN_ENV_FLAG),
+    supervisorId,
+    takeover: booleans.has("--takeover"),
+    target,
+    ...(ttl === undefined
+      ? {}
+      : { ttlMs: requireSupervisorEndpointLeaseTtlMs(Number(ttl)) }),
+  };
+};
+
+/** The inbox-stream locator a target claims: ids only. */
+export const connectLocator = (
+  target: ConnectTarget
+): SupervisorEndpointInboxStreamLocator => {
+  if (target.kind === "claude") {
+    return {
+      agent: "claude",
+      kind: "inbox-stream",
+      sessionId: target.sessionId,
+    };
+  }
+  if (target.kind === "codex") {
+    return { agent: "codex", kind: "inbox-stream", sessionId: target.threadId };
+  }
+  return {
+    agent: target.seat,
+    kind: "inbox-stream",
+    sessionId: target.sessionId,
+  };
+};
+
+/** What a provider session reads for one inbox message. */
+export const formatInboxMessage = (event: SupervisorInboxEvent): string => {
+  const { envelope } = event;
+  return [
+    `[loop A2A message ${envelope.messageId}, thread ${envelope.threadId}, to ${envelope.target}]`,
+    envelope.body,
+    ...(envelope.artifactRefs.length > 0
+      ? ["", `Artifacts: ${envelope.artifactRefs.join(", ")}`]
+      : []),
+    "",
+    `Acknowledge receipt (a read ACK, not completion) with the inbox_ack tool, workflow ${envelope.workflowId}.`,
+  ].join("\n");
+};
+
+export type InboxDeliverer = (event: SupervisorInboxEvent) => Promise<boolean>;
+
+/** Writes one JSON-RPC message as a line; resolves once it is flushed. */
+export type JsonRpcWriter = (payload: unknown) => Promise<void>;
+
+export const claudeChannelDeliverer =
+  (supervisorId: string, write: JsonRpcWriter): InboxDeliverer =>
+  async (event) => {
+    await write(
+      claudeChannelNotification({
+        at: event.appendedAt,
+        chatId: `a2a_${supervisorId.slice("supervisor:".length)}`,
+        content: formatInboxMessage(event),
+        messageId: event.envelope.messageId,
+        sourceType: "a2a",
+        user: "A2A",
+        userId: "a2a",
+      })
+    );
+    return true;
+  };
+
+export const codexThreadDeliverer =
+  (
+    remoteUrl: string,
+    threadId: string,
+    inject: typeof injectCodexMessage = injectCodexMessage
+  ): InboxDeliverer =>
+  async (event) =>
+    // Checked on every delivery, before anything is dialled.
+    await inject(
+      requireLoopbackCodexRemoteUrl(remoteUrl),
+      threadId,
+      formatInboxMessage(event)
+    );
+
+export const loopSeatDeliverer = (
+  runDir: string,
+  seat: "claude" | "codex"
+): InboxDeliverer => {
+  const port = new SupervisorMessageV2BridgeDeliveryPort(
+    new BridgeSupervisorMessageDeliveryPort({
+      directory: { resolve: () => ({ runDir, target: seat }) },
+    })
+  );
+  return async (event) =>
+    (await port.deliver(event.envelope)).status === "accepted";
+};
+
+/* ---------------------------------------------------------------------------
+ * The MCP server.
+ * ------------------------------------------------------------------------- */
+
+interface JsonRpcMessage {
+  id?: number | string | null;
+  jsonrpc?: string;
+  method?: string;
+  params?: unknown;
+}
+
+const CLAUDE_CHANNEL_CAPABILITY = "claude/channel";
+const MCP_METHOD_NOT_FOUND = -32_601;
+const MCP_INVALID_PARAMS = -32_602;
+const MAX_ACK_IDS = 100;
+
+export const CONNECT_TOOLS = [
+  {
+    annotations: { destructiveHint: false, readOnlyHint: false },
+    description:
+      "Acknowledge receipt of inbox messages (a delivery/read ACK on the recipient route, never completion) by their workflow ids.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        workflow_ids: {
+          items: { type: "string" },
+          maxItems: MAX_ACK_IDS,
+          minItems: 1,
+          type: "array",
+        },
+      },
+      required: ["workflow_ids"],
+      type: "object",
+    },
+    name: "inbox_ack",
+  },
+  {
+    annotations: { readOnlyHint: true },
+    description:
+      "This session's fixed identity, its lease fence and the last inbox sequence delivered.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {},
+      type: "object",
+    },
+    name: "inbox_status",
+  },
+] as const;
+
+const connectInstructions = (supervisorId: string): string =>
+  [
+    `Messages addressed to ${supervisorId} arrive as <channel source="loop-connect" ...> notifications from its A2A inbox stream.`,
+    "Each names a workflow id. After you have read a message, call inbox_ack with that workflow id: the ACK says you received it, not that the work is done.",
+    "Acting on a message is separate work; never treat the ACK as completion.",
+  ].join("\n");
+
+export interface ConnectServerState {
+  cursor(): number;
+  endpoint: A2AClientEndpoint;
+  fence: SupervisorEndpointLeaseFence;
+}
+
+/**
+ * Answers one JSON-RPC request. Returns the response, or undefined for a
+ * notification. Tool input never changes the identity or the server.
+ */
+export const handleConnectRequest = async (
+  request: JsonRpcMessage,
+  options: {
+    channel: boolean;
+    fetchImpl?: typeof fetch;
+    state: ConnectServerState;
+  }
+): Promise<Record<string, unknown> | undefined> => {
+  const { id, method } = request;
+  if (id === undefined || id === null) {
+    return undefined;
+  }
+  const result = (value: unknown) => ({ id, jsonrpc: "2.0", result: value });
+  const error = (code: number, message: string) => ({
+    error: { code, message },
+    id,
+    jsonrpc: "2.0",
+  });
+  const params =
+    typeof request.params === "object" && request.params !== null
+      ? (request.params as Record<string, unknown>)
+      : {};
+  switch (method) {
+    case "initialize":
+      return result({
+        capabilities: options.channel
+          ? { experimental: { [CLAUDE_CHANNEL_CAPABILITY]: {} }, tools: {} }
+          : { tools: {} },
+        ...(options.channel
+          ? {
+              instructions: connectInstructions(
+                options.state.endpoint.supervisorId
+              ),
+            }
+          : {}),
+        protocolVersion:
+          typeof params.protocolVersion === "string"
+            ? params.protocolVersion
+            : "2024-11-05",
+        serverInfo: { name: "loop-connect", version: LOOP_VERSION },
+      });
+    case "ping":
+      return result({});
+    case "prompts/list":
+      return result({ prompts: [] });
+    case "resources/list":
+      return result({ resources: [] });
+    case "resources/templates/list":
+      return result({ resourceTemplates: [] });
+    case "tools/list":
+      return result({ tools: CONNECT_TOOLS });
+    case "tools/call":
+      return await callConnectTool(params, options, result, error);
+    default:
+      return error(MCP_METHOD_NOT_FOUND, `Unknown method: ${String(method)}`);
+  }
+};
+
+const callConnectTool = async (
+  params: Record<string, unknown>,
+  options: { fetchImpl?: typeof fetch; state: ConnectServerState },
+  result: (value: unknown) => Record<string, unknown>,
+  error: (code: number, message: string) => Record<string, unknown>
+): Promise<Record<string, unknown>> => {
+  const args =
+    typeof params.arguments === "object" && params.arguments !== null
+      ? (params.arguments as Record<string, unknown>)
+      : {};
+  const text = (value: unknown) =>
+    result({
+      content: [{ text: JSON.stringify(value, null, 2), type: "text" }],
+    });
+  if (params.name === "inbox_status") {
+    return text({
+      cursor: options.state.cursor(),
+      epoch: options.state.fence.epoch,
+      holderRef: options.state.fence.holderRef,
+      supervisorId: options.state.endpoint.supervisorId,
+    });
+  }
+  if (params.name !== "inbox_ack") {
+    return error(MCP_INVALID_PARAMS, `Unknown tool: ${String(params.name)}`);
+  }
+  const ids = args.workflow_ids;
+  if (
+    !(
+      Array.isArray(ids) &&
+      ids.length >= 1 &&
+      ids.length <= MAX_ACK_IDS &&
+      ids.every((entry) => typeof entry === "string")
+    ) ||
+    Object.keys(args).some((key) => key !== "workflow_ids")
+  ) {
+    return error(MCP_INVALID_PARAMS, "workflow_ids must be 1-100 strings");
+  }
+  // The endpoint, and so the identity and the token, were fixed at start.
+  return text(
+    await acknowledgeA2AWorkflows(
+      options.state.endpoint,
+      [...new Set(ids as string[])],
+      options.fetchImpl
+    )
+  );
+};
+
+/** Newline-delimited JSON-RPC frames from a byte stream. */
+export async function* readJsonRpcLines(
+  input: AsyncIterable<Uint8Array | string>
+): AsyncGenerator<JsonRpcMessage> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of input) {
+    buffer +=
+      typeof chunk === "string"
+        ? chunk
+        : decoder.decode(chunk, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline !== -1) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) {
+        try {
+          const parsed: unknown = JSON.parse(line);
+          if (typeof parsed === "object" && parsed !== null) {
+            yield parsed as JsonRpcMessage;
+          }
+        } catch {
+          // Not JSON-RPC; ignored like any stray line.
+        }
+      }
+      newline = buffer.indexOf("\n");
+    }
+  }
+}
+
+export interface ConnectRuntime {
+  /** Overrides the delivery by kind (tests). */
+  deliverer?: InboxDeliverer;
+  deps?: ConnectDeps;
+  /** Overrides the configured server endpoint (tests). */
+  endpoint?: A2AClientEndpoint;
+  input?: AsyncIterable<Uint8Array | string>;
+  log?: (line: string) => void;
+  write?: JsonRpcWriter;
+}
+
+const stdoutWriter: JsonRpcWriter = (payload) =>
+  new Promise((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(payload)}\n`, (error) =>
+      error ? reject(error) : resolve()
+    );
+  });
+
+const delivererFor = (
+  target: ConnectTarget,
+  supervisorId: string,
+  write: JsonRpcWriter
+): InboxDeliverer => {
+  if (target.kind === "claude") {
+    return claudeChannelDeliverer(supervisorId, write);
+  }
+  if (target.kind === "codex") {
+    return codexThreadDeliverer(target.remoteUrl, target.threadId);
+  }
+  return loopSeatDeliverer(target.runDir, target.seat);
+};
+
+/** Claims this process's inbox-stream lease: a fresh holder, fixed fence. */
+const claimInboxStream = async (
+  endpoint: A2AClientEndpoint,
+  options: ConnectOptions,
+  deps: ConnectDeps,
+  log: (line: string) => void
+): Promise<SupervisorEndpointLeaseFence> => {
+  const holderRef = `connect:${randomUUID()}`;
+  const locator = connectLocator(options.target);
+  const receipt = await claimA2ASession(
+    endpoint,
+    {
+      holderRef,
+      locator,
+      sessionRef: `session:${locator.sessionId}`,
+      ...(options.takeover ? { takeover: true } : {}),
+      ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
+    },
+    deps.fetchImpl
+  );
+  log(
+    `[loop connect] ${endpoint.supervisorId} holds its inbox stream (epoch ${receipt.epoch}${receipt.tookOver ? ", took over" : ""})`
+  );
+  return { epoch: receipt.epoch, holderRef };
+};
+
+/** Serves MCP until stdin ends; `onInitialized` starts a channel's stream. */
+const serveConnectMcp = async (input: {
+  channel: boolean;
+  fetchImpl?: typeof fetch;
+  onInitialized(): void;
+  requests: AsyncIterable<Uint8Array | string>;
+  state: ConnectServerState;
+  write: JsonRpcWriter;
+}): Promise<void> => {
+  for await (const request of readJsonRpcLines(input.requests)) {
+    if (request.method === "notifications/initialized") {
+      input.onInitialized();
+    }
+    const response = await handleConnectRequest(request, {
+      channel: input.channel,
+      ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+      state: input.state,
+    });
+    if (response) {
+      await input.write(response);
+    }
+  }
+};
+
+/**
+ * Runs `loop connect` until stdin ends: claim, stream, serve MCP, release.
+ * Resolves with how the stream ended.
+ */
+export const runConnectCommand = async (
+  argv: readonly string[],
+  runtime: ConnectRuntime = {}
+): Promise<{ end: InboxStreamEnd; released: boolean }> => {
+  const deps = runtime.deps ?? {};
+  const log = runtime.log ?? ((line: string) => console.error(line));
+  const write = runtime.write ?? stdoutWriter;
+  const options = parseConnectArgs(argv, deps);
+  // Identity first: nothing from stdin is read before it is fixed.
+  const endpoint =
+    runtime.endpoint ??
+    resolveA2AClientEndpoint(options.supervisorId, {
+      ...deps,
+      allowMultiTokenEnv: options.allowMultiTokenEnv,
+    });
+  if (endpoint.supervisorId !== options.supervisorId) {
+    throw new Error("connect endpoint does not act as --as");
+  }
+  const fence = await claimInboxStream(endpoint, options, deps, log);
+  const abort = new AbortController();
+  const client = new InboxStreamClient({
+    deliver:
+      runtime.deliverer ??
+      delivererFor(options.target, endpoint.supervisorId, write),
+    endpoint,
+    fence,
+    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+    log,
+    signal: abort.signal,
+  });
+  let stream: Promise<InboxStreamEnd> | undefined;
+  const startStream = () => {
+    stream ??= client.run().then((end) => {
+      if (end.reason !== "aborted") {
+        log(`[loop connect] inbox stream ended: ${end.reason}`);
+      }
+      return end;
+    });
+  };
+  const channel = options.target.kind === "claude";
+  if (!channel) {
+    startStream();
+  }
+  try {
+    await serveConnectMcp({
+      channel,
+      ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+      // Channel notifications only once the client is ready for them.
+      onInitialized: startStream,
+      requests: runtime.input ?? process.stdin,
+      state: { cursor: () => client.cursor, endpoint, fence },
+      write,
+    });
+  } finally {
+    abort.abort();
+  }
+  const end = (await stream) ?? { reason: "aborted" as const };
+  try {
+    await releaseA2ASession(endpoint, fence, deps.fetchImpl);
+    return { end, released: true };
+  } catch {
+    // A fenced lease (taken over) is not this holder's to release.
+    log("[loop connect] lease release refused or unavailable");
+    return { end, released: false };
+  }
+};

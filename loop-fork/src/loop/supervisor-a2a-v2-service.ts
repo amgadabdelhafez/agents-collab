@@ -55,6 +55,13 @@ import {
   supervisorEndpointLocatorRefused,
 } from "./supervisor-endpoint-lease";
 import {
+  createSupervisorInboxStreamHandler,
+  PostgresSupervisorInboxStore,
+  type SupervisorInboxStore,
+  type SupervisorInboxStreamHub,
+  type SupervisorInboxStreamLimits,
+} from "./supervisor-inbox-stream";
+import {
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Projection,
@@ -160,6 +167,12 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   migrate(): Promise<void>;
 };
 
+/** ra1's inbox store as this service owns it. */
+type InboxResource = SupervisorInboxStore & {
+  close(): Promise<void>;
+  migrate?(): Promise<void>;
+};
+
 /** T1's lease store as this service owns it. */
 type LeaseResource = SupervisorEndpointLeaseStore & {
   close(): Promise<void>;
@@ -188,6 +201,12 @@ export interface SupervisorA2AV2ServiceDependencies {
    * resolver. Absent (until T1 is wired), the session routes answer 503
    * `v2-unavailable` and no recipient has a lease row.
    */
+  /**
+   * ra1: the durable inbox the inbox-stream kind delivers into and the
+   * stream route reads. Absent, the stream route answers 503 and an
+   * inbox-stream lease is never ready.
+   */
+  connectInbox?(databaseUrl: string): Promise<InboxResource>;
   connectLeases?(input: {
     databaseUrl: string;
     now: () => string;
@@ -225,6 +244,8 @@ export interface SupervisorA2AV2ServiceDependencies {
 
 export const defaultSupervisorA2AV2ServiceDependencies: SupervisorA2AV2ServiceDependencies =
   {
+    connectInbox: (databaseUrl) =>
+      PostgresSupervisorInboxStore.connect(databaseUrl),
     connectLedger: (databaseUrl, options) =>
       PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
     connectSessions: (input) => PostgresSupervisorSessionV2Store.connect(input),
@@ -468,6 +489,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
   readonly #sessions: SessionResource;
   readonly #leases: LeaseResource | undefined;
+  readonly #inbox: { close(): Promise<void> } | undefined;
   readonly #reachable:
     | ((
         scope: TrustedSupervisorMessageV2Scope,
@@ -480,6 +502,8 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   constructor(input: {
     allSupervisorsRoute?: SupervisorA2AV2Service["allSupervisorsRoute"];
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
+    /** ra1: the inbox (detaches the hub, ending its streams, then closes). */
+    inbox?: { close(): Promise<void> };
     leases?: LeaseResource;
     /** r9: the recipient route's reachability rule, for publishResult. */
     reachable?(
@@ -509,6 +533,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.allSupervisorsRoute = input.allSupervisorsRoute;
     this.assignmentRoute = input.assignmentRoute;
     this.#leases = input.leases;
+    this.#inbox = input.inbox;
     this.#reachable = input.reachable;
     this.#workflows = input.workflows;
     this.#now = input.now;
@@ -728,6 +753,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     for (const resource of [
       this.host,
       ...(this.#receipts ? [this.#receipts] : []),
+      ...(this.#inbox ? [this.#inbox] : []),
       ...(this.#leases ? [this.#leases] : []),
       this.#sessions,
       this.#ledger,
@@ -1026,6 +1052,11 @@ export interface A2AV2SessionRoutesOptions {
   /** Undefined when no lease store is available: every request is 503. */
   leases(): A2AV2SessionLeaseStore | undefined;
   log?: (line: string) => void;
+  /**
+   * ra1: a claim or release changed this recipient's lease; its open inbox
+   * streams re-check their fence now (a takeover ends the old holder's).
+   */
+  onLeaseChange?(recipient: string): void;
   principalForRecipient(recipient: string): string | undefined;
   /** The server's own resolver; a claim's locator is resolved before the store. */
   resolveLocator: SupervisorEndpointLocatorResolver;
@@ -1246,25 +1277,30 @@ export const createA2AV2SessionRoutesHandler = (
       );
       return routeError("locator-refused");
     };
+    let response: Response;
     try {
       if (operation === "claim") {
-        return await claimSession(
+        response = await claimSession(
           options,
           call as A2AV2SessionCall<"claim">,
           refused
         );
-      }
-      if (operation === "renew") {
+      } else if (operation === "renew") {
         return await renewSession(
           options,
           call as A2AV2SessionCall<"renew">,
           refused
         );
+      } else {
+        response = await releaseSession(call as A2AV2SessionCall<"release">);
       }
-      return await releaseSession(call as A2AV2SessionCall<"release">);
     } catch (error) {
       return sessionStoreFailure(error);
     }
+    if (response.ok) {
+      options.onLeaseChange?.(call.recipient);
+    }
+    return response;
   };
 };
 
@@ -1490,6 +1526,14 @@ export interface SupervisorA2AV2AllSupervisorsOptions {
     sessions: Pick<SessionResource, "current">;
   }): SupervisorEndpointDeliveryPort;
   hasMailbox(recipient: string): boolean;
+  /**
+   * ra1: the hub shared with the inbox-stream delivery adapter. With it (and
+   * `dependencies.connectInbox`) the service opens the inbox and serves
+   * GET {routePath}/sessions/<slug>/inbox.
+   */
+  inboxStream?: SupervisorInboxStreamHub;
+  /** ra1: test-only stream limits. */
+  inboxStreamLimits?: Partial<SupervisorInboxStreamLimits>;
   /** r8's manifest-bound seats; see SupervisorMessageV2RecipientEndpoints. */
   legacySeats: readonly string[];
   log?: (line: string) => void;
@@ -1700,15 +1744,32 @@ const createAllSupervisorsRoute = (input: {
       return sdk(request);
     });
   }
+  const hub = all.inboxStream;
   const sessions = createA2AV2SessionRoutesHandler({
     authenticator: all.authenticator,
     leases: input.leases,
     ...(input.log ? { log: input.log } : {}),
+    ...(hub
+      ? {
+          onLeaseChange: (recipient: string) =>
+            hub.wake(input.tenant, recipient),
+        }
+      : {}),
     principalForRecipient: all.principalForRecipient,
     resolveLocator: all.resolveLocator,
     sessionTtlMs: all.sessionTtlMs,
     tenant: input.tenant,
   });
+  const inbox = hub
+    ? createSupervisorInboxStreamHandler({
+        authenticator: all.authenticator,
+        hub,
+        leases: input.leases,
+        ...(all.inboxStreamLimits ? { limits: all.inboxStreamLimits } : {}),
+        principalForRecipient: all.principalForRecipient,
+        tenant: input.tenant,
+      })
+    : undefined;
   const status = createA2AV2MessageStatusHandler({
     authenticator: all.authenticator,
     status: async (scope, workflowId) => {
@@ -1741,6 +1802,11 @@ const createAllSupervisorsRoute = (input: {
       if (match?.route === "message-status") {
         return status(request, match.messageId);
       }
+      if (match?.route === "session-inbox") {
+        return inbox
+          ? inbox(request, match.supervisorId)
+          : Promise.resolve(routeError("v2-unavailable"));
+      }
       const seat = match ? ingress.get(match.supervisorId) : undefined;
       return match && seat
         ? gate(request, match.supervisorId, seat)
@@ -1767,6 +1833,7 @@ const primaryRoutes = (
  */
 const openAllSupervisorsRouting = async (input: {
   dependencies: SupervisorA2AV2ServiceDependencies;
+  onInbox(inbox: InboxResource): void;
   onLeases(leases: LeaseResource): void;
   onStage(stage: string): void;
   options: SupervisorA2AV2ServiceOptions;
@@ -1796,6 +1863,17 @@ const openAllSupervisorsRouting = async (input: {
     });
     input.onLeases(leases);
     await leases.migrate?.();
+  }
+  // ra1: the inbox lives in the ledger's database, after the ledger's own
+  // migration (its reads join the ledger's start intents).
+  if (all.inboxStream && input.dependencies.connectInbox) {
+    input.onStage("inbox-store");
+    const inbox = await input.dependencies.connectInbox(
+      input.options.databaseUrl
+    );
+    input.onInbox(inbox);
+    await inbox.migrate?.();
+    all.inboxStream.attach(inbox);
   }
   input.onStage("endpoint-delivery");
   const endpoint = all.endpointDelivery?.({
@@ -1906,6 +1984,7 @@ export const createSupervisorA2AV2Service = async (
   let ledger: LedgerResource | undefined;
   let sessions: SessionResource | undefined;
   let leases: LeaseResource | undefined;
+  let inbox: InboxResource | undefined;
   let ingress: SupervisorA2AV2Ingress | undefined;
   let host: TemporalSupervisorRuntimeHost | undefined;
   let receipts: PostgresSupervisorMessageV2GovernanceReceiptStore | undefined;
@@ -1947,6 +2026,9 @@ export const createSupervisorA2AV2Service = async (
     await sessions.migrate();
     const opened = await openAllSupervisorsRouting({
       dependencies,
+      onInbox: (store) => {
+        inbox = store;
+      },
       onLeases: (store) => {
         leases = store;
       },
@@ -2132,9 +2214,21 @@ export const createSupervisorA2AV2Service = async (
         }),
       };
     }
+    const inboxHub = options.allSupervisors?.inboxStream;
+    const openedInbox = inbox;
     ownedService = new OwnedSupervisorA2AV2Service({
       allSupervisorsRoute: r9.route,
       assignmentRoute,
+      ...(openedInbox
+        ? {
+            inbox: {
+              close: () => {
+                inboxHub?.detach();
+                return openedInbox.close();
+              },
+            },
+          }
+        : {}),
       leases,
       reachable: r9.reachable,
       workflows,
@@ -2164,6 +2258,8 @@ export const createSupervisorA2AV2Service = async (
     // reverse dependency order.
     await closeQuietly(host ?? ingress);
     await closeQuietly(receipts);
+    options.allSupervisors?.inboxStream?.detach();
+    await closeQuietly(inbox);
     await closeQuietly(leases);
     await closeQuietly(sessions);
     await closeQuietly(ledger);

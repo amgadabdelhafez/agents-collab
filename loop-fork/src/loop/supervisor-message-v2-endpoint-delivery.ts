@@ -24,6 +24,10 @@ import {
   supervisorEndpointRef,
 } from "./supervisor-endpoint-lease";
 import {
+  SUPERVISOR_INBOX_FULL_REASON,
+  type SupervisorInboxStreamHub,
+} from "./supervisor-inbox-stream";
+import {
   MailboxSupervisorMessageDeliveryPort,
   type SupervisorMailboxDirectory,
 } from "./supervisor-mailbox-delivery";
@@ -85,9 +89,10 @@ const READINESS_UNAVAILABLE_REASON =
   new SupervisorMessageV2ReadinessUnavailableError().message;
 
 /** Bridge outcomes whose reasons are already fixed and detail-free. */
-const OPAQUE_BRIDGE_REASONS = new Set([
+const OPAQUE_BRIDGE_REASONS = new Set<string>([
   "bridge logical delivery is in progress",
   "bridge queued without provider acceptance",
+  SUPERVISOR_INBOX_FULL_REASON,
 ]);
 
 const ENDPOINT_REFUSED_REASON = "recipient endpoint refused the message";
@@ -563,6 +568,11 @@ export interface SupervisorEndpointAdapterDeps {
   /** probeCodexThread: read or resume, never a turn; no redirect is followed. */
   codexProbe?: (remoteUrl: string, threadId: string) => Promise<boolean>;
   /**
+   * ra1: the server's inbox hub (durable inbox, presence, wakeups). Absent,
+   * an inbox-stream lease is never ready and nothing is appended.
+   */
+  inboxStream?: SupervisorInboxStreamHub;
+  /**
    * Route readiness for a Loop run seat. Defaults to the bridge port's own
    * (a live pane or Codex remote, the provider probe, a bridge worker).
    */
@@ -762,11 +772,55 @@ export const createCodexThreadEndpointAdapter = (
   };
 };
 
+/**
+ * ra1: a session that holds its own outbound stream (`loop connect`). Delivery
+ * is durable acceptance into the recipient's inbox, which wakes its stream;
+ * the session reads it there, and acknowledges on the recipient route.
+ * Acceptance is not the ACK. The probe (no turn) is the holder's presence:
+ * a stream open for this lease's fence now, or within the presence grace, so
+ * the lease sweep renews a connected holder and lets an absent one lapse.
+ */
+export const createInboxStreamEndpointAdapter = (
+  deps: Pick<SupervisorEndpointAdapterDeps, "inboxStream"> = {}
+): SupervisorEndpointKindAdapter<"inbox-stream"> => {
+  const hub = deps.inboxStream;
+  return {
+    async deliver({ envelope, lease }) {
+      if (!hub || envelope.target !== lease.recipient) {
+        return notReady;
+      }
+      const result = await hub.append(envelope);
+      if (!result) {
+        return notReady;
+      }
+      if (result.status === "full") {
+        return {
+          reason: SUPERVISOR_INBOX_FULL_REASON,
+          status: "transient-failure",
+        };
+      }
+      return { status: "accepted" };
+    },
+    kind: "inbox-stream",
+    probe({ descriptor, endpoint, lease }) {
+      return Promise.resolve(
+        hub?.store() !== undefined &&
+          descriptor.sessionRef === `session:${endpoint.sessionId}` &&
+          hub.presence.isPresent(lease.tenantId, lease.recipient, {
+            epoch: lease.epoch,
+            holderRef: lease.holderRef,
+          })
+      );
+    },
+  };
+};
+
 export const createSupervisorEndpointKindAdapters = (
   deps: SupervisorEndpointAdapterDeps = {}
 ): SupervisorEndpointKindAdapters => ({
   "claude-channel": createClaudeChannelEndpointAdapter(deps),
   "codex-thread": createCodexThreadEndpointAdapter(deps),
+  "inbox-stream": createInboxStreamEndpointAdapter(deps),
   "loop-run": createLoopRunEndpointAdapter(deps),
 });
 
