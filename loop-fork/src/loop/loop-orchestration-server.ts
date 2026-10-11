@@ -36,6 +36,13 @@ import { HeadlessClaudeWakePort } from "./headless-claude-wake-port";
 import { spawnHeadless } from "./headless-runner";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
 import {
+  createHumanRoutes,
+  type HumanAuthConfig,
+  type HumanRoutes,
+  humanRouteSubpath,
+  parseHumanAuth,
+} from "./orchestration-human-auth";
+import {
   assertListenPolicy,
   parseServerOrigin,
   serverOriginFor,
@@ -293,6 +300,12 @@ interface ServerConfig {
   deadlines?: DeadlineConfig;
   grants: GrantConfig[];
   hostname: string;
+  /**
+   * RA2: Authentik JWT verification for the human (owner and operator)
+   * routes under `humanAuth.routePath`; see orchestration-human-auth.ts.
+   * Absent: there are no human routes.
+   */
+  humanAuth?: HumanAuthConfig;
   identity: string;
   namespace: string;
   /**
@@ -432,6 +445,14 @@ export interface LoopOrchestrationFetchHandlerOptions {
   authenticator: SupervisorControlSurfaceAuthenticator;
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
   /**
+   * RA2: the human routes, when the config has a `humanAuth` section.
+   * Everything under `routePath` is served by the V1 surface (with the
+   * prefix stripped) as the identity the Authentik JWT maps to, and never
+   * falls through to a bearer-authenticated route: a request without a valid
+   * JWT is refused there whatever else it carries.
+   */
+  humanRoutes?: HumanRoutes;
+  /**
    * The configured A2A V2 seats that are not enrolled now (a peer degraded
    * at start, or any seat whose enrollment failed since). /healthz reports
    * only how many, as `notEnrolledCount`; the seat ids are on the
@@ -521,6 +542,32 @@ const allSupervisorsResponse = (
 };
 
 /**
+ * RA2: the human route responder: a request under the configured human
+ * routePath is answered by a V1 surface of its own, authenticated only by
+ * the Authentik JWT, with the prefix stripped; any other request is
+ * undefined (not a human route). Without human routes, always undefined.
+ */
+const humanRouteResponder = (
+  options: Pick<LoopOrchestrationFetchHandlerOptions, "host" | "humanRoutes">,
+  v1Options: { resultGraphRoutePath: string | undefined }
+): ((request: Request, url: URL) => Promise<Response> | undefined) => {
+  const human = options.humanRoutes;
+  if (!human) {
+    return () => undefined;
+  }
+  const handler = options.host.httpHandler(human.authenticator, v1Options);
+  return (request, url) => {
+    const subpath = humanRouteSubpath(human.routePath, url.pathname);
+    if (subpath === undefined) {
+      return undefined;
+    }
+    const target = new URL(url);
+    target.pathname = subpath;
+    return handler(new Request(target, request));
+  };
+};
+
+/**
  * The one HTTP mount point for the existing V1 control surface and an
  * explicitly supplied V2 A2A service. It does not construct either host and
  * therefore cannot create a competing worker, listener, or recovery owner.
@@ -530,17 +577,23 @@ export const createLoopOrchestrationFetchHandler = (
 ): ((request: Request) => Promise<Response>) => {
   // The V1 surface refuses result graph ids; its refusal names the V2 route
   // that starts one instead, when this server mounts it.
-  const v1Handler = options.host.httpHandler(options.authenticator, {
+  const v1Options = {
     resultGraphRoutePath: options.a2aV2Service?.resultGraphRoute?.pathname,
-  });
+  };
+  const v1Handler = options.host.httpHandler(options.authenticator, v1Options);
+  const humanResponse = humanRouteResponder(options, v1Options);
+  // A human route is answered before anything else can claim its path; the
+  // token routes come next.
+  const prefixedResponse = (request: Request, url: URL) =>
+    humanResponse(request, url) ?? options.tokenRoutes?.(request, url.pathname);
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
       return orchestrationHealth(options);
     }
-    const tokenResponse = await options.tokenRoutes?.(request, url.pathname);
-    if (tokenResponse) {
-      return tokenResponse;
+    const prefixed = await prefixedResponse(request, url);
+    if (prefixed) {
+      return prefixed;
     }
     const r9 = allSupervisorsResponse(options, request, url.pathname);
     if (r9) {
@@ -1088,7 +1141,14 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
   if (!isRecord(value)) {
     throw new Error("orchestration config must be an object");
   }
-  const optional = new Set(["a2aV2", "deadlines", "origin", "tokens", "wake"]);
+  const optional = new Set([
+    "a2aV2",
+    "deadlines",
+    "humanAuth",
+    "origin",
+    "tokens",
+    "wake",
+  ]);
   const topLevel = Object.keys(value).filter((key) => !optional.has(key));
   exactKeys(
     Object.fromEntries(topLevel.map((key) => [key, value[key]])),
@@ -1173,6 +1233,11 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
   }
   const wakeConfig = parseWake(value.wake);
   const a2aV2 = parseA2AV2(value.a2aV2, supervisors);
+  const humanAuth = parseHumanAuth(
+    value.humanAuth,
+    supervisors,
+    a2aV2 ? [a2aV2.routePath] : []
+  );
   return {
     address: required(value.address, TEMPORAL_ADDRESS_RE, "address"),
     ...(a2aV2 ? { a2aV2 } : {}),
@@ -1180,6 +1245,7 @@ export const parseLoopOrchestrationConfig = (value: unknown): ServerConfig => {
     ...(deadlineConfig ? { deadlines: deadlineConfig } : {}),
     grants,
     ...parseExposure(value),
+    ...(humanAuth ? { humanAuth } : {}),
     identity: required(value.identity, NAME_RE, "identity"),
     namespace: required(value.namespace, NAME_RE, "namespace"),
     port: Number(port),
@@ -2997,6 +3063,14 @@ const configuredTokenSurface = (
   return tokens ? { tokenRoutes: createTokenRoutes(tokens), tokens } : {};
 };
 
+/** RA2: the human routes a config's `humanAuth` section names, if any. */
+const configuredHumanRoutes = (
+  config: Pick<ServerConfig, "humanAuth" | "supervisors">
+): Pick<LoopOrchestrationFetchHandlerOptions, "humanRoutes"> =>
+  config.humanAuth
+    ? { humanRoutes: createHumanRoutes(config.humanAuth, config.supervisors) }
+    : {};
+
 /** The tick principal of record for a pair: a configured grant's, else RA1's. */
 const deadlineTickPrincipal =
   (config: ServerConfig, tickPrincipals: ReadonlyMap<string, string>) =>
@@ -3249,6 +3323,7 @@ export const runLoopOrchestrationServer = async (
       }),
       authenticator: authenticator(config, env, tokens),
       host,
+      ...configuredHumanRoutes(config),
       notEnrolledSeats: () => notEnrolled,
       reconciliationHealthy: () => reconciliationHealthy,
       tokenRoutes: tokenSurface.tokenRoutes,

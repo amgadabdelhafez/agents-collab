@@ -431,6 +431,60 @@ Tests: `tests/loop/orchestration-origin-policy.test.ts`,
 `a2a-session-client.test.ts`, `recipient-api-client.test.ts` and
 `a2a-v2-init.test.ts`.
 
+### RA2: Authentik JWT on human routes (claude/ra2-authentik-jwt)
+
+Optional. Without a `humanAuth` section there are no human routes and
+nothing changes. With one, everything under `humanAuth.routePath` is a human
+(owner or operator) route: the server mounts the V1 control surface there
+(the prefix stripped, so `/human/api/v1/supervisor-threads` serves
+`/api/v1/supervisor-threads`) and the caller is whoever the Authentik JWT
+says. Source: `src/loop/orchestration-human-auth.ts`.
+
+- **Config** (`humanAuth`):
+  - `jwksUrl`: the provider's JWKS, for example
+    `https://auth.home.lab/application/o/loop/jwks/`. https, or http only on
+    `127.0.0.1`/`[::1]`; no credentials, query or fragment.
+  - `issuer`: compared verbatim with `iss` (Authentik:
+    `https://auth.home.lab/application/o/loop/`, trailing slash included).
+  - `audience`: must be `aud` or in it (Authentik: the provider's client id).
+  - `groups`: ordered `[{"group": "...", "principal": "..."}]`. Each
+    principal must be exactly one configured address whose `role` is
+    `owner` or `operator`. The first mapping whose group the JWT's `groups`
+    claim carries decides who the caller is (case-sensitive), so list the
+    owner group first if one person is in both.
+  - `routePath`: for example `"/human"`; may not overlap `/api`, `/healthz`
+    or `a2aV2.routePath`.
+  - `header` (optional): default `x-authentik-jwt`, the header Authentik's
+    forward auth sets (add it to the Traefik middleware's
+    `authResponseHeaders`). Never `authorization`, `cookie` or
+    `proxy-authorization`.
+  - `jwksCacheTtlMs` (optional): 60000..86400000, default 600000.
+- **Verification.** Signature against the JWKS (RS256/384/512 or
+  ES256/384/512 only; `none`, HMAC and `crit` refused; a JWKS entry with
+  private material, a `use` other than `sig` or an RSA key under 2048 bits
+  is ignored; a token without a `kid` needs exactly one usable key), `exp`
+  required, `nbf` and `iat` honoured, 60 s skew, then `iss` and `aud`.
+- **JWKS cache.** Fetched with a 5 s timeout, a 64 KiB and 32-key bound and
+  no redirects; concurrent requests share one fetch. Refreshed when past
+  its TTL, or for an unknown `kid` (a rotation), but never more than once
+  per 30 s whatever the outcome. Past its TTL a cache that cannot be
+  refreshed verifies nothing: human routes fail closed while Authentik's
+  JWKS is unreachable.
+- **No bypass.** On a human route nothing but the verified JWT establishes
+  an identity: a bearer session or static token, unsigned
+  `X-authentik-username`/`-groups` headers and the source address (LAN,
+  loopback, `X-Forwarded-For`) are ignored, and a refused request never
+  falls through to a bearer route. A Traefik router that reaches the server
+  without the Authentik middleware therefore gets 401 there.
+- **API routes are unchanged.** `/api/v1/...`, the token routes and the V2
+  routes keep using bearer session (and legacy static) tokens; the JWT
+  header means nothing on them.
+- Not mounted under `routePath` in this change: the token routes (minting
+  codes as the owner) and the V2 routes.
+
+Tests: `tests/loop/orchestration-human-auth.test.ts` (a local JWKS server
+and generated RSA and EC keys; 27 mutations of the guards, each killed).
+
 ### fix8 critic fixes (2026-10-11)
 
 1. V2 start problems degrade (c3c5b106): the serve behaviour and reasons
