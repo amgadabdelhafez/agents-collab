@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { supervisorIdFromMailboxFileName } from "./supervisor-id";
 import {
   type MailboxStatus,
   mailboxStatus,
@@ -42,19 +43,14 @@ export interface MailboxSweepResult {
 }
 
 /**
- * mailboxPathFor replaces ":" with "_", and every valid id starts with
- * "supervisor:", so restoring the FIRST underscore is the only candidate. It is
- * still checked by re-deriving the path: a name that does not round-trip is
- * reported with a null recipient rather than a guess.
+ * The recipient a mailbox file name names, decoded by the one encoding
+ * (supervisor-id.ts) and still checked by re-deriving the path: a name that
+ * does not round-trip is reported with a null recipient rather than a guess.
  */
 const recipientFromFile = (root: string, file: string): null | string => {
-  const stem = file.replace(MAILBOX_FILE_RE, "");
-  const underscore = stem.indexOf("_");
-  if (underscore < 0) {
-    return null;
-  }
-  const candidate = `${stem.slice(0, underscore)}:${stem.slice(underscore + 1)}`;
-  return mailboxPathFor(root, candidate) === join(root, file)
+  const candidate = supervisorIdFromMailboxFileName(file);
+  return candidate !== undefined &&
+    mailboxPathFor(root, candidate) === join(root, file)
     ? candidate
     : null;
 };

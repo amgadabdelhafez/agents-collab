@@ -7,6 +7,7 @@ import type {
 } from "./bridge-supervisor-message-delivery";
 import { isActiveRunState, readRunManifest } from "./run-state";
 import type { ResolvedSupervisorEndpointOf } from "./supervisor-endpoint-lease";
+import { SUPERVISOR_ID_RE } from "./supervisor-id";
 
 export interface LoopSupervisorBinding {
   // Absent for a recipient that is not a Loop run. Such a recipient has no pane
@@ -17,8 +18,6 @@ export interface LoopSupervisorBinding {
   seat?: "claude" | "codex";
   supervisorId: string;
 }
-
-const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 
 const exactManifest = (manifestPath: string): string => {
   const stat = lstatSync(manifestPath);

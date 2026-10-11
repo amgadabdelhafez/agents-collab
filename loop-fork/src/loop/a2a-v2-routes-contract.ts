@@ -12,6 +12,7 @@ import {
   type SupervisorEndpointLocator,
   supervisorEndpointSlug,
 } from "./supervisor-endpoint-lease";
+import { supervisorIdFromSlug } from "./supervisor-id";
 import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
 
 /**
@@ -26,14 +27,17 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  * | POST   | {routePath}/sessions/release           | bearer, identity == body id  |
  * | POST   | {routePath}/supervisors/<slug>         | bearer, any configured id    |
  * | GET    | {routePath}/messages/<messageId>       | bearer, sender principal     |
+ * | GET    | {routePath}/sessions/<slug>/inbox      | bearer, identity == slug,    |
+ * |        |   (ra1, text/event-stream)             | live inbox-stream lease fence|
  *
  * - <slug> is the recipient id without its `supervisor:` prefix, so the
- *   segment is never read as a URL scheme. The ingress is the A2A JSON-RPC
- *   SDK transport, exactly as the existing primary and peer ingress: the
- *   message's `harness.dev/from` metadata must equal the authenticated
- *   supervisorId, the recipient is the path's supervisor, and grants still
- *   decide. No agent-card route is added: clients build the card locally with
- *   agentCardFor({supervisorId, url: <ingress URL>}) and
+ *   segment is never read as a URL scheme; a role id's '/' is written '~'
+ *   (RA2, supervisor-id.ts), so the slug stays one segment. The ingress is
+ *   the A2A JSON-RPC SDK transport, exactly as the existing primary and peer
+ *   ingress: the message's `harness.dev/from` metadata must equal the
+ *   authenticated supervisorId, the recipient is the path's supervisor, and
+ *   grants still decide. No agent-card route is added: clients build the
+ *   card locally with agentCardFor({supervisorId, url: <ingress URL>}) and
  *   ClientFactory.createFromAgentCard. Streaming and push stay false.
  * - messages/<messageId> answers only within {route tenant, authenticated
  *   principal}; any other message is 404, indistinguishable from absent.
@@ -52,6 +56,14 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  *   are unchanged. /healthz stays counts only.
  * - Acknowledgement stays on the existing recipient route (`loop a2a ack`,
  *   `loop mailbox ack` for V2 envelopes); nothing here acknowledges.
+ * - ra1 inbox stream: Server-Sent Events of the durable inbox of the path's
+ *   supervisor (supervisor-inbox-stream.ts). The bearer identity must be the
+ *   path's supervisor and the request must present the fence of that
+ *   supervisor's unreleased `inbox-stream` lease in
+ *   `A2A_V2_LEASE_EPOCH_HEADER` / `A2A_V2_LEASE_HOLDER_HEADER` (one holder at
+ *   a time; a takeover fences the old stream). `Last-Event-ID` is the ledger
+ *   sequence of the last event the client processed; the stream resumes after
+ *   it. Reading the stream is not the ACK: the ACK is the recipient route.
  */
 
 export const A2A_V2_SESSION_OPERATIONS = ["claim", "renew", "release"] as const;
@@ -67,10 +79,13 @@ export const A2A_V2_EXISTING_SUBPATHS = [
 export const A2A_V2_SESSIONS_SUBPATH = "/sessions/" as const;
 export const A2A_V2_SUPERVISORS_SUBPATH = "/supervisors/" as const;
 export const A2A_V2_MESSAGES_SUBPATH = "/messages/" as const;
+/** ra1: `{routePath}/sessions/<slug>/inbox`. */
+export const A2A_V2_SESSION_INBOX_SUFFIX = "/inbox" as const;
+/** ra1: the inbox-stream lease fence a stream request presents. */
+export const A2A_V2_LEASE_EPOCH_HEADER = "x-loop-lease-epoch" as const;
+export const A2A_V2_LEASE_HOLDER_HEADER = "x-loop-lease-holder" as const;
 
-const SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const MESSAGE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
-const SUPERVISOR_PREFIX = "supervisor:";
 
 export class A2AV2RouteContractError extends Error {
   constructor(message: string) {
@@ -82,13 +97,20 @@ export class A2AV2RouteContractError extends Error {
 export const a2aV2SupervisorSlug = (supervisorId: string): string =>
   supervisorEndpointSlug(supervisorId);
 
+/** RA2: only a recipient's canonical slug (supervisor-id.ts) names it. */
 export const a2aV2SupervisorIdFromSlug = (slug: string): string | undefined =>
-  SLUG_RE.test(slug) ? `${SUPERVISOR_PREFIX}${slug}` : undefined;
+  supervisorIdFromSlug(slug);
 
 export const a2aV2SessionRoutePath = (
   routePath: string,
   operation: A2AV2SessionOperation
 ): string => `${routePath}${A2A_V2_SESSIONS_SUBPATH}${operation}`;
+
+export const a2aV2SessionInboxPath = (
+  routePath: string,
+  supervisorId: string
+): string =>
+  `${routePath}${A2A_V2_SESSIONS_SUBPATH}${a2aV2SupervisorSlug(supervisorId)}${A2A_V2_SESSION_INBOX_SUFFIX}`;
 
 export const a2aV2SupervisorIngressPath = (
   routePath: string,
@@ -108,6 +130,7 @@ export const a2aV2MessageStatusPath = (
 
 export type A2AV2RouteMatch =
   | { method: "GET"; messageId: string; route: "message-status" }
+  | { method: "GET"; route: "session-inbox"; supervisorId: string }
   | { method: "POST"; operation: A2AV2SessionOperation; route: "session" }
   | { method: "POST"; route: "supervisor-ingress"; supervisorId: string };
 
@@ -130,12 +153,22 @@ export const matchA2AV2Route = (
   };
   const operation = tail(A2A_V2_SESSIONS_SUBPATH);
   if (operation !== undefined) {
-    return (A2A_V2_SESSION_OPERATIONS as readonly string[]).includes(operation)
-      ? {
-          method: "POST",
-          operation: operation as A2AV2SessionOperation,
-          route: "session",
-        }
+    if ((A2A_V2_SESSION_OPERATIONS as readonly string[]).includes(operation)) {
+      return {
+        method: "POST",
+        operation: operation as A2AV2SessionOperation,
+        route: "session",
+      };
+    }
+    // ra1: exactly `<slug>/inbox`; the slug's own pattern refuses `/`.
+    if (!operation.endsWith(A2A_V2_SESSION_INBOX_SUFFIX)) {
+      return undefined;
+    }
+    const supervisorId = a2aV2SupervisorIdFromSlug(
+      operation.slice(0, -A2A_V2_SESSION_INBOX_SUFFIX.length)
+    );
+    return supervisorId
+      ? { method: "GET", route: "session-inbox", supervisorId }
       : undefined;
   }
   const slug = tail(A2A_V2_SUPERVISORS_SUBPATH);
@@ -265,6 +298,11 @@ export const A2A_V2_ROUTE_ERROR_STATUS = {
   "locator-refused": 403,
   "method-not-allowed": 405,
   "not-found": 404,
+  /**
+   * RA2: an unprompted message to the owner. The body adds `message` and
+   * `notifyVia` (the attention-os interaction path).
+   */
+  "owner-reply-only": 403,
   "request-invalid": 400,
   unauthenticated: 401,
   /** V2 disabled by a fault, or the lease/ledger store cannot answer. */

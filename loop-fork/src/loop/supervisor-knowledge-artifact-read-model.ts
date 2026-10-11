@@ -1,3 +1,4 @@
+import { SUPERVISOR_ID_RE } from "./supervisor-id";
 import type {
   SupervisorMessageAction,
   SupervisorMessageBoardItem,
@@ -99,7 +100,6 @@ const CANONICAL_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const PHASE_RE =
   /^(acknowledged|canceled|claimed|dead-lettered|escalated|retry-scheduled|routed)$/;
 const STABLE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
-const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const WORKFLOW_ID_RE = /^supervisor-message:[a-f0-9]{64}$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

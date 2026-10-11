@@ -1,3 +1,4 @@
+import { SUPERVISOR_ID_RE as SUPERVISOR_RE } from "./supervisor-id";
 // fix8: `loop orchestration a2a-v2 init <config>` turns the A2A V2 plane on for
 // an existing orchestration config.
 //
@@ -60,6 +61,7 @@ import {
   readA2AV2EnvFile,
 } from "./a2a-v2-env";
 import { parseLoopOrchestrationConfig } from "./loop-orchestration-server";
+import { isLoopbackPublishedPort } from "./orchestration-origin-policy";
 import { readRunManifest } from "./run-state";
 
 export const A2A_V2_LEDGER_CONTAINER = "loop-a2a-ledger";
@@ -78,7 +80,6 @@ const LEDGER_DB = "loop_a2a";
 const MOUNT_UNSAFE_RE = /[,"\n]/;
 const DOCKER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/;
 const TOKEN_ENV_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
-const SUPERVISOR_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const PRINCIPAL_RE = /^principal:[a-z0-9][a-z0-9._:-]{0,255}$/;
 const TENANT_INVALID_RE = /[^a-z0-9._-]+/g;
 const EDGE_DASH_RE = /^[-._]+|[-._]+$/g;
@@ -389,12 +390,15 @@ const publishedPort = async (
       `ledger container ${name} does not publish 5432 on 127.0.0.1 only`
     );
   }
-  // Refuse a container also published beyond loopback.
+  // RA1's origin policy: the ledger port is plaintext, so every binding it
+  // is published on must be a loopback IP literal. Refuse a container also
+  // published beyond loopback.
   if (
     result.stdout
       .split("\n")
+      .map((line) => line.trim())
       .filter(Boolean)
-      .some((line) => !line.startsWith("127.0.0.1:"))
+      .some((line) => !isLoopbackPublishedPort(line))
   ) {
     throw new Error(
       `ledger container ${name} is published beyond 127.0.0.1; refusing to use it`

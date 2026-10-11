@@ -23,6 +23,7 @@ import {
 } from "../../src/loop/supervisor-a2a-v2-service";
 import {
   deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
+  deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
@@ -1170,6 +1171,47 @@ test("standard V2 factory authenticates before task mutation and preserves scope
       phase: "claimed",
       workResultCompleted: false,
     });
+    // ra2: the same route in-process, as the mailbox consumption reconciler
+    // calls it: the composed assignment, governance and Temporal decide, and
+    // a delivery key must be one this workflow issued.
+    const lifecycle = service.recipientRoute.lifecycle;
+    if (!lifecycle) {
+      throw new Error("Missing composed in-process recipient lifecycle");
+    }
+    const seat = {
+      principal: "principal:recipient-seat",
+      supervisorId: RECIPIENT,
+    };
+    const replayedClaim = {
+      operation: "claim" as const,
+      requestId: "service-proof-http-claim",
+      workflowId,
+    };
+    await expect(
+      lifecycle(seat, {
+        ...replayedClaim,
+        deliveryKey: deriveSupervisorMessageV2DeliveryId(SCOPE, workflowId, 1),
+      })
+    ).resolves.toMatchObject({
+      kind: "receipt",
+      projection: { phase: "claimed" },
+    });
+    await expect(
+      lifecycle(seat, {
+        ...replayedClaim,
+        deliveryKey: deriveSupervisorMessageV2DeliveryId(
+          { ...SCOPE, principal: "principal:forged" },
+          workflowId,
+          1
+        ),
+      })
+    ).resolves.toEqual({ code: "assignment-denied", kind: "refused" });
+    await expect(
+      lifecycle(
+        { principal: "principal:not-the-seat", supervisorId: RECIPIENT },
+        replayedClaim
+      )
+    ).resolves.toEqual({ code: "assignment-denied", kind: "refused" });
     const assignmentLedger =
       await PostgresSupervisorMessageV2DeliveryLedger.connect(
         postgres.databaseUrl(),

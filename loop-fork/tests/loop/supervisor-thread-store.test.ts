@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  appendFileSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -235,5 +236,102 @@ describe("durable supervisor thread store", () => {
     ]);
     expect(JSON.stringify(store.read())).not.toContain("body");
     expect(JSON.stringify(store.read())).not.toContain("/Users/");
+  });
+});
+
+const eventLine = (value: SupervisorThreadAppendRequest): string =>
+  `${JSON.stringify({ ...value, schema: "supervisor-thread-event.v1" })}\n`;
+
+describe("ra2: the journal is parsed once per change, not once per read", () => {
+  test("repeated reads and the store's own appends never re-parse; another writer's append is parsed once", () => {
+    const journal = join(root(), "threads.jsonl");
+    const parses: number[] = [];
+    const store = new JsonlSupervisorThreadStore(journal, {
+      onParse: (bytes) => parses.push(bytes),
+    });
+    store.append(request(boardItem(WORKFLOW_A)));
+    store.append(
+      request(
+        boardItem(WORKFLOW_A, {
+          actionRequired: "acknowledge",
+          claimedAt: "2026-08-30T07:20:03.000Z",
+          claimedBy: "supervisor:harness",
+          phase: "claimed",
+        }),
+        { observedAt: "2026-08-30T07:20:03.000Z", requestId: "claim-a" }
+      )
+    );
+    for (let pass = 0; pass < 6; pass++) {
+      expect(store.read().threads[0]?.messages[0]?.item.phase).toBe("claimed");
+    }
+    // The append replay check also uses the warm parse.
+    expect(store.append(request(boardItem(WORKFLOW_A)))).toMatchObject({
+      replayed: true,
+      revision: 2,
+    });
+    expect(parses).toEqual([]);
+    appendFileSync(
+      journal,
+      eventLine(request(boardItem(WORKFLOW_B), { requestId: "external-b" }))
+    );
+    expect(store.read().revision).toBe(3);
+    expect(store.read().threads).toHaveLength(1);
+    expect(parses).toEqual([statSync(journal).size]);
+  });
+
+  test("a writer that appends between the store's read and its own append is not lost", () => {
+    const journal = join(root(), "threads.jsonl");
+    writeFileSync(journal, eventLine(request(boardItem(WORKFLOW_A))), {
+      mode: 0o600,
+    });
+    let raced = false;
+    const store = new JsonlSupervisorThreadStore(journal, {
+      onParse: () => {
+        if (!raced) {
+          raced = true;
+          appendFileSync(
+            journal,
+            eventLine(
+              request(boardItem(WORKFLOW_C), {
+                observedAt: "2026-08-30T07:20:05.000Z",
+                requestId: "racer-c",
+              })
+            )
+          );
+        }
+      },
+    });
+    store.append(request(boardItem(WORKFLOW_B), { requestId: "append-b" }));
+    const board = store.read();
+    expect(board.revision).toBe(3);
+    expect(
+      board.threads
+        .flatMap((thread) => thread.messages)
+        .map((message) => message.item.workflowId)
+        .sort()
+    ).toEqual([WORKFLOW_A, WORKFLOW_B, WORKFLOW_C].sort());
+  });
+
+  test("a same-size rewrite is re-read, and a journal that becomes malformed fails closed", () => {
+    const journal = join(root(), "threads.jsonl");
+    const original = eventLine(request(boardItem(WORKFLOW_A)));
+    writeFileSync(journal, original, { mode: 0o600 });
+    const store = new JsonlSupervisorThreadStore(journal);
+    expect(store.read().threads[0]?.messages[0]?.observedAt).toBe(
+      "2026-08-30T07:20:01.000Z"
+    );
+    const rewritten = eventLine(
+      request(boardItem(WORKFLOW_A), {
+        observedAt: "2026-08-30T07:20:09.000Z",
+      })
+    );
+    expect(rewritten.length).toBe(original.length);
+    writeFileSync(journal, rewritten, { mode: 0o600 });
+    expect(store.read().threads[0]?.messages[0]?.observedAt).toBe(
+      "2026-08-30T07:20:09.000Z"
+    );
+    writeFileSync(journal, "{not-json}\n", { mode: 0o600 });
+    expect(() => store.read()).toThrow(SupervisorThreadStoreError);
+    expect(() => store.read()).toThrow(SupervisorThreadStoreError);
   });
 });

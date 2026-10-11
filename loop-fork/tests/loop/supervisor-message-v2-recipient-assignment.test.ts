@@ -304,3 +304,99 @@ test("r9 recipient assignment joins the configured identity, the durable assignm
     })
   ).toBeUndefined();
 });
+
+test("r9 recipient reachability: an expired lease whose session the server observes live is renewed now and then judged live; one it cannot renew stays unreachable", async () => {
+  const { options, state } = leaseFixture();
+  const renewals: string[] = [];
+  let renews = true;
+  const reachable = createSupervisorMessageV2RecipientReachability({
+    ...options,
+    endpoints: {
+      ...options.endpoints,
+      leases: options.endpoints.leases,
+      get legacySeats() {
+        return options.endpoints.legacySeats;
+      },
+      renewExpiredLease: (recipient: string) => {
+        renewals.push(recipient);
+        if (renews) {
+          state.resolution = { lease: leaseRow("live"), state: "live" };
+        }
+        return Promise.resolve(renews);
+      },
+    },
+  });
+  // The sweep's renewal lagged: the lease reads expired, the session is live.
+  state.resolution = { lease: leaseRow("expired"), state: "expired" };
+  expect(await reachable(SENDER_SCOPE, SEAT)).toBe(true);
+  expect(renewals).toEqual([SEAT]);
+  // Renewed, it is still the whole live rule: an unready seat is refused.
+  state.resolution = { lease: leaseRow("expired"), state: "expired" };
+  state.ready = false;
+  expect(await reachable(SENDER_SCOPE, SEAT)).toBe(false);
+  state.ready = true;
+  // A session the server does not observe live is not renewed: refused.
+  renews = false;
+  state.resolution = { lease: leaseRow("expired"), state: "expired" };
+  expect(await reachable(SENDER_SCOPE, SEAT)).toBe(false);
+  // Only an expired lease is renewed on demand.
+  renewals.length = 0;
+  for (const resolution of [
+    { lease: leaseRow("live"), state: "live" as const },
+    { lease: leaseRow("released"), state: "released" as const },
+    { state: "none" as const },
+  ]) {
+    state.resolution = resolution;
+    await reachable(SENDER_SCOPE, SEAT);
+  }
+  expect(renewals).toEqual([]);
+});
+
+test("r9 recipient reachability: a check that a renewal of the same lease raced is made once more on the renewed lease, and only then", async () => {
+  const { options, state } = leaseFixture();
+  let readinessChecks = 0;
+  // The first readiness check fails as the sweep's renewal lands under it.
+  let failFirst = true;
+  let renewal: Partial<SupervisorEndpointLeaseV2> = { descriptorRevision: 2 };
+  const reachable = createSupervisorMessageV2RecipientReachability({
+    ...options,
+    sessions: {
+      ...options.sessions,
+      assertReady: () => {
+        readinessChecks++;
+        if (failFirst) {
+          failFirst = false;
+          state.resolution = {
+            lease: leaseRow("live", renewal),
+            state: "live",
+          };
+          return Promise.reject(
+            new Error("recipient endpoint identity changed")
+          );
+        }
+        return state.ready
+          ? Promise.resolve(undefined)
+          : Promise.reject(new Error("stale"));
+      },
+    },
+  });
+  expect(await reachable(SENDER_SCOPE, SEAT)).toBe(true);
+  expect(readinessChecks).toBe(2);
+  // Once only: the renewed lease's own failure is final.
+  for (const [change, ready] of [
+    [{ descriptorRevision: 2 }, false],
+    // No renewal landed (same revision), or a new claim (another epoch).
+    [{}, true],
+    [{ descriptorRevision: 2, epoch: 4 }, true],
+  ] as const) {
+    state.resolution = { lease: leaseRow("live"), state: "live" };
+    state.ready = ready;
+    renewal = change;
+    failFirst = true;
+    readinessChecks = 0;
+    expect(await reachable(SENDER_SCOPE, SEAT)).toBe(false);
+    expect(readinessChecks).toBe(
+      change.descriptorRevision && !("epoch" in change) ? 2 : 1
+    );
+  }
+});

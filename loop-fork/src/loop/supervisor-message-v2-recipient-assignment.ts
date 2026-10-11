@@ -1,6 +1,7 @@
 import type { SupervisorA2AAuthenticatedIdentity } from "./a2a-supervisor-http";
 import type {
   SupervisorEndpointLeaseReader,
+  SupervisorEndpointLeaseResolution,
   SupervisorEndpointLocatorResolver,
 } from "./supervisor-endpoint-lease";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
@@ -35,6 +36,13 @@ export interface SupervisorMessageV2RecipientEndpoints {
    * the sender scope. Any lease row moves it to the r9 rule.
    */
   legacySeats: ReadonlySet<string>;
+  /**
+   * The server's lease sweep, for one recipient, now: its unreleased lease
+   * that has expired is renewed (same fence) when the server observes the
+   * session live, exactly as the sweep's next pass would. Whether it was.
+   * Absent: an expired lease stays expired until the sweep renews it.
+   */
+  renewExpiredLease?(recipient: string): Promise<boolean>;
   /** The server's own resolver; a live lease's locator is re-resolved here. */
   resolveLocator: SupervisorEndpointLocatorResolver;
 }
@@ -63,9 +71,16 @@ const describesSeat = (
  *
  * - live lease: the descriptor the lease registered, in the SEAT's scope
  *   {tenant, principalFor(recipient)}, must be current and ready, and the
- *   lease's locator must still resolve under the server's own roots;
+ *   lease's locator must still resolve under the server's own roots. A check
+ *   that fails while a renewal of that same lease (same epoch, newer
+ *   descriptor revision) lands is made once more on the renewed lease;
  * - released or no lease, with a mailbox: reachable (mailbox-held mode);
- * - expired lease, or neither lease nor mailbox: not reachable;
+ * - expired lease: not reachable, unless the server observes its session
+ *   live and renews it now (`renewExpiredLease`); then as a live lease. The
+ *   sweep renews a live session's lease only every few seconds, so without
+ *   this a recipient whose session never went away is refused for as long
+ *   as the renewal lags;
+ * - neither lease nor mailbox: not reachable;
  * - an r8 seat with no lease row: r8's descriptor in the sender scope.
  *
  * On the r9 path any failure (a lease or session store outage, a refused
@@ -116,13 +131,53 @@ const reachableThroughLease = async (
   senderScope: TrustedSupervisorMessageV2Scope,
   recipient: string
 ): Promise<boolean | undefined> => {
-  const resolution = await endpoints.leases.resolve(
-    options.tenantId,
-    recipient
-  );
+  let resolution = await endpoints.leases.resolve(options.tenantId, recipient);
+  if (
+    resolution.state === "expired" &&
+    endpoints.renewExpiredLease &&
+    (await endpoints.renewExpiredLease(recipient))
+  ) {
+    resolution = await endpoints.leases.resolve(options.tenantId, recipient);
+  }
   if (endpoints.legacySeats.has(recipient) && resolution.state === "none") {
     return undefined;
   }
+  try {
+    return await leaseRule(
+      options,
+      endpoints,
+      senderScope,
+      recipient,
+      resolution
+    );
+  } catch (error) {
+    // The sweep renews a live lease every half TTL. A renewal that lands
+    // between this check's reads bumps the lease's descriptor revision, and
+    // the readiness probe reads the older descriptor as an identity change.
+    // Only then is the renewed lease judged once more, from fresh reads.
+    const renewed = await endpoints.leases.resolve(options.tenantId, recipient);
+    if (
+      !(
+        resolution.state === "live" &&
+        renewed.state === "live" &&
+        renewed.lease.epoch === resolution.lease.epoch &&
+        renewed.lease.descriptorRevision > resolution.lease.descriptorRevision
+      )
+    ) {
+      throw error;
+    }
+    return await leaseRule(options, endpoints, senderScope, recipient, renewed);
+  }
+};
+
+/** The routing table's verdict on one lease resolution. Throws when unready. */
+const leaseRule = async (
+  options: SupervisorMessageV2RecipientReachabilityOptions,
+  endpoints: SupervisorMessageV2RecipientEndpoints,
+  senderScope: TrustedSupervisorMessageV2Scope,
+  recipient: string,
+  resolution: SupervisorEndpointLeaseResolution
+): Promise<boolean> => {
   const route = decideSupervisorEndpointRoute(
     resolution,
     endpoints.hasMailbox(recipient)

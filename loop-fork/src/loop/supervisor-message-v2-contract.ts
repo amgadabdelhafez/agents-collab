@@ -1,4 +1,5 @@
 import { Sha256 } from "@aws-crypto/sha256-js";
+import { SUPERVISOR_ID_RE } from "./supervisor-id";
 import { supervisorMessageV2ScopedDigest } from "./supervisor-message-v2-workflow-identity";
 import {
   parseSupervisorMessageInput,
@@ -330,7 +331,6 @@ const TENANT_ID_RE = /^tenant:[a-z0-9][a-z0-9._-]{0,127}$/;
 const PRINCIPAL_RE = /^principal:[a-z0-9][a-z0-9._:-]{0,255}$/;
 const FIXTURE_ID_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const STABLE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/;
-const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 const DELIVERY_STATUS_RE = /^(accepted|pending|retry-scheduled)$/;
 const EVENT_KIND_RE = /^[a-z][a-z0-9._:-]{0,255}$/;
 const GOVERNANCE_OPERATION_RE = /^(acknowledge|cancel|claim|receive|tick)$/;

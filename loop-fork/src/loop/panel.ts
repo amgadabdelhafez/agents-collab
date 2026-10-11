@@ -571,6 +571,8 @@ const readJson = (path: string): Record<string, unknown> | undefined => {
   }
 };
 
+// `repoId` here is the checkout id (`resolveCheckoutId` in run-state.ts): the
+// run storage directory name, a local cache key, not the repository's repoKey.
 const loopRunPath = (path: string): { repoId: string; runId: string } => {
   const runDir = dirname(path);
   const repoDir = dirname(runDir);

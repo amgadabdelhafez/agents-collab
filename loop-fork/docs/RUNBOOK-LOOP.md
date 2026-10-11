@@ -351,7 +351,8 @@ All of them go through `src/loop/a2a-session-client.ts`, which enforces:
   caller beyond that identity, and a release refuses a lease recorded for
   another supervisor.
 - **The token goes only to the config's server.** The server is the
-  orchestration config's loopback `hostname`/`port`; every request URL is
+  orchestration config's `origin` when it names one (RA1, below), else its
+  loopback `hostname`/`port`; every request URL is
   checked against that origin before the token is attached (a path with
   `//`, a backslash, whitespace or control characters is refused), and
   redirects are refused. Ids from messages or tool input are validated as
@@ -371,8 +372,418 @@ hostile LOOP_ORCHESTRATION_CONFIG is refused before any token is read",
 "the token never leaves the configured origin", "a run enrolled as another
 supervisor is renamed only by an explicit takeover"; the r9 e2e
 (`a2a-v2-all-supervisors-e2e.test.ts`) runs each `loop a2a` call with only
-its supervisor's token. Each guard was mutation-checked: reverting it fails
-those tests.
+its supervisor's token.
+
+Correction (ra1, 2026-10-11): the claim that every guard was mutation-checked
+was too broad. The r9b security review found four guards with no killing
+test: `--as ALICE` with only `BOB_TOKEN` set, the exact property keys of each
+MCP tool schema, the bridge's start-time identity cache, and the release
+tool's recorded-lease owner check. Each now has one: "only the acting
+supervisor's own token is read ...", "each MCP session tool's input schema
+has exactly its pinned property keys", "the a2a_release tool refuses a lease
+recorded for another supervisor before any request" (all in
+`a2a-session-client.test.ts`), and "a session bridge fixes its acting
+supervisor when it starts ..." (`bridge.test.ts`). On 2026-10-11 these
+mutations were each applied alone, and each failed at least one test named
+above:
+
+- the multi-token refusal removed;
+- a caller's opt-in honoured without the human flag;
+- the MCP tools honouring an opt-in;
+- the identity-argument refusal removed;
+- a2a_enroll asking for a takeover;
+- the CLI's and the tool's release owner checks removed;
+- the send tool acting as a tool-chosen identity;
+- the origin check removed;
+- each of the three config-override checks removed;
+- a token taken from another variable when the own one is unset;
+- an extra schema property;
+- the bridge's start-time fix removed, and its cache bypassed.
+
+Limit: the `--a2a-as` launch claim, the teardown release and `loop mailbox
+ack` refuse a multi-token environment only because they never pass the
+opt-in. Nothing tests those call sites for adding one.
+
+### A2A V2 ACK refusals (ra1, 2026-10-11)
+
+`loop a2a ack` (and `loop mailbox ack` for V2 envelopes) claims and then
+acknowledges each workflow on the recipient route. A refusal names its
+codes: `ack refused for <workflow-id> (acknowledge: <code>; claim: <code>)`.
+Only codes from a fixed set are shown, and anything else reads `refused`.
+
+- `assignment-denied`: this supervisor is not the message's recipient, or
+  its endpoint is not reachable now. That means the lease was released and
+  there is no mailbox, or the lease expired and the server does not observe
+  the session live. An expired lease whose session is live is renewed on the
+  spot, and a check that a renewal of the same lease raced is made once more,
+  so the sweep's renewal timing does not refuse a live recipient.
+- `delivery-not-recorded`, `not-claimed`: the recipient was early. It holds
+  the message (a Claude session's pushed entry, a mailbox envelope) before
+  the workflow recorded the delivery or the claim. Nothing is signalled, so
+  the ACK waits these out with the same request ids for up to 120 s, at the
+  server's `retryAfterMs` or a bounded backoff. Once the delivery's retry is
+  due, the claim records the delivery itself. You see these codes only when
+  the wait ran out; run the ack again.
+- `lifecycle-command-refused`: the workflow refused the command (dead-lettered,
+  cancelled, already acknowledged under other request ids, or an engine
+  error).
+- `unavailable`, `v2-unavailable`: the server or its V2 plane did not answer.
+
+Tests: `recipient-api-client.test.ts`, `supervisor-message-v2-http.test.ts`,
+`supervisor-message-v2-runtime.test.ts` (early claim and acknowledge on a
+port that, like Temporal's, replays refusals),
+`supervisor-message-v2-recipient-assignment.test.ts`,
+`loop-orchestration-server-r9.test.ts` (renewal on demand), and the r9 e2e
+(an ACK as soon as the session holds the message). Each new guard was
+mutation-checked: the coordinator's two early checks, the claimant gate on
+them, the route's early code, the client's wait, the code allowlist, the
+on-demand renewal and its liveness check, and the renewal-race recheck with
+its epoch and revision conditions.
+
+### Mailbox readers acknowledge V2 messages (ra2, claude/ra2-mailbox-v2-ack)
+
+Seen live before ra2: a V2 message delivered to a mailbox-only recipient
+stayed open until someone ran `loop a2a ack`, and the V2 recovery sweep grew
+with those messages. The V1 mailbox reconciler never matches a V2 workflow
+id, and `loop mailbox ack` held every V2 key when the session could not reach
+the recipient route (no config, no `a2aV2` section, or the supervisor's own
+token not in that session), so the reader could not acknowledge at all.
+
+- The server's reconcile tick now also carries the recipient's own cursor to
+  V2: for each key in a mailbox recipient's cursor whose envelope is a V2
+  delivery addressed to it, it claims and acknowledges on the recipient
+  route's own logic, in process, as that recipient (the configured
+  `principal` and `supervisorId`, never the operator). The route still
+  resolves the assignment and reachability, and in process it also refuses
+  a delivery key the workflow did not issue under the message's own scope.
+  The request ids are `loop a2a ack`'s (`a2a-ack:<op>:<workflow-id>`), so
+  whichever path acknowledges first, the other replays it. It never
+  publishes a result: an ACK is not completion.
+- It runs beside V1 reconciliation, not inside it: a hung or failing V2 pass
+  never delays V1 or changes `/healthz`, and it is reported once per change
+  (`orchestration A2A V2 mailbox ACK pass failed: ...` / `... recovered`).
+  Per message: early refusals wait for the server's retry time, other
+  failures back off (1 s doubling to 5 min) and log once, and a refusal the
+  workflow or authority decided is logged once and not retried. At most 8
+  messages per pass. Nothing V2 runs while the plane is disabled.
+- `loop mailbox ack` in a session that cannot resolve the route now moves
+  the cursor anyway and reports the keys under `v2.deferred` (stderr: `N V2
+  message(s) acknowledged in the mailbox cursor only ...`); the server
+  records the ACK from the cursor. A route that answered with a refusal, an
+  unreachable server, and fix9's multi-token refusal still hold the key.
+- Deferral is only for a session that cannot be anyone else (review fix,
+  2026-10-11). The resolver stops at the target's missing token before its
+  fix9 check, so a session acting as `supervisor:alice` (only `ALICE_TOKEN`
+  set) running `loop mailbox ack --id supervisor:bob` used to defer Bob's
+  key, and the server then recorded Bob's ACK: a confused deputy. Now a
+  session holding another configured supervisor's token or an endpoint
+  recipient run token (`LOOP_RECIPIENT_API_TOKEN`) is refused and the key is
+  held, and so is a session that cannot read the orchestration config to
+  show it holds neither. Only a token-less reader with a readable config
+  defers.
+- Limit: the evidence is the same as V1's, a key in the recipient's cursor
+  for an envelope in its registered mailbox. Anyone who can write both files
+  can make that recipient's ACK. An older server without this reconciler
+  leaves a deferred ACK unrecorded; upgrade the server before the clients.
+
+The reconcile tick also stopped re-reading `threads.jsonl` (3.6 MB live) up
+to six times per 250 ms pass: the thread store parses the journal only when
+its signature (inode, size, mtime and ctime in ns) changed, extends its
+parse in place after its own append when the file grew by exactly that row,
+hands each caller a structural copy instead of a structuredClone, and each
+reconciler reads the board once per pass and again only after it wrote. On
+a synthetic 3.6 MB journal (5,735 events, this laptop, 2026-10-11) a read
+went from 18 to 25 ms (parse every time) to about 3 ms (stat and copy). Not
+measured on the live host.
+
+Tests: `supervisor-mailbox-v2-acknowledgement.test.ts`,
+`loop-orchestration-server-ra2-mailbox-ack.test.ts`,
+`supervisor-reconcile-board.test.ts`, `supervisor-thread-store.test.ts`, and
+`supervisor-a2a-v2-service.test.ts` (the in-process route on PostgreSQL and
+Temporal). Mutation-checked (20, all killed): the cache signature's times,
+cache reuse, the own-append size check, the defensive copy (whole and per
+item), the per-pass
+board and its refresh after a write (both reconcilers), cursor-only
+evidence, the target check, settling, retrying only undecided refusals, the
+delivery-key check (unit and end to end), transient classification, the
+sweep's isolation, the disabled-plane gate, deferral instead of holding, the
+unresolved-route classification, and the multi-token refusal. The
+confused-deputy fix adds three (all killed): no foreign-credential check, no
+recipient-run-token check, and an unreadable config treated as no foreign
+credential.
+
+### RA1: origin policy and session tokens (claude/ra1-tokens-tls)
+
+Nothing here exposes the server: it still binds exactly the configured
+`hostname`. RA1 replaces four loopback-only checks with one policy
+(`src/loop/orchestration-origin-policy.ts`) and adds session tokens
+(`src/loop/orchestration-token-service.ts`). Static `tokenEnv` tokens keep
+working as legacy on a loopback listener (RA2: refused beyond loopback,
+and the client sends one only to a loopback origin; see below).
+
+- **Origin policy.** Plaintext only on a loopback IP literal: an `http:`
+  origin must be `127.0.0.1` or `[::1]` (never `localhost`), and every
+  binding `a2a-v2 init`'s ledger port is published on must be `127.0.0.1:`
+  or `[::1]:`. Anything else is an `https:` origin (TLS terminated by
+  Caddy). URLs with credentials, a query or a fragment are refused. Used by
+  the server's config parser, the A2A client (`a2a-session-client.ts`), the
+  recipient route client (`recipient-api-client.ts`) and the ledger check.
+- **Config.** Three optional keys:
+  - `origin`: where clients reach the server, for example
+    `"https://loop.home.lab"`. The A2A client sends its token there instead
+    of to `http://<hostname>:<port>`, and the agent card advertises it.
+  - `tokens`: `{"signingKeyFile": "/abs/path/signing.pem"}`, an Ed25519
+    PKCS#8 PEM in a regular 0600 file this user owns (not a symlink). The
+    key is never inline. The store is `<stateDir>/tokens/token-store.json`
+    (0600, directory 0700).
+  - `supervisors[].role`: `{"role": "owner"|"operator"|"supervisor"|"worker",
+    "repoKey": "...", "project": "..."}`. A role-bound address has a
+    principal no other supervisor shares, and a repoKey/project has at most
+    one `supervisor` address.
+  - A `hostname` beyond loopback (`0.0.0.0`, a tailnet address) is refused
+    unless the config also has an `https` origin and a `tokens` section.
+- **Tokens.** EdDSA JWTs, 30 minutes, claims `sub` (session id), `repoKey`,
+  `project`, `role`, `epoch`, `aud` (`loop-control`), `jti`, `iat`, `exp`.
+  A session acts only as the address it enrolled as: the server maps the
+  token subject to that address and its configured principal, so every
+  downstream sender check binds to the token subject.
+- **Host commands** (whoever reads the key is the owner already):
+  - `loop orchestration token-keygen <config>` writes the configured key
+    file (never overwrites one).
+  - `loop orchestration token-code <config> <supervisor-id> --out <new-file>`
+    writes a single-use, 10-minute enrollment code to a new 0600 file. The
+    code is never printed.
+  - `loop orchestration token-revoke <config> --session <id> | --jti <jti> |
+    --epoch <supervisor-id>` revokes a session, denies one token until it
+    would expire, or bumps the role epoch of that address's role and
+    subtree (every earlier token of it stops verifying).
+- **Routes** (`POST`, JSON, `cache-control: no-store`):
+  `/api/v1/tokens/enroll` `{"code"}` (the code is the credential) answers
+  `{data: {token, sessionId, expiresAt, audience, tokenType}}`;
+  `/api/v1/tokens/refresh` (Bearer session token) issues a new token for a
+  live, non-revoked session and denies the presented one;
+  `/api/v1/tokens/enrollment-codes` `{"supervisorId"}` and
+  `/api/v1/tokens/revoke` `{"sessionId"}|{"jti"}|{"epochFor"}` act as the
+  verified session only. A static legacy token never mints, refreshes or
+  revokes.
+- **Grants by role subtree.** A role-bound sender is governed by its role,
+  never widened by a configured grant: an owner may message anyone; a
+  supervisor messages (and cancels) the workers of its own repoKey/project;
+  a worker messages only its own subtree's supervisor; an operator messages
+  supervisors (RA2 adds supervisor to operator, and supervisor to owner as
+  a reply on an owner thread only). Within an allowed pair the sender
+  receives and cancels, the recipient claims and acknowledges, either
+  ticks, and a claimant must be the actor itself. Revoking a session
+  follows the same subtree (owner: any; supervisor: its workers; any
+  session: itself); minting a code is host or owner only (RA2); epoch
+  bumps are owner or host only. A sender without a role keeps its
+  configured grants exactly as before, except toward the owner (RA2).
+
+Tests: `tests/loop/orchestration-origin-policy.test.ts`,
+`tests/loop/orchestration-token-service.test.ts`,
+`tests/loop/orchestration-token-command.test.ts`,
+`tests/loop/loop-orchestration-server-ra1.test.ts`, and the RA1 cases in
+`a2a-session-client.test.ts`, `recipient-api-client.test.ts` and
+`a2a-v2-init.test.ts`.
+
+### RA2: token hardening and owner messaging (claude/ra2-token-hardening)
+
+RA2 narrows RA1 where it supersedes the text above (owner decisions of
+2026-10-11):
+
+- **Minting.** Only the host (`loop orchestration token-code`) and an owner
+  session mint enrollment codes. A supervisor never does, not even for a
+  worker of its own subtree: a code it held would let it enroll as that
+  worker. Revocation is unchanged (owner any, supervisor its workers, any
+  session itself). The route answers 403 `authority-denied`.
+- **Unauthenticated enroll.** A code that matches no record is refused from
+  a lock-free read: the store lock is never taken and `token-store.json` is
+  never rewritten for it. Failed enrollments are limited per source (the
+  peer address Bun reports for the request): 10 per fixed 60-second window,
+  in memory, at most 1024 sources plus one shared overflow window (a flood
+  of new addresses shares it and evicts nobody). Over the limit the route
+  answers 429 `too-many-attempts` with `retry-after`, before reading the
+  body. Behind a reverse proxy on the same host the peer is the proxy, so
+  every proxied client shares one window (fail closed).
+- **Static tokens.** `tokenEnv` tokens authenticate only when the listener
+  `hostname` is loopback (`127.0.0.1`, `::1`, `localhost`). A listener
+  beyond loopback accepts session tokens alone, and its start no longer
+  requires the `tokenEnv` variables.
+- **Messaging.** A supervisor messages any operator (upward). A message to
+  the owner from a supervisor (or from a sender without a role, which also
+  needs its configured grant) is sent only as a reply on a thread the owner
+  started with that sender: on V1 the thread board's earliest message on
+  that `threadId` is the owner's and the owner messaged the sender on it;
+  on A2A the message's `contextId` is one the owner opened with that
+  supervisor through this server (in memory, 4096 contexts, 7 days; a
+  restart forgets them, so a later reply is refused). Anything else is
+  refused 403 `owner-reply-only` with a `message` and
+  `notifyVia: "attention-os:interactions"`: unprompted owner notifications
+  are attention-os interactions delivered with ntfy, never A2A. Workers and
+  operators never message the owner. `loop a2a send` reports that refusal
+  with its code instead of the generic one.
+
+Tests: `tests/loop/loop-orchestration-server-ra2.test.ts`,
+`tests/loop/loop-orchestration-server-ra2-serve.test.ts` (real Temporal dev
+server), the RA2 cases in `orchestration-token-service.test.ts` and
+`a2a-session-client.test.ts`.
+
+### RA2: role ids on the wire (claude/ra2-role-ids-wire)
+
+- **One validator.** `src/loop/supervisor-id.ts` is the only supervisor id
+  pattern; the 13 former copies import it. It accepts a flat id
+  (`supervisor:[a-z0-9][a-z0-9._-]{0,127}`) or a role id
+  `supervisor:<owner>/<name>/<project>` (three segments, each starting with
+  a letter or digit, body at most 128 characters).
+- **Encoding.** Slug (URL segment, session directory, channel chat id) and
+  mailbox file name write a role id's `/` as `~`, which no id contains:
+  `supervisor:amgad/ai-cur/ai-cur` is `/a2a/v2/supervisors/amgad~ai-cur~ai-cur`
+  and `supervisor_amgad~ai-cur~ai-cur.jsonl`. Every flat id's slug and file
+  name are byte-identical to before (`supervisor_harness.jsonl`). Only the
+  canonical form decodes: `%7E`, `/` in a slug, or a two- or four-segment
+  `~` slug is refused.
+- **Legacy routing.** A legacy role address keeps its id and gains its role
+  id as an alias only when its own entry binds `"role": {"role":
+  "supervisor", "repoKey": "<owner>/<name>", "project": ...}`. The 2026-10-11
+  decisions: `supervisor:harness` binds `amgad/harness-engineering` /
+  `harness`; `supervisor:ai-cur` binds `amgad/ai-cur` / `ai-cur`;
+  `supervisor:harvto` binds `harvto-llc/harvto` and whichever checkout
+  project it serves (the alias does not fix harvto's project). The other
+  harvto checkouts are addresses of their own
+  (`supervisor:harvto-llc/harvto/tools`). A V1 receive or a V2
+  `supervisors/<alias slug>` request addressed to the alias reaches the
+  legacy address, and the grant is decided for that address. Refused at
+  config parse: a role id configured both as an address and as an alias,
+  two legacy addresses with one role, a legacy role bound as anything but
+  `supervisor` or to another project than its alias fixes, a role-id
+  address whose binding names another role, and a grant naming an alias.
+  Sessions still enroll as the configured address; the alias is addressing
+  only.
+- `supervisors[].role.repoKey` accepts `<owner>/<name>` as well as the
+  flat scope names RA1 used.
+
+Tests: `tests/loop/supervisor-id.test.ts`, the RA2 case in
+`supervisor-a2a-v2-service-r9.test.ts`, and the alias cases in
+`project-identity.test.ts`.
+
+### ra2: `loop connect` and `loop a2a` from anywhere (claude/ra2-connect-anywhere)
+
+Client side only; nothing here changes what the server listens on. A
+session on another machine (or behind NAT: it dials out, it never listens)
+reaches the server at the config's `origin`.
+
+- **Server.** The client resolves it from the ra1 origin policy: the
+  config's `origin` (https anywhere, or http on 127.0.0.1/[::1]), else the
+  loopback listener. A session on another machine needs only a client
+  config: `{"origin": "https://loop.home.lab", "a2aV2": {"routePath":
+  "/a2a/v2"}, "supervisors": [{"supervisorId": "supervisor:x", "role":
+  {...}}]}` (`LOOP_ORCHESTRATION_CONFIG`, owned by the user, not group- or
+  world-writable).
+- **Enroll once.** On the server host: `loop orchestration token-code
+  <config> supervisor:x --out <new-file>`; carry the file to the session's
+  machine (keep it 0600). Then `loop connect --as supervisor:x --deliver
+  ... --enroll-code-file <file> [--trust-file <ca.pem>]`. The code is read
+  from the file (never argv, never printed) and spent; the session token is
+  kept in `~/.loop/credentials/<slug>.json` (0600, directory 0700, owned by
+  the user), bound to the supervisor id and the origin. The token must be
+  for the configured `role` of `--as`, or nothing is kept.
+- **Refresh.** Whichever process of the session needs the token first
+  within 5 minutes of its expiry refreshes it (a lock file next to the
+  credential serializes them); `loop connect` also arms one timer for when
+  the refresh is due. A request refused for a token another process just
+  replaced is retried once with the new one. An expired token cannot be
+  refreshed (a laptop asleep for over 30 minutes): enroll again with a new
+  code. A revoked session's refresh is refused and the credential is left
+  as it was.
+- **Static tokens: loopback only.** Without a credential, `loop a2a` and
+  `loop connect` use the supervisor's `tokenEnv` only when the origin is on
+  127.0.0.1 or [::1]; beyond loopback they refuse before any request
+  (`... a static token is only sent on loopback. Enroll with loop connect
+  --enroll-code-file <path>`). With a credential, it is used on loopback
+  too.
+- **Private CA.** `--trust-file <ca.pem>` (on `loop connect` and every
+  `loop a2a` action) names PEM anchors trusted for the https origin; it is
+  refused for an http origin, and the file must be owned by the user and
+  not group- or world-writable. Verification is never turned off.
+- **V2 recipient ACK by a role-bound recipient (server).** V2 governance
+  asks the grant question with the message's scope principal (the
+  sender's); for a role-bound sender the server now asks it as the
+  authenticated claimant's own principal (`v2RecipientGrantRequest`), so a
+  worker can claim and ACK its supervisor's message. Before this, a
+  role-bound recipient's ACK was always `lifecycle-command-refused`.
+- **Inbox stream client.** A message event that does not parse is never
+  skipped: the client drops the connection and resumes from its last
+  delivered sequence (`Last-Event-ID`).
+
+Server side, the RA2 token hardening above refuses a static token beyond
+loopback and stops a supervisor session from minting enrollment codes; both
+land with this client in the ra2 integration. The bridge's session MCP
+tools take no `--trust-file`.
+
+Tests: `tests/loop/a2a-session-credential.test.ts` (enrollment, the
+loopback-only static fallback, origin binding, refresh, the superseded
+retry, expiry, revocation, keepFresh), `tests/loop/ra2-connect-anywhere-e2e.test.ts`
+(the real server on local Temporal and a disposable PostgreSQL behind a
+throwaway TLS front with a self-signed CA: a client-only session enrolls,
+receives, ACKs, loses its network, reconnects from its Last-Event-ID,
+refreshes from a second process, releases), and the ra2 cases in
+`supervisor-inbox-stream.test.ts`, `supervisor-a2a-v2-service-r9.test.ts`
+and `loop-orchestration-server-ra1.test.ts`.
+
+### RA2: Authentik JWT on human routes (claude/ra2-authentik-jwt)
+
+Optional. Without a `humanAuth` section there are no human routes and
+nothing changes. With one, everything under `humanAuth.routePath` is a human
+(owner or operator) route: the server mounts the V1 control surface there
+(the prefix stripped, so `/human/api/v1/supervisor-threads` serves
+`/api/v1/supervisor-threads`) and the caller is whoever the Authentik JWT
+says. Source: `src/loop/orchestration-human-auth.ts`.
+
+- **Config** (`humanAuth`):
+  - `jwksUrl`: the provider's JWKS, for example
+    `https://auth.home.lab/application/o/loop/jwks/`. https, or http only on
+    `127.0.0.1`/`[::1]`; no credentials, query or fragment.
+  - `issuer`: compared verbatim with `iss` (Authentik:
+    `https://auth.home.lab/application/o/loop/`, trailing slash included).
+  - `audience`: must be `aud` or in it (Authentik: the provider's client id).
+  - `groups`: ordered `[{"group": "...", "principal": "..."}]`. Each
+    principal must be exactly one configured address whose `role` is
+    `owner` or `operator`. The first mapping whose group the JWT's `groups`
+    claim carries decides who the caller is (case-sensitive), so list the
+    owner group first if one person is in both.
+  - `routePath`: for example `"/human"`; may not overlap `/api`, `/healthz`
+    or `a2aV2.routePath`.
+  - `header` (optional): default `x-authentik-jwt`, the header Authentik's
+    forward auth sets (add it to the Traefik middleware's
+    `authResponseHeaders`). Never `authorization`, `cookie` or
+    `proxy-authorization`.
+  - `jwksCacheTtlMs` (optional): 60000..86400000, default 600000.
+- **Verification.** Signature against the JWKS (RS256/384/512 or
+  ES256/384/512 only; `none`, HMAC and `crit` refused; a JWKS entry with
+  private material, a `use` other than `sig` or an RSA key under 2048 bits
+  is ignored; a token without a `kid` needs exactly one usable key), `exp`
+  required, `nbf` and `iat` honoured, 60 s skew, then `iss` and `aud`.
+- **JWKS cache.** Fetched with a 5 s timeout, a 64 KiB and 32-key bound and
+  no redirects; concurrent requests share one fetch. Refreshed when past
+  its TTL, or for an unknown `kid` (a rotation), but never more than once
+  per 30 s whatever the outcome. Past its TTL a cache that cannot be
+  refreshed verifies nothing: human routes fail closed while Authentik's
+  JWKS is unreachable.
+- **No bypass.** On a human route nothing but the verified JWT establishes
+  an identity: a bearer session or static token, unsigned
+  `X-authentik-username`/`-groups` headers and the source address (LAN,
+  loopback, `X-Forwarded-For`) are ignored, and a refused request never
+  falls through to a bearer route. A Traefik router that reaches the server
+  without the Authentik middleware therefore gets 401 there.
+- **API routes are unchanged.** `/api/v1/...`, the token routes and the V2
+  routes keep using bearer session tokens (and legacy static tokens on a
+  loopback listener only, per the RA2 token hardening above); the JWT
+  header means nothing on them.
+- Not mounted under `routePath` in this change: the token routes (minting
+  codes as the owner) and the V2 routes.
+
+Tests: `tests/loop/orchestration-human-auth.test.ts` (a local JWKS server
+and generated RSA and EC keys; 27 mutations of the guards, each killed).
 
 ### fix8 critic fixes (2026-10-11)
 

@@ -57,6 +57,11 @@ import {
   runMailboxCommand,
   runMailboxCommandWithV2Ack,
 } from "../../src/loop/mailbox-command";
+import {
+  OWNER_NOTIFICATION_PATH,
+  OWNER_REPLY_ONLY,
+  ownerReplyOnlyResponse,
+} from "../../src/loop/orchestration-owner-messaging";
 import { callRecipientRoute } from "../../src/loop/recipient-api-client";
 import { readRunManifest, updateRunManifest } from "../../src/loop/run-state";
 import { mailboxPathFor } from "../../src/loop/supervisor-mailbox-delivery";
@@ -255,6 +260,44 @@ test("the endpoint comes from the orchestration config, loopback only, and never
     resolveA2AClientEndpoint(ALICE, { env: { ...h.env, ALICE_TOKEN: "" } });
   expect(missingToken).toThrow("ALICE_TOKEN is not set");
   expect(() => resolveA2AClientEndpoint("alice", { env: h.env })).toThrow();
+});
+
+test("RA1: a configured origin passes the origin policy and the token goes only there", () => {
+  const h = harness();
+  const withConfig = (patch: Record<string, unknown>) => {
+    writeFileSync(h.configPath, JSON.stringify({ ...h.config, ...patch }));
+    return () => resolveA2AClientEndpoint(ALICE, { env: h.env });
+  };
+  // ra2: beyond loopback a static token is never used. Without an enrolled
+  // session credential the client refuses before any request.
+  expect(
+    withConfig({ hostname: "0.0.0.0", origin: "https://loop.home.lab" })
+  ).toThrow("a static token is only sent on loopback");
+  // The configured origin wins over the listener, whatever it binds.
+  const tlsLoopback = withConfig({
+    hostname: "0.0.0.0",
+    origin: "https://127.0.0.1:7443",
+  })();
+  expect(tlsLoopback.baseUrl).toBe("https://127.0.0.1:7443");
+  expect(tlsLoopback.url(`${ROUTE}/sessions/claim`)).toBe(
+    `https://127.0.0.1:7443${ROUTE}/sessions/claim`
+  );
+  expect(() => tlsLoopback.url("//evil.example/a2a")).toThrow(
+    "not on the configured server"
+  );
+  expect(
+    withConfig({ origin: `http://127.0.0.1:${h.server.port}` })().baseUrl
+  ).toBe(`http://127.0.0.1:${h.server.port}`);
+  for (const origin of [
+    "http://loop.home.lab",
+    "http://localhost:7321",
+    "https://user:pass@loop.home.lab",
+    "https://loop.home.lab/prefix",
+    "https://loop.home.lab?x=1",
+  ]) {
+    expect(withConfig({ origin })).toThrow("orchestration origin");
+  }
+  writeFileSync(h.configPath, JSON.stringify(h.config));
 });
 
 test("--a2a-as claims a run by ids only, after naming the supervisor in the manifest", async () => {
@@ -683,6 +726,42 @@ test("a channel session is claimed by its id under the caller's own sessions roo
   expect(readdirSync(join(h.home, ".loop", "sessions", "alice"))).toEqual([
     "desk-1",
   ]);
+});
+
+test("RA2: an owner-reply-only refusal reaches the sender with the attention-os path", async () => {
+  const h = harness();
+  const endpoint = resolveA2AClientEndpoint(ALICE, { env: h.env });
+  const answering = (response: () => Response) =>
+    Object.assign(() => Promise.resolve(response()), {
+      preconnect: fetch.preconnect,
+    });
+  const send = async (response: () => Response): Promise<A2AClientError> => {
+    const outcome: unknown = await sendA2AMessage(
+      endpoint,
+      { body: "done", contextId: "ctx-1", messageId: "m-1", to: BOB },
+      answering(response)
+    ).catch((error: unknown) => error);
+    return outcome as A2AClientError;
+  };
+  const refused = await send(ownerReplyOnlyResponse);
+  expect(refused).toBeInstanceOf(A2AClientError);
+  expect(refused.code).toBe(OWNER_REPLY_ONLY);
+  expect(refused.message).toContain("attention-os interaction");
+  expect(refused.message).toContain("Nothing is claimed delivered");
+  expect(refused.detail).toEqual({ notifyVia: OWNER_NOTIFICATION_PATH });
+  // Any other refusal stays the opaque one.
+  for (const body of [
+    { error: { code: "identity-mismatch" } },
+    { error: { code: OWNER_REPLY_ONLY } },
+  ]) {
+    const other = await send(() => Response.json(body, { status: 401 }));
+    expect(other.code).toBe("unavailable");
+  }
+  const mismatch = await send(() =>
+    Response.json({ error: { code: "identity-mismatch" } }, { status: 403 })
+  );
+  expect(mismatch.code).toBe("unavailable");
+  expect(h.server.seen).toEqual([]);
 });
 
 test("send goes through the SDK client to the recipient's own ingress as the authenticated sender", async () => {
@@ -1422,7 +1501,7 @@ test("a multi-token environment is refused unless --allow-multi-token-env, namin
       .supervisorId
   ).toBe(ALICE);
   expect(
-    resolveA2AClientEndpoint(ALICE, {
+    await resolveA2AClientEndpoint(ALICE, {
       allowMultiTokenEnv: true,
       env: h.bothEnv,
     }).authorization()
@@ -1600,8 +1679,7 @@ test("a transport or SDK failure keeps its underlying error's name, message and 
   expect(acked.refused).toEqual([
     {
       cause: expected,
-      reason:
-        "Recipient API refused or is unavailable; no completion is claimed",
+      reason: "acknowledge: unavailable; claim: unavailable",
       workflowId: V2_LEGACY,
     },
   ]);
@@ -1693,4 +1771,107 @@ test("safeErrorCause keeps only a capped name, message and code", () => {
   expect(
     safeErrorCause(Object.assign(new Error("n"), { code: -32_001 }))
   ).toEqual({ code: "-32001", message: "n", name: "Error" });
+});
+
+/* ---------------------------------------------------------------------------
+ * r9b security review: guards that had no killing test.
+ * ------------------------------------------------------------------------- */
+
+test("only the acting supervisor's own token is read: --as ALICE with only BOB_TOKEN set is refused, with or without --allow-multi-token-env", async () => {
+  const h = harness();
+  for (const allowMultiTokenEnv of [false, true]) {
+    let refusal = "";
+    try {
+      resolveA2AClientEndpoint(ALICE, { allowMultiTokenEnv, env: h.bobEnv });
+    } catch (error) {
+      refusal = (error as Error).message;
+    }
+    expect(refusal).toContain("ALICE_TOKEN is not set");
+    expect(refusal).not.toContain(BOB_TOKEN);
+  }
+  const status = ["a2a", "status", "--as", ALICE, "--message-id", "m1"];
+  for (const argv of [status, [...status, "--allow-multi-token-env"]]) {
+    await expect(runA2ACommand(argv, { env: h.bobEnv })).rejects.toThrow(
+      "ALICE_TOKEN is not set"
+    );
+  }
+  // A session bridge fixed as Alice, started in Bob's environment.
+  await expect(
+    callA2ASessionTool("a2a_status", { message_id: "m1" }, aliceSession(h), {
+      env: h.bobEnv,
+    })
+  ).rejects.toThrow("ALICE_TOKEN is not set");
+  expect(h.server.seen).toEqual([]);
+});
+
+test("each MCP session tool's input schema has exactly its pinned property keys", () => {
+  expect(
+    Object.fromEntries(
+      A2A_SESSION_TOOLS.map((tool) => [
+        tool.name,
+        {
+          additionalProperties: tool.inputSchema.additionalProperties,
+          properties: Object.keys(tool.inputSchema.properties).sort(),
+          required:
+            "required" in tool.inputSchema
+              ? [...tool.inputSchema.required].sort()
+              : [],
+        },
+      ])
+    )
+  ).toEqual({
+    a2a_enroll: {
+      additionalProperties: false,
+      properties: ["provider_session", "ttl_ms"],
+      required: [],
+    },
+    a2a_release: { additionalProperties: false, properties: [], required: [] },
+    a2a_send: {
+      additionalProperties: false,
+      properties: ["context_id", "message", "message_id", "to"],
+      required: ["message", "to"],
+    },
+    a2a_status: {
+      additionalProperties: false,
+      properties: ["message_id"],
+      required: ["message_id"],
+    },
+  });
+});
+
+test("the a2a_release tool refuses a lease recorded for another supervisor before any request", async () => {
+  const h = harness();
+  const session = aliceSession(h);
+  const recordFor = (supervisorId: string) =>
+    writeFileSync(
+      join(session.sessionDir, "a2a-lease.json"),
+      JSON.stringify({
+        claimedAt: "2026-10-11T00:00:00.000Z",
+        epoch: 3,
+        expiresAt: EXPIRES,
+        holderRef: "claude-channel:desk-1",
+        kind: "claude-channel",
+        locator: { kind: "claude-channel", sessionId: "desk-1" },
+        releasedAt: null,
+        schema: "loop-a2a-lease-record.v1",
+        supervisorId,
+      })
+    );
+  recordFor(BOB);
+  expect(readA2ALeaseRecord(session.sessionDir)?.supervisorId).toBe(BOB);
+  // Bob's token is in this environment: without the check the release would
+  // go out as Bob, a confused deputy for Alice's session.
+  await expect(
+    callA2ASessionTool("a2a_release", {}, session, { env: h.bobEnv })
+  ).rejects.toThrow(`the recorded lease belongs to ${BOB}`);
+  expect(h.server.seen).toEqual([]);
+  expect(readA2ALeaseRecord(session.sessionDir)?.releasedAt).toBeNull();
+  // Alice's own record releases with Alice's token.
+  recordFor(ALICE);
+  expect(
+    await callA2ASessionTool("a2a_release", {}, session, { env: h.env })
+  ).toMatchObject({ outcome: "released", supervisorId: ALICE });
+  expect(h.server.seen.map((entry) => entry.authorization)).toEqual([
+    `Bearer ${ALICE_TOKEN}`,
+  ]);
 });

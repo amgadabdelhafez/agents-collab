@@ -324,11 +324,17 @@ export class TemporalSupervisorRuntimeHost {
 
   httpHandler(
     authenticator: SupervisorControlSurfaceAuthenticator,
-    options: { resultGraphRoutePath?: string } = {}
+    options: {
+      resolveRecipient?: (recipient: string) => string;
+      resultGraphRoutePath?: string;
+    } = {}
   ): (request: Request) => Promise<Response> {
     return createSupervisorOrchestrationHttpHandler({
       authenticator,
       messages: this.runtime,
+      ...(options.resolveRecipient
+        ? { resolveRecipient: options.resolveRecipient }
+        : {}),
       resultGraphRoutePath: options.resultGraphRoutePath,
       tasks: this.tasks,
     });

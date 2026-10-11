@@ -1,4 +1,5 @@
 import {
+  type BigIntStats,
   closeSync,
   constants,
   existsSync,
@@ -164,9 +165,110 @@ const sameImmutableMessage = (
   JSON.stringify(left.item.artifactRefs) ===
     JSON.stringify(right.item.artifactRefs);
 
-const readJournal = (journalFile: string): SupervisorThreadEvent[] => {
-  if (!existsSync(journalFile)) {
+/**
+ * One exact state of the journal file: the file itself (device, inode) and
+ * its size, modification and change times to the nanosecond. An append grows
+ * the size and moves both times; an atomic replace changes the inode. Equal
+ * signatures are treated as equal content.
+ */
+interface JournalSignature {
+  ctimeNs: bigint;
+  dev: bigint;
+  ino: bigint;
+  mtimeNs: bigint;
+  size: bigint;
+}
+
+const signatureOf = (stats: BigIntStats): JournalSignature => ({
+  ctimeNs: stats.ctimeNs,
+  dev: stats.dev,
+  ino: stats.ino,
+  mtimeNs: stats.mtimeNs,
+  size: stats.size,
+});
+
+const sameSignature = (
+  left: JournalSignature,
+  right: JournalSignature
+): boolean =>
+  left.ctimeNs === right.ctimeNs &&
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.mtimeNs === right.mtimeNs &&
+  left.size === right.size;
+
+/** The parsed journal as of one signature (absent file: no signature). */
+interface JournalSnapshot {
+  byRequestId: Map<string, SupervisorThreadEvent>;
+  events: SupervisorThreadEvent[];
+  latestByWorkflow: Map<string, SupervisorThreadEvent>;
+  projection?: SupervisorThreadBoardProjection;
+  signature: JournalSignature | undefined;
+}
+
+const snapshotOf = (
+  signature: JournalSignature | undefined,
+  events: SupervisorThreadEvent[]
+): JournalSnapshot => {
+  const byRequestId = new Map<string, SupervisorThreadEvent>();
+  const latestByWorkflow = new Map<string, SupervisorThreadEvent>();
+  for (const event of events) {
+    byRequestId.set(event.requestId, event);
+    latestByWorkflow.set(event.item.workflowId, event);
+  }
+  return { byRequestId, events, latestByWorkflow, signature };
+};
+
+const parseJournal = (content: string): SupervisorThreadEvent[] => {
+  if (content === "") {
     return [];
+  }
+  const lines = content.split("\n");
+  if (lines.at(-1) !== "") {
+    throw new SupervisorThreadStoreError("thread journal is truncated");
+  }
+  lines.pop();
+  const events = lines.map((line, index) => {
+    if (!line) {
+      throw new SupervisorThreadStoreError(
+        `thread journal row ${index + 1} is empty`
+      );
+    }
+    try {
+      return parseEvent(JSON.parse(line));
+    } catch (error) {
+      if (error instanceof SupervisorThreadStoreError) {
+        throw error;
+      }
+      throw new SupervisorThreadStoreError(
+        `thread journal row ${index + 1} is malformed`
+      );
+    }
+  });
+  const requestIds = events.map((event) => event.requestId);
+  if (new Set(requestIds).size !== requestIds.length) {
+    throw new SupervisorThreadStoreError(
+      "thread journal contains duplicate request IDs"
+    );
+  }
+  return events;
+};
+
+/**
+ * The journal, reusing `cached` while the file still carries its signature.
+ * The signature is taken from the open descriptor BEFORE its content is read,
+ * so a concurrent append can only make the parsed events newer than the
+ * signature they are cached under; the next call then sees a different
+ * signature and reads again. A refused journal (malformed, truncated,
+ * duplicate) is never cached: it throws on every read, as it always has.
+ */
+const readJournal = (
+  journalFile: string,
+  cached: JournalSnapshot | undefined,
+  onParse: ((bytes: number) => void) | undefined
+): JournalSnapshot => {
+  if (!existsSync(journalFile)) {
+    return snapshotOf(undefined, []);
   }
   let descriptor: number | undefined;
   try {
@@ -175,42 +277,17 @@ const readJournal = (journalFile: string): SupervisorThreadEvent[] => {
       // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags require bitwise composition.
       constants.O_RDONLY | constants.O_NOFOLLOW
     );
-    if (!fstatSync(descriptor).isFile()) {
+    const stats = fstatSync(descriptor, { bigint: true });
+    if (!stats.isFile()) {
       throw new SupervisorThreadStoreError("thread journal is not a file");
     }
+    const signature = signatureOf(stats);
+    if (cached?.signature && sameSignature(cached.signature, signature)) {
+      return cached;
+    }
     const content = readFileSync(descriptor, "utf8");
-    if (content === "") {
-      return [];
-    }
-    const lines = content.split("\n");
-    if (lines.at(-1) !== "") {
-      throw new SupervisorThreadStoreError("thread journal is truncated");
-    }
-    lines.pop();
-    const events = lines.map((line, index) => {
-      if (!line) {
-        throw new SupervisorThreadStoreError(
-          `thread journal row ${index + 1} is empty`
-        );
-      }
-      try {
-        return parseEvent(JSON.parse(line));
-      } catch (error) {
-        if (error instanceof SupervisorThreadStoreError) {
-          throw error;
-        }
-        throw new SupervisorThreadStoreError(
-          `thread journal row ${index + 1} is malformed`
-        );
-      }
-    });
-    const requestIds = events.map((event) => event.requestId);
-    if (new Set(requestIds).size !== requestIds.length) {
-      throw new SupervisorThreadStoreError(
-        "thread journal contains duplicate request IDs"
-      );
-    }
-    return events;
+    onParse?.(Buffer.byteLength(content, "utf8"));
+    return snapshotOf(signature, parseJournal(content));
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);
@@ -218,10 +295,11 @@ const readJournal = (journalFile: string): SupervisorThreadEvent[] => {
   }
 };
 
+/** Appends one row; returns the file's signature right after the append. */
 const appendEvent = (
   journalFile: string,
   event: SupervisorThreadEvent
-): void => {
+): { bytes: number; signature: JournalSignature } => {
   const line = `${JSON.stringify(event)}\n`;
   const bytes = Buffer.byteLength(line, "utf8");
   if (bytes > MAX_EVENT_BYTES) {
@@ -247,6 +325,10 @@ const appendEvent = (
       throw new SupervisorThreadStoreError("thread event append was partial");
     }
     fsyncSync(descriptor);
+    return {
+      bytes,
+      signature: signatureOf(fstatSync(descriptor, { bigint: true })),
+    };
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);
@@ -316,11 +398,42 @@ const projectThreads = (
   };
 };
 
+export interface JsonlSupervisorThreadStoreOptions {
+  /** Observability: called each time the journal is actually read and parsed. */
+  onParse?: (bytes: number) => void;
+}
+
+/**
+ * The thread journal. Every read and append still opens and stats the file,
+ * but the journal is parsed only when its signature (inode, size, mtime,
+ * ctime) changed since the last parse: the orchestration server's reconcile
+ * interval reads the board several times every 250 ms, and the live journal
+ * is megabytes. This store's own append extends the cached parse in place
+ * when the file grew by exactly the appended row, so a reconcile pass that
+ * writes does not re-parse what it just wrote; any other change (another
+ * writer, a replace, a truncation) is a different signature and re-parses.
+ */
 export class JsonlSupervisorThreadStore {
   readonly #journalFile: string;
+  readonly #onParse: ((bytes: number) => void) | undefined;
+  #cached: JournalSnapshot | undefined;
 
-  constructor(journalFile: string) {
+  constructor(
+    journalFile: string,
+    options: JsonlSupervisorThreadStoreOptions = {}
+  ) {
     this.#journalFile = journalFile;
+    this.#onParse = options.onParse;
+  }
+
+  #load(): JournalSnapshot {
+    const snapshot = readJournal(
+      this.#journalFile,
+      this.#cached,
+      this.#onParse
+    );
+    this.#cached = snapshot.signature ? snapshot : undefined;
+    return snapshot;
   }
 
   append(
@@ -330,10 +443,8 @@ export class JsonlSupervisorThreadStore {
       ...requestValue,
       schema: "supervisor-thread-event.v1",
     });
-    const events = readJournal(this.#journalFile);
-    const existing = events.find(
-      (candidate) => candidate.requestId === event.requestId
-    );
+    const snapshot = this.#load();
+    const existing = snapshot.byRequestId.get(event.requestId);
     if (existing) {
       if (JSON.stringify(existing) !== JSON.stringify(event)) {
         throw new SupervisorThreadStoreError(
@@ -342,27 +453,71 @@ export class JsonlSupervisorThreadStore {
       }
       return {
         replayed: true,
-        revision: events.length,
+        revision: snapshot.events.length,
         schema: "supervisor-thread-append-receipt.v1",
       };
     }
-    const previous = [...events]
-      .reverse()
-      .find((candidate) => candidate.item.workflowId === event.item.workflowId);
+    const previous = snapshot.latestByWorkflow.get(event.item.workflowId);
     if (previous && !sameImmutableMessage(previous, event)) {
       throw new SupervisorThreadStoreError(
         `workflow ${event.item.workflowId} changed immutable thread identity`
       );
     }
-    appendEvent(this.#journalFile, event);
+    // Invalidate first: should the append throw after writing, the next read
+    // must not trust a cache taken before it.
+    this.#cached = undefined;
+    const appended = appendEvent(this.#journalFile, event);
+    const before = snapshot.signature;
+    const grewByExactlyThisRow =
+      appended.signature.size ===
+        (before?.size ?? 0n) + BigInt(appended.bytes) &&
+      (before === undefined ||
+        (before.dev === appended.signature.dev &&
+          before.ino === appended.signature.ino));
+    if (grewByExactlyThisRow) {
+      this.#cached = snapshotOf(appended.signature, [
+        ...snapshot.events,
+        event,
+      ]);
+    }
     return {
       replayed: false,
-      revision: events.length + 1,
+      revision: snapshot.events.length + 1,
       schema: "supervisor-thread-append-receipt.v1",
     };
   }
 
   read(): SupervisorThreadBoardProjection {
-    return projectThreads(readJournal(this.#journalFile));
+    const snapshot = this.#load();
+    const projection = snapshot.projection ?? projectThreads(snapshot.events);
+    if (snapshot.signature) {
+      snapshot.projection = projection;
+    }
+    // Callers get their own copy: the cached projection is never shared.
+    return cloneBoard(projection);
   }
 }
+
+/**
+ * A deep copy of a board projection. Every nested object and array is new,
+ * like structuredClone's, at a fraction of its cost: the shape is known and
+ * every leaf is a string, number or null.
+ */
+const cloneBoard = (
+  board: SupervisorThreadBoardProjection
+): SupervisorThreadBoardProjection => ({
+  revision: board.revision,
+  schema: board.schema,
+  threads: board.threads.map((thread) => ({
+    messages: thread.messages.map((message) => ({
+      item: cloneItem(message.item),
+      messageKind: message.messageKind,
+      observedAt: message.observedAt,
+      schema: message.schema,
+    })),
+    participants: [...thread.participants],
+    schema: thread.schema,
+    threadId: thread.threadId,
+    updatedAt: thread.updatedAt,
+  })),
+});

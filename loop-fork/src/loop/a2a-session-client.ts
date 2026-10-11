@@ -21,6 +21,14 @@ import {
   isTimeoutCause,
   safeErrorCause,
 } from "./a2a-error-cause";
+import {
+  A2ASessionCredentialError,
+  A2ASessionTokenSource,
+  a2aSessionCredentialPath,
+  fetchWithTrust,
+  readA2ASessionCredential,
+  readTrustFile,
+} from "./a2a-session-credential";
 import { agentCardFor, FROM_METADATA_KEY } from "./a2a-supervisor-adapter";
 import {
   TASK_STATE_METADATA_KEY,
@@ -47,7 +55,25 @@ import {
   ORCHESTRATION_CONFIG_PATH_ENV,
   orchestrationConfigPathFromEnv,
 } from "./governess-temporal-journal";
-import { acknowledgeRecipientWorkflow } from "./recipient-api-client";
+import {
+  isLoopbackLiteral,
+  parseServerOrigin,
+  serverOriginFor,
+} from "./orchestration-origin-policy";
+import {
+  OWNER_NOTIFICATION_PATH,
+  OWNER_REPLY_ONLY,
+  OWNER_REPLY_ONLY_MESSAGE,
+} from "./orchestration-owner-messaging";
+import {
+  parseRoleBinding,
+  type RoleBinding,
+} from "./orchestration-token-service";
+import {
+  acknowledgeRecipientWorkflow,
+  isSupervisorMessageV2WorkflowId,
+  RecipientAcknowledgementError,
+} from "./recipient-api-client";
 import { readRunManifest, updateRunManifest } from "./run-state";
 import {
   isSupervisorEndpointKind,
@@ -67,15 +93,21 @@ import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
  * status, and the recipient ACK. Shared by `loop a2a`, the bridge's session
  * mode tools, the `--a2a-as` launch and the teardown hooks.
  *
- * - The server is the orchestration config's own loopback listener
- *   (`hostname` 127.0.0.1 or ::1, `port`, `a2aV2.routePath`); nothing here
- *   takes a server URL from argv or tool input.
- * - The bearer token is the acting supervisor's `tokenEnv`, read from the
- *   environment and held in a private field: no result, error or log line
- *   carries it. Only that one variable is read, and an environment that also
- *   holds another configured supervisor's token is refused unless the caller
- *   opts in (`--allow-multi-token-env`): a process that can read several
- *   tokens could act as any of them.
+ * - The server is the orchestration config's own: its configured `origin`
+ *   (https, or http on 127.0.0.1 or [::1]; RA1's origin policy), else its
+ *   loopback listener (`hostname` 127.0.0.1 or ::1, `port`), with
+ *   `a2aV2.routePath`; nothing here takes a server URL from argv or tool
+ *   input.
+ * - The bearer token is the acting supervisor's enrolled session token
+ *   (ra2: `a2a-session-credential.ts`, refreshed before it expires), or, on
+ *   loopback only, its static `tokenEnv`, read from the environment. Either
+ *   is held in a private field: no result, error or log line carries it.
+ *   Only that one variable is read, and an environment that also holds
+ *   another configured supervisor's token is refused unless the caller opts
+ *   in (`--allow-multi-token-env`): a process that can read several tokens
+ *   could act as any of them.
+ * - An https origin with a private CA is trusted through `--trust-file`
+ *   (PEM anchors), never by turning verification off.
  * - A `LOOP_ORCHESTRATION_CONFIG` override must be a regular file owned by
  *   the current user and not group- or world-writable: whoever can write it
  *   chooses where the token goes.
@@ -106,10 +138,6 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export const A2A_SEND_TIMEOUT_MS = 60_000;
 const ROUTE_PATH_RE = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,255}$/;
 const TOKEN_ENV_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
-const LOOPBACK_HOSTS: Readonly<Record<string, string>> = {
-  "127.0.0.1": "127.0.0.1",
-  "::1": "[::1]",
-};
 const TASK_STATE_NAME_RE = /^TASK_STATE_[A-Z_]+$/;
 const MESSAGE_PHASES: readonly string[] = [
   "acknowledged",
@@ -154,32 +182,98 @@ export class A2AClientError extends Error {
 }
 
 /**
+ * Where a request's bearer token comes from: a static `tokenEnv` value
+ * (loopback only), or an enrolled session's credential (ra2), refreshed
+ * before it expires.
+ */
+export interface A2ABearerSource {
+  bearer(): Promise<string>;
+  /** Refreshes ahead of expiry while `signal` is open (session tokens). */
+  keepFresh?(signal: AbortSignal, onEnd?: (error: Error) => void): void;
+  /**
+   * After a refusal of `used`: whether a newer, still valid token is now
+   * current (another process of this session refreshed), so one retry with
+   * it is worthwhile.
+   */
+  superseded(used: string): Promise<boolean>;
+}
+
+const staticBearer = (token: string): A2ABearerSource => ({
+  bearer: () => Promise.resolve(token),
+  superseded: () => Promise.resolve(false),
+});
+
+/**
+ * fix9's one-identity refusal: the environment also holds another configured
+ * supervisor's token. Its own class so a caller can tell it from "the route
+ * cannot be resolved here" (ra2: `loop mailbox ack` defers the latter to the
+ * server and still refuses this one). Names variables, never values.
+ */
+export class A2AMultiTokenEnvironmentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "A2AMultiTokenEnvironmentError";
+  }
+}
+
+/**
  * The acting supervisor's connection to its own orchestration server. The
- * token is a private field, so `JSON.stringify`, `inspect` and string
- * conversion never render it.
+ * token is held behind a private field (a static value, or a session
+ * credential source), so `JSON.stringify`, `inspect` and string conversion
+ * never render it.
  */
 export class A2AClientEndpoint {
   readonly baseUrl: string;
   readonly routePath: string;
   readonly supervisorId: string;
-  readonly #token: string;
+  /** "session": an enrolled session token; "static": a loopback tokenEnv. */
+  readonly auth: "session" | "static";
+  readonly #bearer: A2ABearerSource;
+  readonly #trustCa: string | undefined;
   constructor(input: {
     baseUrl: string;
+    /** An enrolled session's token source (ra2). */
+    credential?: A2ABearerSource;
     routePath: string;
     supervisorId: string;
-    token: string;
+    /** A static token (the configured tokenEnv's value). */
+    token?: string;
+    /** PEM trust anchors for an https origin with a private CA. */
+    trustCa?: string;
   }) {
+    if ((input.token === undefined) === (input.credential === undefined)) {
+      throw new Error(
+        "an A2A endpoint needs exactly one of token or credential"
+      );
+    }
     this.baseUrl = input.baseUrl;
     this.routePath = input.routePath;
     this.supervisorId = input.supervisorId;
-    this.#token = input.token;
+    this.auth = input.credential ? "session" : "static";
+    this.#bearer = input.credential ?? staticBearer(input.token as string);
+    this.#trustCa = input.trustCa;
   }
-  authorization(): string {
-    return `Bearer ${this.#token}`;
+  async authorization(): Promise<string> {
+    return `Bearer ${await this.#bearer.bearer()}`;
   }
   /** For the recipient route client, which takes the raw token. */
-  token(): string {
-    return this.#token;
+  async token(): Promise<string> {
+    return await this.#bearer.bearer();
+  }
+  /** See A2ABearerSource.superseded. */
+  async superseded(used: string): Promise<boolean> {
+    return await this.#bearer.superseded(used);
+  }
+  /**
+   * For a long-lived holder (`loop connect`): keep a session token fresh
+   * while `signal` is open. A static token needs nothing.
+   */
+  keepFresh(signal: AbortSignal, onEnd?: (error: Error) => void): void {
+    this.#bearer.keepFresh?.(signal, onEnd);
+  }
+  /** `fetchImpl`, trusting this endpoint's private CA when it has one. */
+  fetch(fetchImpl: typeof fetch = fetch): typeof fetch {
+    return fetchWithTrust(fetchImpl, this.#trustCa);
   }
   /**
    * `path` on this endpoint's own origin. A path that could leave it (no
@@ -204,11 +298,17 @@ export class A2AClientEndpoint {
 }
 
 /** The safe cause of a client failure, never carrying `endpoint`'s token. */
-const causeOf = (
+const knownTokens = async (endpoint: A2AClientEndpoint): Promise<string[]> =>
+  await endpoint.token().then(
+    (token) => [token],
+    () => []
+  );
+
+const causeOf = async (
   endpoint: A2AClientEndpoint,
   error: unknown
-): { cause: A2AErrorCause } => ({
-  cause: safeErrorCause(error, [endpoint.token()]),
+): Promise<{ cause: A2AErrorCause }> => ({
+  cause: safeErrorCause(error, await knownTokens(endpoint)),
 });
 
 /**
@@ -247,6 +347,15 @@ export interface A2AClientDeps {
   allowMultiTokenEnv?: boolean;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  /** Session token refresh logging (never the token). */
+  log?: (line: string) => void;
+  /** Milliseconds since the epoch, for session token expiry (tests). */
+  nowMs?: () => number;
+  /**
+   * PEM trust anchors (a private CA) for an https origin: `--trust-file`.
+   * Never applies to plaintext loopback.
+   */
+  trustFile?: string;
   /** The current user's uid, for the config override check (tests). */
   uid?: () => number;
 }
@@ -328,15 +437,67 @@ export const otherSupervisorTokenEnvs = (
 };
 
 /**
- * Resolve `supervisorId`'s server and token from the orchestration config
- * (`LOOP_ORCHESTRATION_CONFIG`, default `~/.loop/orchestration/config.json`).
- * Reads only the keys it needs, so it does not depend on which A2A V2 parser
- * the server runs.
+ * RA1: the server origin a client sends its token to. A configured `origin`
+ * passes the shared origin policy (https, or http on a loopback IP
+ * literal); without one, the loopback listener (127.0.0.1 or ::1 only:
+ * `localhost` could resolve anywhere).
  */
-export const resolveA2AClientEndpoint = (
+const clientServerOrigin = (config: Record<string, unknown>): string => {
+  if (config.origin !== undefined) {
+    return parseServerOrigin(config.origin, "orchestration origin");
+  }
+  const hostname = config.hostname;
+  if (!(typeof hostname === "string" && isLoopbackLiteral(hostname))) {
+    throw new Error(
+      "orchestration hostname must be 127.0.0.1 or ::1 for the A2A client, or the config must name an origin"
+    );
+  }
+  const port = config.port;
+  if (
+    !(Number.isSafeInteger(port) && Number(port) >= 1 && Number(port) <= 65_535)
+  ) {
+    throw new Error("orchestration port is invalid");
+  }
+  return serverOriginFor({ hostname, port: Number(port) });
+};
+
+const ROLE_KEYS = "project,repoKey,role";
+
+/** A configured supervisor's role binding, when the config names one. */
+const configuredRole = (
+  supervisor: Record<string, unknown>
+): RoleBinding | undefined => {
+  const role = supervisor.role;
+  if (role === undefined) {
+    return undefined;
+  }
+  if (!isRecord(role) || Object.keys(role).sort().join(",") !== ROLE_KEYS) {
+    throw new Error("orchestration supervisor role is invalid");
+  }
+  return parseRoleBinding(role, "orchestration supervisor role");
+};
+
+/** What the client needs of the orchestration config, strictly. */
+export interface A2AClientConfig {
+  config: Record<string, unknown>;
+  origin: string;
+  role: RoleBinding | undefined;
+  routePath: string;
+  supervisorId: string;
+  tokenEnv: string | undefined;
+}
+
+/**
+ * Read `supervisorId`'s server, route and entry from the orchestration
+ * config (`LOOP_ORCHESTRATION_CONFIG`, default
+ * `~/.loop/orchestration/config.json`). Reads only the keys it needs, so a
+ * session on another machine needs only `origin`, `a2aV2.routePath` and its
+ * own `supervisors` entry (`supervisorId`, `role`).
+ */
+export const readA2AClientConfig = (
   supervisorIdValue: string,
   deps: A2AClientDeps = {}
-): A2AClientEndpoint => {
+): A2AClientConfig => {
   const env = deps.env ?? process.env;
   const supervisorId = requireSupervisorEndpointRecipient(supervisorIdValue);
   const configPath = orchestrationConfigPathFromEnv(env);
@@ -350,21 +511,7 @@ export const resolveA2AClientEndpoint = (
   if (!isRecord(config)) {
     throw new Error(`orchestration config is invalid: ${configPath}`);
   }
-  const host =
-    typeof config.hostname === "string"
-      ? LOOPBACK_HOSTS[config.hostname]
-      : undefined;
-  if (!host) {
-    throw new Error(
-      "orchestration hostname must be 127.0.0.1 or ::1 for the A2A client"
-    );
-  }
-  const port = config.port;
-  if (
-    !(Number.isSafeInteger(port) && Number(port) >= 1 && Number(port) <= 65_535)
-  ) {
-    throw new Error("orchestration port is invalid");
-  }
+  const origin = clientServerOrigin(config);
   const a2aV2 = config.a2aV2;
   if (!isRecord(a2aV2)) {
     throw new Error("A2A V2 is not configured in the orchestration config");
@@ -382,8 +529,101 @@ export const resolveA2AClientEndpoint = (
     throw new Error(`${supervisorId} is not a configured supervisor`);
   }
   const tokenEnv = supervisor.tokenEnv;
-  if (!(typeof tokenEnv === "string" && TOKEN_ENV_RE.test(tokenEnv))) {
+  if (
+    !(
+      tokenEnv === undefined ||
+      (typeof tokenEnv === "string" && TOKEN_ENV_RE.test(tokenEnv))
+    )
+  ) {
     throw new Error(`${supervisorId} has an invalid tokenEnv`);
+  }
+  return {
+    config,
+    origin,
+    role: configuredRole(supervisor),
+    routePath,
+    supervisorId,
+    tokenEnv,
+  };
+};
+
+/** Whether an origin is on a loopback IP literal (127.0.0.1 or [::1]). */
+export const isLoopbackOrigin = (origin: string): boolean =>
+  isLoopbackLiteral(new URL(origin).hostname);
+
+/** The trust anchors of `--trust-file`, for an https origin only. */
+export const clientTrust = (
+  origin: string,
+  trustFile: string | undefined,
+  uid: number | undefined
+): string | undefined => {
+  if (trustFile === undefined) {
+    return undefined;
+  }
+  if (!origin.startsWith("https:")) {
+    throw new Error("--trust-file applies only to an https origin");
+  }
+  return readTrustFile(trustFile, uid);
+};
+
+/**
+ * Resolve `supervisorId`'s server and bearer:
+ *
+ * - An enrolled session credential for this origin (ra2) is used wherever
+ *   the server is: its token is audience-bound, refreshed before expiry, and
+ *   only ever sent to the origin it was enrolled at.
+ * - Without one, the static `tokenEnv` token, and only on loopback (an
+ *   origin on 127.0.0.1 or [::1]): a static token never leaves this host.
+ * - Beyond loopback without a credential the client refuses before any
+ *   request: enroll with `loop connect --enroll-code-file <path>`.
+ */
+export const resolveA2AClientEndpoint = (
+  supervisorIdValue: string,
+  deps: A2AClientDeps = {}
+): A2AClientEndpoint => {
+  const env = deps.env ?? process.env;
+  const client = readA2AClientConfig(supervisorIdValue, deps);
+  const { origin, routePath, supervisorId, tokenEnv } = client;
+  const uid = deps.uid?.();
+  const trustCa = clientTrust(origin, deps.trustFile, uid);
+  // One identity per process: an environment that could also act as another
+  // supervisor is refused unless the caller opted in. Names only, never values.
+  const assertOneIdentity = (): void => {
+    const others = otherSupervisorTokenEnvs(client.config, tokenEnv ?? "", env);
+    if (others.length > 0 && deps.allowMultiTokenEnv !== true) {
+      throw new A2AMultiTokenEnvironmentError(
+        `the environment also holds other supervisors' token variables (${others.join(", ")}); run each session with only ${tokenEnv ?? "its own token"} set, or pass --allow-multi-token-env`
+      );
+    }
+  };
+  const credentialPath = a2aSessionCredentialPath(supervisorId, env);
+  if (readA2ASessionCredential(credentialPath, uid)) {
+    assertOneIdentity();
+    return new A2AClientEndpoint({
+      baseUrl: origin,
+      credential: new A2ASessionTokenSource({
+        fetchImpl: fetchWithTrust(deps.fetchImpl ?? fetch, trustCa),
+        ...(deps.log ? { log: deps.log } : {}),
+        ...(deps.nowMs ? { now: deps.nowMs } : {}),
+        origin,
+        path: credentialPath,
+        supervisorId,
+        ...(uid === undefined ? {} : { uid }),
+      }),
+      routePath,
+      supervisorId,
+      ...(trustCa === undefined ? {} : { trustCa }),
+    });
+  }
+  if (!isLoopbackOrigin(origin)) {
+    throw new Error(
+      `${supervisorId} has no session credential for ${origin}; a static token is only sent on loopback. Enroll with loop connect --enroll-code-file <path>`
+    );
+  }
+  if (!tokenEnv) {
+    throw new Error(
+      `${supervisorId} has no tokenEnv and no session credential`
+    );
   }
   const token = env[tokenEnv];
   if (!token) {
@@ -391,20 +631,65 @@ export const resolveA2AClientEndpoint = (
       `${supervisorId}'s token environment ${tokenEnv} is not set`
     );
   }
-  // One identity per process: an environment that could also act as another
-  // supervisor is refused unless the caller opted in. Names only, never values.
-  const others = otherSupervisorTokenEnvs(config, tokenEnv, env);
-  if (others.length > 0 && deps.allowMultiTokenEnv !== true) {
-    throw new Error(
-      `the environment also holds other supervisors' token variables (${others.join(", ")}); run each session with only ${tokenEnv} set, or pass --allow-multi-token-env`
-    );
-  }
+  assertOneIdentity();
   return new A2AClientEndpoint({
-    baseUrl: `http://${host}:${Number(port)}`,
+    baseUrl: origin,
     routePath,
     supervisorId,
     token,
+    ...(trustCa === undefined ? {} : { trustCa }),
   });
+};
+
+/** An endpoint recipient run's own route credential (recipient-api-client). */
+const RECIPIENT_RUN_TOKEN_ENV = "LOOP_RECIPIENT_API_TOKEN";
+
+/**
+ * ra2 fix: the names (never the values) of the identity credentials `env`
+ * holds that are NOT `supervisorId`'s own: every other configured
+ * supervisor's token variable that is set, and an endpoint recipient run's
+ * route token. A session holding any of them has a fixed identity of its own
+ * that is not (or cannot be shown to be) `supervisorId`, so it must not stand
+ * in for `supervisorId`'s reader. Throws when the config cannot be read: then
+ * no absence can be shown, and the caller treats that as a refusal.
+ */
+export const foreignIdentityCredentialEnvs = (
+  supervisorIdValue: string,
+  deps: Pick<A2AClientDeps, "env" | "uid"> = {}
+): string[] => {
+  const env = deps.env ?? process.env;
+  const supervisorId = requireSupervisorEndpointRecipient(supervisorIdValue);
+  const configPath = orchestrationConfigPathFromEnv(env);
+  const text = readOrchestrationConfigText(configPath, env, deps);
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    throw new Error(`orchestration config is unavailable: ${configPath}`);
+  }
+  if (!isRecord(config)) {
+    throw new Error(`orchestration config is invalid: ${configPath}`);
+  }
+  const own = Array.isArray(config.supervisors)
+    ? config.supervisors.find(
+        (entry) => isRecord(entry) && entry.supervisorId === supervisorId
+      )
+    : undefined;
+  const ownTokenEnv =
+    isRecord(own) &&
+    typeof own.tokenEnv === "string" &&
+    TOKEN_ENV_RE.test(own.tokenEnv)
+      ? own.tokenEnv
+      : "";
+  const names = otherSupervisorTokenEnvs(config, ownTokenEnv, env);
+  if (
+    env[RECIPIENT_RUN_TOKEN_ENV] &&
+    RECIPIENT_RUN_TOKEN_ENV !== ownTokenEnv &&
+    !names.includes(RECIPIENT_RUN_TOKEN_ENV)
+  ) {
+    names.push(RECIPIENT_RUN_TOKEN_ENV);
+  }
+  return names;
 };
 
 const routeErrorCode = (value: unknown): A2AV2RouteErrorCode | undefined => {
@@ -415,33 +700,61 @@ const routeErrorCode = (value: unknown): A2AV2RouteErrorCode | undefined => {
     : undefined;
 };
 
-/** One JSON request to the server. Never follows a redirect. */
+/** One attempt of a JSON request with `token`. */
+const sendJson = async (
+  endpoint: A2AClientEndpoint,
+  input: { body?: unknown; method: "GET" | "POST"; path: string },
+  token: string,
+  fetchImpl: typeof fetch
+): Promise<Response> =>
+  await endpoint.fetch(fetchImpl)(endpoint.url(input.path), {
+    ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(input.body === undefined
+        ? {}
+        : { "content-type": "application/json" }),
+    },
+    method: input.method,
+    redirect: "error",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+/**
+ * One JSON request to the server. Never follows a redirect. A 401 for a
+ * session token another process has since replaced is retried once with
+ * the current one. A credential that needs a new enrollment is reported as
+ * itself, never as an unavailable server.
+ */
 const requestJson = async (
   endpoint: A2AClientEndpoint,
   input: { body?: unknown; method: "GET" | "POST"; path: string },
   what: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<unknown> => {
+  const token = await endpoint.token();
   let response: Response;
   try {
-    response = await fetchImpl(endpoint.url(input.path), {
-      ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-      headers: {
-        authorization: endpoint.authorization(),
-        ...(input.body === undefined
-          ? {}
-          : { "content-type": "application/json" }),
-      },
-      method: input.method,
-      redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    response = await sendJson(endpoint, input, token, fetchImpl);
   } catch (error) {
     throw new A2AClientError(
       `${what}: the server is unavailable`,
       "unavailable",
-      causeOf(endpoint, error)
+      await causeOf(endpoint, error)
     );
+  }
+  if (response.status === 401 && (await endpoint.superseded(token))) {
+    await response.body?.cancel().catch(() => undefined);
+    const current = await endpoint.token();
+    try {
+      response = await sendJson(endpoint, input, current, fetchImpl);
+    } catch (error) {
+      throw new A2AClientError(
+        `${what}: the server is unavailable`,
+        "unavailable",
+        await causeOf(endpoint, error)
+      );
+    }
   }
   let value: unknown;
   try {
@@ -694,6 +1007,38 @@ export interface A2ASendReceipt {
 }
 
 /**
+ * One authenticated ingress request. A 401 for a session token another
+ * process has since replaced is retried once, with the current token, from
+ * a copy of the request taken before it was sent.
+ */
+const sendIngress = async (
+  endpoint: A2AClientEndpoint,
+  request: Request,
+  fetchImpl: typeof fetch,
+  timeoutMs: number = REQUEST_TIMEOUT_MS
+): Promise<Response> => {
+  const send = async (source: Request, token: string): Promise<Response> => {
+    const headers = new Headers(source.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    return await fetchImpl(
+      new Request(source, {
+        headers,
+        redirect: "error",
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    );
+  };
+  const retry = request.clone();
+  const token = await endpoint.token();
+  const response = await send(request, token);
+  if (response.status !== 401 || !(await endpoint.superseded(token))) {
+    return response;
+  }
+  await response.body?.cancel().catch(() => undefined);
+  return await send(retry, await endpoint.token());
+};
+
+/**
  * The fetch the SDK client gets: the one ingress URL only, the bearer token
  * added here (never in the card or the request body), redirects refused, and
  * a send's own budget (`A2A_SEND_TIMEOUT_MS`).
@@ -715,14 +1060,11 @@ export const a2aIngressFetch = (
       if (request.url !== url) {
         return Promise.reject(new Error("unexpected A2A request target"));
       }
-      const headers = new Headers(request.headers);
-      headers.set("authorization", endpoint.authorization());
-      return fetchImpl(
-        new Request(request, {
-          headers,
-          redirect: "error",
-          signal: AbortSignal.timeout(timeoutMs),
-        })
+      return sendIngress(
+        endpoint,
+        request,
+        endpoint.fetch(fetchImpl),
+        timeoutMs
       );
     },
     { preconnect: fetch.preconnect }
@@ -756,7 +1098,27 @@ export const sendA2AMessage = async (
   }
   const url = endpoint.url(a2aV2SupervisorIngressPath(endpoint.routePath, to));
   const timeoutMs = options.timeoutMs ?? A2A_SEND_TIMEOUT_MS;
-  const authenticated = a2aIngressFetch(endpoint, url, fetchImpl, timeoutMs);
+  // RA2: the SDK reports any refusal as a transport error; the ingress's
+  // owner-reply-only refusal is kept so the caller is told the right path.
+  let ownerReplyOnly = false;
+  const observed = Object.assign(
+    async (
+      resource: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ): Promise<Response> => {
+      const response = await fetchImpl(resource, init);
+      if (response.status === 403) {
+        const value: unknown = await response
+          .clone()
+          .json()
+          .catch(() => undefined);
+        ownerReplyOnly = routeErrorCode(value) === OWNER_REPLY_ONLY;
+      }
+      return response;
+    },
+    { preconnect: fetch.preconnect }
+  );
+  const authenticated = a2aIngressFetch(endpoint, url, observed, timeoutMs);
   const message: Message = {
     contextId: input.contextId ?? input.messageId,
     extensions: [],
@@ -793,10 +1155,17 @@ export const sendA2AMessage = async (
       tenant: "",
     });
   } catch (error) {
-    const { cause } = causeOf(endpoint, error);
+    const { cause } = await causeOf(endpoint, error);
     // The message id goes with every failure: the server deduplicates a send
     // by it, so re-sending with the same id is safe and tells the outcome.
     const detail = { cause, messageId: input.messageId };
+    if (ownerReplyOnly) {
+      throw new A2AClientError(
+        `send refused: ${OWNER_REPLY_ONLY_MESSAGE} Nothing is claimed delivered.`,
+        OWNER_REPLY_ONLY,
+        { notifyVia: OWNER_NOTIFICATION_PATH }
+      );
+    }
     if (isTimeoutCause(cause)) {
       // No answer is not a refusal: the server may have accepted the message
       // and be delivering it (the live 2026-10-11 send was delivered).
@@ -854,10 +1223,58 @@ export interface A2AAckRefusal {
 }
 
 /** The recipient's delivery/read ACK of V2 workflows; never completion. */
+/** A refusal's reason: refusal codes only, never free text from a response. */
+const ackRefusalReason = (error: unknown): string => {
+  if (error instanceof RecipientAcknowledgementError) {
+    return error.reason;
+  }
+  return "refused";
+};
+
+/** One ACK; a superseded session token is retried once with the current one. */
+const acknowledgeOnce = async (
+  endpoint: A2AClientEndpoint,
+  workflowId: string,
+  fetchImpl: typeof fetch,
+  early: {
+    earlyWaitMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  }
+): Promise<{ phase: string }> => {
+  const attempt = async (token: string) =>
+    await acknowledgeRecipientWorkflow({
+      ...early,
+      fetchImpl,
+      token,
+      url: endpoint.url(`${endpoint.routePath}/recipient`),
+      workflowId,
+    });
+  const token = await endpoint.token();
+  try {
+    return await attempt(token);
+  } catch (error) {
+    if (
+      error instanceof RecipientAcknowledgementError &&
+      error.acknowledgeCode === "unauthenticated" &&
+      (await endpoint.superseded(token))
+    ) {
+      return await attempt(await endpoint.token());
+    }
+    throw error;
+  }
+};
+
 export const acknowledgeA2AWorkflows = async (
   endpoint: A2AClientEndpoint,
   workflowIds: readonly string[],
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
+  /** How early refusals are waited out (acknowledgeRecipientWorkflow). */
+  early: {
+    earlyWaitMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {}
 ): Promise<{
   acknowledged: { phase: string; workflowId: string }[];
   refused: A2AAckRefusal[];
@@ -866,22 +1283,29 @@ export const acknowledgeA2AWorkflows = async (
   const acknowledged: { phase: string; workflowId: string }[] = [];
   const refused: A2AAckRefusal[] = [];
   for (const workflowId of workflowIds) {
+    if (!isSupervisorMessageV2WorkflowId(workflowId)) {
+      refused.push({ reason: "not-a-v2-workflow-id", workflowId });
+      continue;
+    }
     try {
-      const receipt = await acknowledgeRecipientWorkflow({
-        fetchImpl,
-        token: endpoint.token(),
-        url: endpoint.url(`${endpoint.routePath}/recipient`),
+      const receipt = await acknowledgeOnce(
+        endpoint,
         workflowId,
-      });
+        endpoint.fetch(fetchImpl),
+        early
+      );
       acknowledged.push({ phase: receipt.phase, workflowId });
     } catch (error) {
+      if (error instanceof A2ASessionCredentialError) {
+        throw error;
+      }
       const cause =
         error instanceof Error && error.cause !== undefined
-          ? safeErrorCause(error.cause, [endpoint.token()])
+          ? safeErrorCause(error.cause, await knownTokens(endpoint))
           : undefined;
       refused.push({
         ...(cause ? { cause } : {}),
-        reason: error instanceof Error ? error.message : "refused",
+        reason: ackRefusalReason(error),
         workflowId,
       });
     }

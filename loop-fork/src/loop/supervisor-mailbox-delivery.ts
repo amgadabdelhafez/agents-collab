@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { MailboxFileAccess } from "./mailbox-file-access";
+import { supervisorMailboxFileName } from "./supervisor-id";
 import type {
   SupervisorMessageDeliveryOutcome,
   SupervisorMessageDeliveryPort,
@@ -200,5 +201,10 @@ export class FirstAvailableDeliveryPort
   }
 }
 
+/**
+ * `<root>/supervisor_<slug>.jsonl` (supervisor-id.ts): byte-identical to the
+ * historical name for every flat id, collision-free for role ids. Anything
+ * but a supervisor id is refused rather than flattened into a name.
+ */
 export const mailboxPathFor = (root: string, supervisorId: string): string =>
-  join(root, `${supervisorId.replace(/[^a-z0-9._-]/gu, "_")}.jsonl`);
+  join(root, supervisorMailboxFileName(supervisorId));

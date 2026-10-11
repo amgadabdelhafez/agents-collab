@@ -29,6 +29,7 @@ import {
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import { processGroupAlive } from "./process-group";
 import { AGENT_GROUP_KIND, PANE_PROCESS_KIND } from "./run-pane-processes";
+import { SUPERVISOR_ID_RE as A2A_SUPERVISOR_ID_RE } from "./supervisor-id";
 import { createManifestHandle, type ManifestHandle } from "./tmux-socket";
 import type {
   Agent,
@@ -779,7 +780,15 @@ export const resolveRunId = (
   return String(next + 1);
 };
 
-export const resolveRepoId = (
+/**
+ * The checkout id: a hash of this clone's git common dir (so every worktree of
+ * one clone shares it, and two clones at different paths do not), falling
+ * back to the top level and then to cwd outside git. It names run storage
+ * (`~/.loop/runs/<checkoutId>`) and is what manifests, endpoint run refs and
+ * the panel call `repoId`. It is a local cache key only: the repository's
+ * identity is the location-independent repoKey (`project-identity.ts`).
+ */
+export const resolveCheckoutId = (
   cwd = process.cwd(),
   deps?: Partial<RepoIdDeps>
 ): string => {
@@ -803,6 +812,9 @@ export const resolveRepoId = (
 
   return buildRepoId(basename(cwd) || "loop", cwd);
 };
+
+/** Historical name of `resolveCheckoutId`; the value is unchanged. */
+export const resolveRepoId = resolveCheckoutId;
 
 export const buildRunDir = (
   storageRoot: string,
@@ -1904,7 +1916,6 @@ const optionalWorkspaceReleaseKind = (
 // the manifest before it lets that supervisor claim the run's endpoint, so
 // every manifest rewrite must keep it; anything but a supervisor id is
 // dropped rather than carried.
-const A2A_SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/u;
 const optionalA2ASupervisorId = (
   parsed: Record<string, unknown>
 ): Pick<RunManifest, "a2aSupervisorId"> | Record<string, never> =>

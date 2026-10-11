@@ -888,6 +888,17 @@ test("every configured supervisor is an A2A V2 recipient: six directed sends del
       sessions.received(CLAUDE_RUN).includes(reclaimed) ? true : undefined
     );
     expect(mailboxWorkflowIds(f.mailboxOf(CLAUDE_RUN))).toEqual([toMailbox]);
+    // The recipient acknowledges as soon as it holds the message, without
+    // waiting for the delivery to be recorded (a Claude seat's first attempt
+    // only queues): an early claim is waited out, never refused for good.
+    expect(await ack(f, CLAUDE_RUN, reclaimed)).toMatchObject({
+      acknowledged: [{ phase: "acknowledged", workflowId: reclaimed }],
+      refused: [],
+    });
+    const reclaimedStatus = await status(f, CODEX_RUN, reclaimed);
+    expect(reclaimedStatus.deliveredAt).toBeString();
+    expect(reclaimedStatus.acknowledgedAt).toBeString();
+    expect(reclaimedStatus.workResultCompleted).toBe(false);
 
     // 4. A competing claim is fenced (the Codex thread).
     const codexEndpoint = resolveA2AClientEndpoint(CODEX_RUN, {

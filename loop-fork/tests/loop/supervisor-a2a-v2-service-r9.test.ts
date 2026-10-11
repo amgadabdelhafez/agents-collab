@@ -44,6 +44,7 @@ import {
   supervisorEndpointLocatorRefused,
   supervisorEndpointRoots,
 } from "../../src/loop/supervisor-endpoint-lease";
+import { SupervisorInboxStreamHub } from "../../src/loop/supervisor-inbox-stream";
 import type { SupervisorMessageV2DeliveryEnvelope } from "../../src/loop/supervisor-message-v2-contract";
 import { SupervisorMessageV2StartIntentScopeError } from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import { SUPERVISOR_ENDPOINT_REASONS } from "../../src/loop/supervisor-message-v2-endpoint-contract";
@@ -1040,9 +1041,16 @@ test("recipient routing hands every lease-routed recipient to T2's endpoint port
 /** The service factory with every store faked (no PostgreSQL, no Temporal). */
 const fakeService = (input: {
   createHostFails?: boolean;
+  inboxStream?: SupervisorInboxStreamHub;
   leases?: ReturnType<typeof fakeLeaseStore>;
+  mayReceive?: (request: {
+    from: string;
+    principal: string;
+    to: string;
+  }) => boolean;
   mounted?: boolean;
   resolveLocator: SupervisorEndpointLocatorResolver;
+  supervisorAliases?: ReadonlyMap<string, string>;
 }) => {
   const closes: string[] = [];
   const closable = (name: string) => ({
@@ -1060,12 +1068,16 @@ const fakeService = (input: {
     allSupervisors: {
       authenticator,
       hasMailbox: () => false,
+      ...(input.inboxStream ? { inboxStream: input.inboxStream } : {}),
       legacySeats: [],
-      mayReceive: () => true,
+      mayReceive: input.mayReceive ?? (() => true),
       principalForRecipient: principalFor,
       resolveLocator: input.resolveLocator,
       routePath: "/a2a/v2",
       sessionTtlMs: 60_000,
+      ...(input.supervisorAliases
+        ? { supervisorAliases: input.supervisorAliases }
+        : {}),
       supervisorIds: [ALPHA, BETA],
     },
     card: {
@@ -1228,6 +1240,69 @@ test("the service mounts every supervisor's gated ingress, the session routes an
   ]);
 });
 
+test("RA2: a role id that aliases a configured legacy address is served by that address's ingress, and the grant is decided for the address", async () => {
+  const home = serverHome();
+  const role = "supervisor:amgad/harness-engineering/harness";
+  const decided: string[] = [];
+  const { service: pending } = fakeService({
+    mayReceive: (request) => {
+      decided.push(request.to);
+      return false;
+    },
+    mounted: false,
+    resolveLocator: home.resolveLocator,
+    supervisorAliases: new Map([[role, BETA]]),
+  });
+  const service = await pending;
+  const handle = (path: string, body: unknown) =>
+    (
+      service.allSupervisorsRoute as NonNullable<
+        typeof service.allSupervisorsRoute
+      >
+    ).httpHandler(
+      new Request(`http://127.0.0.1:7321${path}`, {
+        body: JSON.stringify(body),
+        headers: {
+          authorization: "Bearer token-alpha",
+          "content-type": "application/json",
+        },
+        method: "POST",
+      })
+    );
+  const read = {
+    id: 9,
+    jsonrpc: "2.0",
+    method: "GetTask",
+    params: { id: "t-404" },
+  };
+  // The alias's one-segment slug reaches the SDK (JSON-RPC, not 404).
+  const viaAlias = await handle(
+    "/a2a/v2/supervisors/amgad~harness-engineering~harness",
+    read
+  );
+  expect(viaAlias.status).toBe(200);
+  expect(await viaAlias.json()).toMatchObject({ id: 9, jsonrpc: "2.0" });
+  // A send through the alias is decided for the configured address.
+  expect(
+    (
+      await handle(
+        "/a2a/v2/supervisors/amgad~harness-engineering~harness",
+        sendMessage(ALPHA)
+      )
+    ).status
+  ).toBe(403);
+  expect(decided).toEqual([BETA]);
+  // The '/' form is never one segment, and a role id nobody aliased has no
+  // ingress.
+  for (const path of [
+    "/a2a/v2/supervisors/amgad/harness-engineering/harness",
+    "/a2a/v2/supervisors/amgad~harness-engineering~other",
+  ]) {
+    expect((await handle(path, read)).status).toBe(404);
+  }
+  await service.close();
+});
+
 test("the service answers 503 on the session routes when no lease store is wired, and closes an opened lease store when a later stage fails", async () => {
   const home = serverHome();
   const { service: pending } = fakeService({
@@ -1254,4 +1329,67 @@ test("the service answers 503 on the session routes when no lease store is wired
   expect(failure).toContain("initialization failed at runtime-host");
   expect(failure).not.toContain("private-password");
   expect(failing.closes).toContain("leases");
+});
+
+test("ra1: the service wires the session routes to the inbox hub: a claim or release wakes that seat's streams, a refusal wakes nothing", async () => {
+  const home = serverHome();
+  const leases = fakeLeaseStore(home.resolveLocator);
+  const hub = new SupervisorInboxStreamHub();
+  const { service: pending } = fakeService({
+    inboxStream: hub,
+    leases,
+    mounted: false,
+    resolveLocator: home.resolveLocator,
+  });
+  const service = await pending;
+  const handle = (request: Request) =>
+    (
+      service.allSupervisorsRoute as NonNullable<
+        typeof service.allSupervisorsRoute
+      >
+    ).httpHandler(request);
+  const never = new AbortController().signal;
+  // An open stream of alpha's waits for its next wake.
+  const woken = hub.waitForWake(
+    TENANT,
+    ALPHA,
+    hub.generation(TENANT, ALPHA),
+    60_000,
+    never
+  );
+  expect((await handle(sessionRequest(claimBody()))).status).toBe(200);
+  expect(await woken).toBe("wake");
+  expect(hub.generation(TENANT, ALPHA)).toBe(1);
+  expect(hub.generation(TENANT, BETA)).toBe(0);
+  // A refused claim (another holder, no takeover) changes no lease.
+  const held = await handle(
+    sessionRequest(claimBody({ holderRef: "holder:alpha-2" }))
+  );
+  expect(held.status).toBe(409);
+  expect(hub.generation(TENANT, ALPHA)).toBe(1);
+  // A takeover moves the lease: the old holder's stream is woken to fence.
+  const taken = await handle(
+    sessionRequest(claimBody({ holderRef: "holder:alpha-2", takeover: true }))
+  );
+  expect(taken.status).toBe(200);
+  expect(hub.generation(TENANT, ALPHA)).toBe(2);
+  const released = await handle(
+    new Request("http://127.0.0.1:7321/a2a/v2/sessions/release", {
+      body: JSON.stringify({
+        epoch: 2,
+        holderRef: "holder:alpha-2",
+        schema: A2A_V2_SESSION_REQUEST_SCHEMAS.release,
+        supervisorId: ALPHA,
+      }),
+      headers: {
+        authorization: "Bearer token-alpha",
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+  );
+  expect(released.status).toBe(200);
+  expect(hub.generation(TENANT, ALPHA)).toBe(3);
+  expect(hub.generation(TENANT, BETA)).toBe(0);
+  await service.close();
 });

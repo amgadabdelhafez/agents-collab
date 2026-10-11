@@ -44,6 +44,10 @@ import {
 import { a2aV2TimingEnabled, timedPort } from "./a2a-v2-timing";
 import { readBoundedRequestText } from "./bounded-request-body";
 import {
+  OWNER_REPLY_ONLY,
+  ownerReplyOnlyResponse,
+} from "./orchestration-owner-messaging";
+import {
   SupervisorEndpointLeaseError,
   type SupervisorEndpointLeaseFenceRefusal,
   type SupervisorEndpointLeaseHolderSummary,
@@ -55,6 +59,14 @@ import {
   type SupervisorEndpointLocatorResolver,
   supervisorEndpointLocatorRefused,
 } from "./supervisor-endpoint-lease";
+import { SUPERVISOR_ID_RE as PEER_SUPERVISOR_ID } from "./supervisor-id";
+import {
+  createSupervisorInboxStreamHandler,
+  PostgresSupervisorInboxStore,
+  type SupervisorInboxStore,
+  type SupervisorInboxStreamHub,
+  type SupervisorInboxStreamLimits,
+} from "./supervisor-inbox-stream";
 import {
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
@@ -83,7 +95,12 @@ import {
   PostgresSupervisorMessageV2GovernanceReceiptStore,
   type SupervisorMessageV2AuthorityPort,
 } from "./supervisor-message-v2-governance";
-import { createSupervisorMessageV2RecipientHttpHandler } from "./supervisor-message-v2-http";
+import {
+  createSupervisorMessageV2RecipientHttpHandler,
+  runSupervisorMessageV2RecipientLifecycle,
+  type SupervisorMessageV2RecipientLifecycleCommand,
+  type SupervisorMessageV2RecipientLifecycleOutcome,
+} from "./supervisor-message-v2-http";
 import {
   createSupervisorMessageV2RecipientAssignmentResolver,
   createSupervisorMessageV2RecipientReachability,
@@ -122,7 +139,6 @@ import type {
   WorkflowStartReceipt,
 } from "./workflow-port";
 
-const PEER_SUPERVISOR_ID = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
 /** Terminal A2A states in which a task can never accept a result, so the
  * graph task it reserved may pass to another A2A task. */
 const ENDED_WITHOUT_RESULT: readonly TaskState[] = [
@@ -162,6 +178,12 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   migrate(): Promise<void>;
 };
 
+/** ra1's inbox store as this service owns it. */
+type InboxResource = SupervisorInboxStore & {
+  close(): Promise<void>;
+  migrate?(): Promise<void>;
+};
+
 /** T1's lease store as this service owns it. */
 type LeaseResource = SupervisorEndpointLeaseStore & {
   close(): Promise<void>;
@@ -190,6 +212,12 @@ export interface SupervisorA2AV2ServiceDependencies {
    * resolver. Absent (until T1 is wired), the session routes answer 503
    * `v2-unavailable` and no recipient has a lease row.
    */
+  /**
+   * ra1: the durable inbox the inbox-stream kind delivers into and the
+   * stream route reads. Absent, the stream route answers 503 and an
+   * inbox-stream lease is never ready.
+   */
+  connectInbox?(databaseUrl: string): Promise<InboxResource>;
   connectLeases?(input: {
     databaseUrl: string;
     now: () => string;
@@ -227,6 +255,8 @@ export interface SupervisorA2AV2ServiceDependencies {
 
 export const defaultSupervisorA2AV2ServiceDependencies: SupervisorA2AV2ServiceDependencies =
   {
+    connectInbox: (databaseUrl) =>
+      PostgresSupervisorInboxStore.connect(databaseUrl),
     connectLedger: (databaseUrl, options) =>
       PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
     connectSessions: (input) => PostgresSupervisorSessionV2Store.connect(input),
@@ -403,6 +433,16 @@ export interface SupervisorA2AV2Service {
   recipientRoute?: {
     pathname: string;
     httpHandler(request: Request): Promise<Response>;
+    /**
+     * The same claim/acknowledge as the HTTP route, for an identity the host
+     * established itself rather than from a bearer: the mailbox consumption
+     * reconciler acting for a supervisor whose own reader acknowledged the
+     * message. Assignment, reachability and claimant rules are the route's.
+     */
+    lifecycle?(
+      identity: SupervisorA2AAuthenticatedIdentity,
+      command: SupervisorMessageV2RecipientLifecycleCommand
+    ): Promise<SupervisorMessageV2RecipientLifecycleOutcome>;
   };
   registerSession(
     scope: TrustedSupervisorMessageV2Scope,
@@ -473,6 +513,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
   readonly #sessions: SessionResource;
   readonly #leases: LeaseResource | undefined;
+  readonly #inbox: { close(): Promise<void> } | undefined;
   readonly #reachable:
     | ((
         scope: TrustedSupervisorMessageV2Scope,
@@ -487,6 +528,8 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     allSupervisorsRoute?: SupervisorA2AV2Service["allSupervisorsRoute"];
     assignmentRoute?: SupervisorA2AV2Service["assignmentRoute"];
     attempts: SupervisorMessageV2DeliveryAttempts;
+    /** ra1: the inbox (detaches the hub, ending its streams, then closes). */
+    inbox?: { close(): Promise<void> };
     leases?: LeaseResource;
     /** r9: the recipient route's reachability rule, for publishResult. */
     reachable?(
@@ -517,6 +560,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.assignmentRoute = input.assignmentRoute;
     this.#attempts = input.attempts;
     this.#leases = input.leases;
+    this.#inbox = input.inbox;
     this.#reachable = input.reachable;
     this.#workflows = input.workflows;
     this.#now = input.now;
@@ -740,6 +784,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     for (const resource of [
       this.host,
       ...(this.#receipts ? [this.#receipts] : []),
+      ...(this.#inbox ? [this.#inbox] : []),
       ...(this.#leases ? [this.#leases] : []),
       this.#sessions,
       this.#ledger,
@@ -1038,6 +1083,11 @@ export interface A2AV2SessionRoutesOptions {
   /** Undefined when no lease store is available: every request is 503. */
   leases(): A2AV2SessionLeaseStore | undefined;
   log?: (line: string) => void;
+  /**
+   * ra1: a claim or release changed this recipient's lease; its open inbox
+   * streams re-check their fence now (a takeover ends the old holder's).
+   */
+  onLeaseChange?(recipient: string): void;
   principalForRecipient(recipient: string): string | undefined;
   /** The server's own resolver; a claim's locator is resolved before the store. */
   resolveLocator: SupervisorEndpointLocatorResolver;
@@ -1258,45 +1308,68 @@ export const createA2AV2SessionRoutesHandler = (
       );
       return routeError("locator-refused");
     };
+    let response: Response;
     try {
       if (operation === "claim") {
-        return await claimSession(
+        response = await claimSession(
           options,
           call as A2AV2SessionCall<"claim">,
           refused
         );
-      }
-      if (operation === "renew") {
+      } else if (operation === "renew") {
         return await renewSession(
           options,
           call as A2AV2SessionCall<"renew">,
           refused
         );
+      } else {
+        response = await releaseSession(call as A2AV2SessionCall<"release">);
       }
-      return await releaseSession(call as A2AV2SessionCall<"release">);
     } catch (error) {
       return sessionStoreFailure(error);
     }
+    if (response.ok) {
+      options.onLeaseChange?.(call.recipient);
+    }
+    return response;
   };
 };
+
+/**
+ * A `receive` decision for the ingress: allowed, refused, or (RA2)
+ * `owner-reply-only`, an unprompted message to the owner, refused with a
+ * body that names the attention-os interaction path.
+ */
+export type A2AV2ReceiveDecision = boolean | typeof OWNER_REPLY_ONLY;
+
+export interface A2AV2ReceiveRequest {
+  from: string;
+  principal: string;
+  /** The message's A2A context id, when it carries one. */
+  threadId?: string;
+  to: string;
+}
 
 export interface A2AV2SupervisorIngressGateOptions {
   /** Any configured supervisor identity. */
   authenticator: SupervisorA2AAuthenticator;
   /**
    * The configured grants: may this principal, as `from`, send to `to`
-   * (operation `receive`)?
+   * (operation `receive`) on this context? Only `true` allows.
    */
-  mayReceive(input: { from: string; principal: string; to: string }): boolean;
+  mayReceive(input: A2AV2ReceiveRequest): A2AV2ReceiveDecision;
 }
 
 /** The SDK methods that carry a message to the path's supervisor. */
 const SENDING_METHODS = new Set(["SendMessage", "SendStreamingMessage"]);
 
-/** `harness.dev/from` of the message a JSON-RPC request sends, if it sends. */
+/**
+ * `harness.dev/from` and the context id of the message a JSON-RPC request
+ * sends, if it sends.
+ */
 const sentFrom = (
   parsed: unknown
-): { from: unknown; sends: true } | { sends: false } => {
+): { contextId?: string; from: unknown; sends: true } | { sends: false } => {
   if (!isPlainRecord(parsed)) {
     return { sends: false };
   }
@@ -1308,7 +1381,15 @@ const sentFrom = (
   const metadata = isPlainRecord(message?.metadata)
     ? message.metadata
     : undefined;
-  return { from: metadata?.[FROM_METADATA_KEY], sends: true };
+  const contextId =
+    typeof message?.contextId === "string" && message.contextId.trim()
+      ? message.contextId
+      : undefined;
+  return {
+    ...(contextId ? { contextId } : {}),
+    from: metadata?.[FROM_METADATA_KEY],
+    sends: true,
+  };
 };
 
 const parseJsonOrUndefined = (raw: string): unknown => {
@@ -1318,6 +1399,36 @@ const parseJsonOrUndefined = (raw: string): unknown => {
     // The SDK answers a parse error itself.
     return undefined;
   }
+};
+
+/**
+ * The refusal of a request that sends, or undefined to let it through: the
+ * sender must be the authenticated supervisor and the grant must hold
+ * (only `true` allows). RA2: an unprompted message to the owner is refused
+ * with the body that names the attention-os interaction path.
+ */
+const ingressSendRefusal = (
+  options: A2AV2SupervisorIngressGateOptions,
+  sent: ReturnType<typeof sentFrom>,
+  identity: SupervisorA2AAuthenticatedIdentity,
+  to: string
+): Response | undefined => {
+  if (!sent.sends) {
+    return undefined;
+  }
+  if (sent.from !== identity.supervisorId) {
+    return routeError("identity-mismatch");
+  }
+  const decision = options.mayReceive({
+    from: identity.supervisorId,
+    principal: identity.principal,
+    ...(sent.contextId ? { threadId: sent.contextId } : {}),
+    to,
+  });
+  if (decision === OWNER_REPLY_ONLY) {
+    return ownerReplyOnlyResponse();
+  }
+  return decision === true ? undefined : routeError("identity-mismatch");
 };
 
 /**
@@ -1356,17 +1467,9 @@ export const createA2AV2SupervisorIngressGate = (
       // A batch is not a request this ingress serves.
       return routeError("request-invalid");
     }
-    const sent = sentFrom(parsed);
-    if (
-      sent.sends &&
-      (sent.from !== identity.supervisorId ||
-        !options.mayReceive({
-          from: identity.supervisorId,
-          principal: identity.principal,
-          to,
-        }))
-    ) {
-      return routeError("identity-mismatch");
+    const refusal = ingressSendRefusal(options, sentFrom(parsed), identity, to);
+    if (refusal) {
+      return refusal;
     }
     const headers = new Headers(request.headers);
     headers.delete("content-length");
@@ -1502,15 +1605,31 @@ export interface SupervisorA2AV2AllSupervisorsOptions {
     sessions: Pick<SessionResource, "current">;
   }): SupervisorEndpointDeliveryPort;
   hasMailbox(recipient: string): boolean;
+  /**
+   * ra1: the hub shared with the inbox-stream delivery adapter. With it (and
+   * `dependencies.connectInbox`) the service opens the inbox and serves
+   * GET {routePath}/sessions/<slug>/inbox.
+   */
+  inboxStream?: SupervisorInboxStreamHub;
+  /** ra1: test-only stream limits. */
+  inboxStreamLimits?: Partial<SupervisorInboxStreamLimits>;
   /** r8's manifest-bound seats; see SupervisorMessageV2RecipientEndpoints. */
   legacySeats: readonly string[];
   log?: (line: string) => void;
-  mayReceive(input: { from: string; principal: string; to: string }): boolean;
+  mayReceive(input: A2AV2ReceiveRequest): A2AV2ReceiveDecision;
   principalForRecipient(recipient: string): string | undefined;
+  /** See SupervisorMessageV2RecipientEndpoints.renewExpiredLease. */
+  renewExpiredLease?(recipient: string): Promise<boolean>;
   /** The server's own resolver (createSupervisorEndpointLocatorResolver). */
   resolveLocator: SupervisorEndpointLocatorResolver;
   routePath: string;
   sessionTtlMs: number;
+  /**
+   * RA2: role id -> the configured legacy address it aliases
+   * (project-identity.ts `configuredSupervisorAddressBook`). Each alias also
+   * gets {routePath}/supervisors/<alias slug>, served by its address.
+   */
+  supervisorAliases?: ReadonlyMap<string, string>;
   /** Every configured supervisor; each gets {routePath}/supervisors/<slug>. */
   supervisorIds: readonly string[];
 }
@@ -1688,6 +1807,21 @@ const createAllSupervisorsRoute = (input: {
       identity?: SupervisorA2AAuthenticatedIdentity
     ) => Promise<Response>
   >();
+  const seats = new Map<string, SupervisorA2AV2Ingress>();
+  const mount = (routeId: string, seatIngress: SupervisorA2AV2Ingress) => {
+    const sdk = createSupervisorA2AHttpHandler({
+      authenticator: sdkAuthenticator,
+      handler: seatIngress.handler,
+      pathname: a2aV2SupervisorIngressPath(all.routePath, routeId),
+      tenant: input.tenant,
+    });
+    ingress.set(routeId, (request, identity) => {
+      if (identity) {
+        gated.set(request, identity);
+      }
+      return sdk(request);
+    });
+  };
   for (const supervisorId of new Set(all.supervisorIds)) {
     const pathname = a2aV2SupervisorIngressPath(all.routePath, supervisorId);
     const seatIngress = new SupervisorA2AV2Ingress({
@@ -1699,28 +1833,45 @@ const createAllSupervisorsRoute = (input: {
       },
       supervisorId,
     });
-    const sdk = createSupervisorA2AHttpHandler({
-      authenticator: sdkAuthenticator,
-      handler: seatIngress.handler,
-      pathname,
-      tenant: input.tenant,
-    });
-    ingress.set(supervisorId, (request, identity) => {
-      if (identity) {
-        gated.set(request, identity);
-      }
-      return sdk(request);
-    });
+    seats.set(supervisorId, seatIngress);
+    mount(supervisorId, seatIngress);
   }
+  // RA2: a role id that aliases a configured legacy address is served by
+  // that address's own ingress (same seat, same recipient); the gate below
+  // decides the grant for the configured address, never the alias.
+  const aliases = all.supervisorAliases ?? new Map<string, string>();
+  for (const [alias, target] of aliases) {
+    const seatIngress = seats.get(target);
+    if (seatIngress && !seats.has(alias)) {
+      mount(alias, seatIngress);
+    }
+  }
+  const hub = all.inboxStream;
   const sessions = createA2AV2SessionRoutesHandler({
     authenticator: all.authenticator,
     leases: input.leases,
     ...(input.log ? { log: input.log } : {}),
+    ...(hub
+      ? {
+          onLeaseChange: (recipient: string) =>
+            hub.wake(input.tenant, recipient),
+        }
+      : {}),
     principalForRecipient: all.principalForRecipient,
     resolveLocator: all.resolveLocator,
     sessionTtlMs: all.sessionTtlMs,
     tenant: input.tenant,
   });
+  const inbox = hub
+    ? createSupervisorInboxStreamHandler({
+        authenticator: all.authenticator,
+        hub,
+        leases: input.leases,
+        ...(all.inboxStreamLimits ? { limits: all.inboxStreamLimits } : {}),
+        principalForRecipient: all.principalForRecipient,
+        tenant: input.tenant,
+      })
+    : undefined;
   const status = createA2AV2MessageStatusHandler({
     authenticator: all.authenticator,
     status: async (scope, workflowId) => {
@@ -1753,9 +1904,20 @@ const createAllSupervisorsRoute = (input: {
       if (match?.route === "message-status") {
         return status(request, match.messageId);
       }
+      if (match?.route === "session-inbox") {
+        return inbox
+          ? inbox(request, match.supervisorId)
+          : Promise.resolve(routeError("v2-unavailable"));
+      }
       const seat = match ? ingress.get(match.supervisorId) : undefined;
       return match && seat
-        ? gate(request, match.supervisorId, seat)
+        ? gate(
+            request,
+            seats.has(match.supervisorId)
+              ? match.supervisorId
+              : (aliases.get(match.supervisorId) ?? match.supervisorId),
+            seat
+          )
         : Promise.resolve(routeError("not-found"));
     },
     routePath: all.routePath,
@@ -1779,6 +1941,7 @@ const primaryRoutes = (
  */
 const openAllSupervisorsRouting = async (input: {
   dependencies: SupervisorA2AV2ServiceDependencies;
+  onInbox(inbox: InboxResource): void;
   onLeases(leases: LeaseResource): void;
   onStage(stage: string): void;
   options: SupervisorA2AV2ServiceOptions;
@@ -1808,6 +1971,17 @@ const openAllSupervisorsRouting = async (input: {
     });
     input.onLeases(leases);
     await leases.migrate?.();
+  }
+  // ra1: the inbox lives in the ledger's database, after the ledger's own
+  // migration (its reads join the ledger's start intents).
+  if (all.inboxStream && input.dependencies.connectInbox) {
+    input.onStage("inbox-store");
+    const inbox = await input.dependencies.connectInbox(
+      input.options.databaseUrl
+    );
+    input.onInbox(inbox);
+    await inbox.migrate?.();
+    all.inboxStream.attach(inbox);
   }
   input.onStage("endpoint-delivery");
   const endpoint = all.endpointDelivery?.({
@@ -1860,6 +2034,9 @@ const composeAllSupervisors = (input: {
     hasMailbox: all.hasMailbox,
     leases: input.leases ?? NO_LEASES,
     legacySeats: new Set(all.legacySeats),
+    ...(all.renewExpiredLease
+      ? { renewExpiredLease: all.renewExpiredLease }
+      : {}),
     resolveLocator: all.resolveLocator,
   };
   return {
@@ -1921,6 +2098,7 @@ export const createSupervisorA2AV2Service = async (
   let ledger: LedgerResource | undefined;
   let sessions: SessionResource | undefined;
   let leases: LeaseResource | undefined;
+  let inbox: InboxResource | undefined;
   let ingress: SupervisorA2AV2Ingress | undefined;
   let host: TemporalSupervisorRuntimeHost | undefined;
   let receipts: PostgresSupervisorMessageV2GovernanceReceiptStore | undefined;
@@ -1962,6 +2140,9 @@ export const createSupervisorA2AV2Service = async (
     await sessions.migrate();
     const opened = await openAllSupervisorsRouting({
       dependencies,
+      onInbox: (store) => {
+        inbox = store;
+      },
       onLeases: (store) => {
         leases = store;
       },
@@ -2160,12 +2341,30 @@ export const createSupervisorA2AV2Service = async (
           publishResult: (scope, command) =>
             ownedService.publishResult(scope, command),
         }),
+        lifecycle: (identity, command) =>
+          runSupervisorMessageV2RecipientLifecycle(
+            { governance, resolveAssignment },
+            identity,
+            command
+          ),
       };
     }
+    const inboxHub = options.allSupervisors?.inboxStream;
+    const openedInbox = inbox;
     ownedService = new OwnedSupervisorA2AV2Service({
       allSupervisorsRoute: r9.route,
       attempts,
       assignmentRoute,
+      ...(openedInbox
+        ? {
+            inbox: {
+              close: () => {
+                inboxHub?.detach();
+                return openedInbox.close();
+              },
+            },
+          }
+        : {}),
       leases,
       reachable: r9.reachable,
       workflows,
@@ -2195,6 +2394,8 @@ export const createSupervisorA2AV2Service = async (
     // reverse dependency order.
     await closeQuietly(host ?? ingress);
     await closeQuietly(receipts);
+    options.allSupervisors?.inboxStream?.detach();
+    await closeQuietly(inbox);
     await closeQuietly(leases);
     await closeQuietly(sessions);
     await closeQuietly(ledger);

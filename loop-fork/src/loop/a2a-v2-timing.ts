@@ -96,15 +96,15 @@ export const timedPort = <T extends object>(
 
 /** A handler whose every request is timed, by method and path. */
 export const timedHandler =
-  (
-    handler: (request: Request) => Promise<Response>,
+  <A extends unknown[]>(
+    handler: (request: Request, ...rest: A) => Promise<Response>,
     log: TimingLog = defaultLog
   ) =>
-  async (request: Request): Promise<Response> => {
+  async (request: Request, ...rest: A): Promise<Response> => {
     const startedAt = performance.now();
     const { pathname } = new URL(request.url);
     try {
-      const response = await handler(request);
+      const response = await handler(request, ...rest);
       log(
         `[a2a-v2-timing] http ${request.method} ${pathname} ${(performance.now() - startedAt).toFixed(1)}ms ${response.status}`
       );
@@ -119,9 +119,9 @@ export const timedHandler =
 
 export interface A2AV2TimingProbe {
   /** The handler, each request timed; the handler itself when off. */
-  handler(
-    handler: (request: Request) => Promise<Response>
-  ): (request: Request) => Promise<Response>;
+  handler<A extends unknown[]>(
+    handler: (request: Request, ...rest: A) => Promise<Response>
+  ): (request: Request, ...rest: A) => Promise<Response>;
   /** `run`, each call over 50 ms reported; `run` itself when off. */
   pass<T>(label: string, run: () => Promise<T>): () => Promise<T>;
   /** Stops the event-loop lag probe, if one runs. */
