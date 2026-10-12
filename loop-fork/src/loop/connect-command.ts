@@ -64,9 +64,12 @@ import { SupervisorMessageV2BridgeDeliveryPort } from "./supervisor-message-v2-b
  * - The `inbox_ack` tool is the recipient's delivery/read ACK on the existing
  *   recipient route. It is never completion; nothing here publishes a result.
  * - The lease is kept alive by the server observing this stream; no renew
- *   loop and no polling. The lease is released when stdin ends.
+ *   loop and no polling. The lease is released when stdin ends, and on
+ *   SIGTERM/SIGINT/SIGHUP (bounded), which is how Claude Code stops it.
  */
 export const CONNECT_COMMAND = "connect";
+/** How long a signalled connect waits for its lease release before exiting. */
+const SIGNAL_RELEASE_TIMEOUT_MS = 3000;
 export const ALLOW_MULTI_TOKEN_ENV_FLAG = "--allow-multi-token-env";
 
 const USAGE = [
@@ -794,6 +797,30 @@ export const runConnectCommand = async (
       });
   };
   const channel = options.target.kind === "claude";
+  // Claude Code ends an MCP server with a signal, not by closing stdin, so a
+  // session that exits or crashes would leave its lease held until the TTL
+  // lapses and the next session's claim refused (lease-held). Release first,
+  // bounded, then exit. Only for the real process: tests feed their own input.
+  const releaseOnSignal = () => {
+    abort.abort();
+    const held = established;
+    const done = () => process.exit(0);
+    if (!held) {
+      done();
+      return;
+    }
+    setTimeout(done, SIGNAL_RELEASE_TIMEOUT_MS).unref?.();
+    releaseA2ASession(held.endpoint, held.fence, deps.fetchImpl).then(
+      done,
+      done
+    );
+  };
+  const signals = runtime.input
+    ? []
+    : (["SIGTERM", "SIGINT", "SIGHUP"] as const);
+  for (const signal of signals) {
+    process.once(signal, releaseOnSignal);
+  }
   if (!channel) {
     // A Codex thread or a run seat: no MCP handshake gates the stream.
     await establish();
@@ -812,6 +839,9 @@ export const runConnectCommand = async (
     });
   } finally {
     abort.abort();
+    for (const signal of signals) {
+      process.off(signal, releaseOnSignal);
+    }
   }
   const end = (await stream) ?? { reason: "aborted" as const };
   if (!established) {
