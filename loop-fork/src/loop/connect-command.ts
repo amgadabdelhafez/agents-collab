@@ -420,6 +420,8 @@ export interface ConnectServerState {
   cursor(): number;
   endpoint: A2AClientEndpoint;
   fence: SupervisorEndpointLeaseFence;
+  /** The identity named on the command line, fixed before stdin is read. */
+  supervisorId: string;
 }
 
 /**
@@ -456,9 +458,7 @@ export const handleConnectRequest = async (
           : { tools: {} },
         ...(options.channel
           ? {
-              instructions: connectInstructions(
-                options.state.endpoint.supervisorId
-              ),
+              instructions: connectInstructions(options.state.supervisorId),
             }
           : {}),
         protocolVersion:
@@ -665,9 +665,17 @@ const claimInboxStream = async (
   return { epoch: receipt.epoch, holderRef };
 };
 
-/** Serves MCP until stdin ends; `onInitialized` starts a channel's stream. */
+/**
+ * Serves MCP until stdin ends. `establish` (enroll, claim) runs once, before
+ * the first request that needs the identity's server state: the client's
+ * `notifications/initialized` or any tool call. `initialize` is answered from
+ * the command line alone, so a client that probes the server and closes it
+ * before the handshake completes (Claude Code does, then starts it again)
+ * spends no enrollment code and holds no lease.
+ */
 const serveConnectMcp = async (input: {
   channel: boolean;
+  establish(): Promise<void>;
   fetchImpl?: typeof fetch;
   onInitialized(): void;
   requests: AsyncIterable<Uint8Array | string>;
@@ -676,7 +684,10 @@ const serveConnectMcp = async (input: {
 }): Promise<void> => {
   for await (const request of readJsonRpcLines(input.requests)) {
     if (request.method === "notifications/initialized") {
+      await input.establish();
       input.onInitialized();
+    } else if (request.method === "tools/call") {
+      await input.establish();
     }
     const response = await handleConnectRequest(request, {
       channel: input.channel,
@@ -709,66 +720,110 @@ export const runConnectCommand = async (
       ? {}
       : { trustFile: options.trustFile }),
   };
-  // Identity first: nothing from stdin is read before it is fixed.
-  if (options.enrollCodeFile !== undefined && !runtime.endpoint) {
-    await enrollConnectSession(
-      { ...options, enrollCodeFile: options.enrollCodeFile },
-      clientDeps,
-      log
-    );
-  }
-  const endpoint =
-    runtime.endpoint ??
-    resolveA2AClientEndpoint(options.supervisorId, clientDeps);
-  if (endpoint.supervisorId !== options.supervisorId) {
-    throw new Error("connect endpoint does not act as --as");
-  }
-  const fence = await claimInboxStream(endpoint, options, deps, log);
+  // Identity first: the supervisor id comes from the command line and the
+  // endpoint from the local config and credential, never from stdin.
   const abort = new AbortController();
-  // A session token is refreshed ahead of expiry while this process runs, so
-  // every reconnect presents a valid one.
-  endpoint.keepFresh(abort.signal, (error) =>
-    log(`[loop connect] session token: ${error.message}`)
-  );
-  const client = new InboxStreamClient({
-    deliver:
-      runtime.deliverer ??
-      delivererFor(options.target, endpoint.supervisorId, write),
-    endpoint,
-    fence,
-    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
-    log,
-    signal: abort.signal,
-  });
+  let established:
+    | {
+        client: InboxStreamClient;
+        endpoint: A2AClientEndpoint;
+        fence: SupervisorEndpointLeaseFence;
+      }
+    | undefined;
+  let establishing: Promise<void> | undefined;
+  const establish = (): Promise<void> => {
+    establishing ??= (async () => {
+      if (options.enrollCodeFile !== undefined && !runtime.endpoint) {
+        await enrollConnectSession(
+          { ...options, enrollCodeFile: options.enrollCodeFile },
+          clientDeps,
+          log
+        );
+      }
+      const endpoint =
+        runtime.endpoint ??
+        resolveA2AClientEndpoint(options.supervisorId, clientDeps);
+      if (endpoint.supervisorId !== options.supervisorId) {
+        throw new Error("connect endpoint does not act as --as");
+      }
+      const fence = await claimInboxStream(endpoint, options, deps, log);
+      // A session token is refreshed ahead of expiry while this process
+      // runs, so every reconnect presents a valid one.
+      endpoint.keepFresh(abort.signal, (error) =>
+        log(`[loop connect] session token: ${error.message}`)
+      );
+      const client = new InboxStreamClient({
+        deliver:
+          runtime.deliverer ??
+          delivererFor(options.target, endpoint.supervisorId, write),
+        endpoint,
+        fence,
+        ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+        log,
+        signal: abort.signal,
+      });
+      established = { client, endpoint, fence };
+    })();
+    return establishing;
+  };
+  const current = () => {
+    if (!established) {
+      throw new Error("loop connect: the session is not established");
+    }
+    return established;
+  };
+  const state: ConnectServerState = {
+    cursor: () => established?.client.cursor ?? 0,
+    get endpoint() {
+      return current().endpoint;
+    },
+    get fence() {
+      return current().fence;
+    },
+    supervisorId: options.supervisorId,
+  };
   let stream: Promise<InboxStreamEnd> | undefined;
   const startStream = () => {
-    stream ??= client.run().then((end) => {
-      if (end.reason !== "aborted") {
-        log(`[loop connect] inbox stream ended: ${end.reason}`);
-      }
-      return end;
-    });
+    stream ??= current()
+      .client.run()
+      .then((end) => {
+        if (end.reason !== "aborted") {
+          log(`[loop connect] inbox stream ended: ${end.reason}`);
+        }
+        return end;
+      });
   };
   const channel = options.target.kind === "claude";
   if (!channel) {
+    // A Codex thread or a run seat: no MCP handshake gates the stream.
+    await establish();
     startStream();
   }
   try {
     await serveConnectMcp({
       channel,
+      establish,
       ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
       // Channel notifications only once the client is ready for them.
       onInitialized: startStream,
       requests: runtime.input ?? process.stdin,
-      state: { cursor: () => client.cursor, endpoint, fence },
+      state,
       write,
     });
   } finally {
     abort.abort();
   }
   const end = (await stream) ?? { reason: "aborted" as const };
+  if (!established) {
+    // Closed before the handshake completed: nothing was claimed.
+    return { end, released: false };
+  }
   try {
-    await releaseA2ASession(endpoint, fence, deps.fetchImpl);
+    await releaseA2ASession(
+      established.endpoint,
+      established.fence,
+      deps.fetchImpl
+    );
     return { end, released: true };
   } catch {
     // A fenced lease (taken over) is not this holder's to release.

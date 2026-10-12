@@ -275,6 +275,45 @@ const until = async (predicate: () => boolean, what: string) => {
 };
 
 describe("loop connect", () => {
+  test("a client that closes before the handshake completes claims nothing and releases nothing", async () => {
+    // Claude Code starts a stdio server, sends initialize, closes it, then
+    // starts it again. The first process must leave no lease behind.
+    const { endpoint, state } = fakeServer();
+    const input = new Lines();
+    const written: Record<string, unknown>[] = [];
+    const running = runConnectCommand(
+      [
+        "connect",
+        "--as",
+        RECIPIENT,
+        "--deliver",
+        "claude",
+        "--session",
+        "probe-1",
+      ],
+      {
+        endpoint,
+        input,
+        log: () => undefined,
+        write: (payload) => {
+          written.push(payload as Record<string, unknown>);
+          return Promise.resolve();
+        },
+      }
+    );
+    input.push({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    await until(() => written.some((entry) => entry.id === 1), "initialize");
+    input.end();
+    const outcome = await running;
+    expect(outcome.released).toBe(false);
+    expect(state.lease).toBeUndefined();
+  });
+
   test("claims its stream, pushes the Claude channel, acks on the recipient route, releases", async () => {
     const { endpoint, hub, state } = fakeServer();
     const input = new Lines();
@@ -314,16 +353,18 @@ describe("loop connect", () => {
       experimental: { "claude/channel": {} },
       tools: {},
     });
+    // Nothing is claimed, and nothing pushed, before the client says it is
+    // initialized: a probe that closes here holds no lease.
+    const early = envelopeFor("early");
+    await hub.append(early);
+    await sleep(50);
+    expect(state.lease).toBeUndefined();
+    expect(written.some((entry) => entry.method)).toBe(false);
+    input.push({ jsonrpc: "2.0", method: "notifications/initialized" });
     await until(() => state.lease !== undefined, "the claim");
     expect(state.lease?.locator).toEqual(
       connectLocator({ kind: "claude", sessionId: "claude-session-1" })
     );
-    // Nothing is pushed before the client says it is initialized.
-    const early = envelopeFor("early");
-    await hub.append(early);
-    await sleep(50);
-    expect(written.some((entry) => entry.method)).toBe(false);
-    input.push({ jsonrpc: "2.0", method: "notifications/initialized" });
     const late = envelopeFor("late");
     await hub.append(late);
     const channel = () =>

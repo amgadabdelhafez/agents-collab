@@ -462,6 +462,15 @@ test("a session behind NAT enrolls over https, receives, ACKs, reconnects and re
         },
       }
     );
+    // connect enrolls and claims once the MCP handshake completes, never
+    // for a client that probes and closes before it.
+    lines.push({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    lines.push({ jsonrpc: "2.0", method: "notifications/initialized" });
     const credentialPath = a2aSessionCredentialPath(PHONE, phoneEnv);
     await waitFor("the phone to enroll and claim its stream", () =>
       logs.some((line) => line.includes("holds its inbox stream"))
@@ -476,13 +485,6 @@ test("a session behind NAT enrolls over https, receives, ACKs, reconnects and re
       expect(line).not.toContain(enrolled?.token ?? "?");
       expect(line).not.toContain(code);
     }
-    lines.push({
-      id: 1,
-      jsonrpc: "2.0",
-      method: "initialize",
-      params: { protocolVersion: "2025-06-18" },
-    });
-    lines.push({ jsonrpc: "2.0", method: "notifications/initialized" });
     const channel = () =>
       written.filter(
         (payload): payload is ChannelNotification =>
