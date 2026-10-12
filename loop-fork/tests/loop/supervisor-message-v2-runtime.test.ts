@@ -1,5 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
+import {
+  orchestrationGrantAllows,
+  v2RecipientGrantRequest,
+} from "../../src/loop/loop-orchestration-server";
 import type {
   SupervisorMessageV2DeliveryEnvelope,
   SupervisorMessageV2Input,
@@ -9,6 +13,11 @@ import {
   deriveSupervisorMessageV2LegacyWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
 } from "../../src/loop/supervisor-message-v2-contract";
+import {
+  GovernedSupervisorMessageV2Service,
+  type SupervisorMessageV2GovernanceReceiptPort,
+} from "../../src/loop/supervisor-message-v2-governance";
+import { createSupervisorMessageV2RecipientHttpHandler } from "../../src/loop/supervisor-message-v2-http";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import {
   SUPERVISOR_MESSAGE_V2_NOT_ENROLLED_BOUND_MS,
@@ -1528,5 +1537,146 @@ describe("SupervisorMessageV2 workflow id deployment", () => {
     expect(retry.created).toBe(false);
     expect(h.delivered).toHaveLength(1);
     expect([...h.ledger.starts.keys()]).toEqual([legacy]);
+  });
+});
+
+// 2026-10-12 live repro, after the recipient route's 401 fix: an owner's V2
+// message to the RA1 role id `supervisor:harvto-llc/harvto/backend` was
+// delivered, but its `loop a2a ack` answered 409 lifecycle-command-refused
+// for both claim and acknowledge, while the flat `supervisor:harness` (here
+// `supervisor:target`) acknowledged. Governance validated the claimant with
+// a reference pattern that has no '/'.
+describe("SupervisorMessageV2 recipient lifecycle through governance", () => {
+  const ROLE_ID = "supervisor:harvto-llc/harvto/backend";
+  const FLAT_ID = "supervisor:target";
+  // The live server's shape: the sender is the owner, both recipients are
+  // role-bound supervisors, and the authority is the server's V2 recipient
+  // decision (claimant is the recipient, then the RA1 role grant).
+  const config = {
+    grants: [],
+    supervisors: [
+      {
+        principal: scope.principal,
+        role: { project: "owner", repoKey: "amgad/owner", role: "owner" },
+        supervisorId: fixture.input.from,
+        tokenEnv: "OWNER_TOKEN",
+      },
+      {
+        principal: "principal:harvto-backend",
+        role: {
+          project: "backend",
+          repoKey: "harvto-llc/harvto",
+          role: "supervisor",
+        },
+        supervisorId: ROLE_ID,
+        tokenEnv: "HARVTO_BACKEND_TOKEN",
+      },
+      {
+        principal: "principal:target",
+        role: {
+          project: "harness",
+          repoKey: "amgad/harness-engineering",
+          role: "supervisor",
+        },
+        supervisorId: FLAT_ID,
+        tokenEnv: "TARGET_TOKEN",
+      },
+    ],
+  } as unknown as Parameters<typeof orchestrationGrantAllows>[0];
+
+  test("a role-id recipient and a flat-id recipient each claim and acknowledge a delivered message", async () => {
+    const h = harness();
+    const receipts: { claimant: string | null; operation: string }[] = [];
+    const receiptPort: SupervisorMessageV2GovernanceReceiptPort = {
+      record: (receipt) => {
+        receipts.push({
+          claimant: receipt.claimant,
+          operation: receipt.operation,
+        });
+        return receipt;
+      },
+    };
+    const governance = new GovernedSupervisorMessageV2Service({
+      authority: {
+        decide: (request) => {
+          const allowed =
+            request.claimant === request.to &&
+            orchestrationGrantAllows(
+              config,
+              v2RecipientGrantRequest(config, request)
+            );
+          return {
+            allowed,
+            authorityRef: "authority:test:recipient-v2",
+            reasonCode: allowed ? "configured-grant" : "grant-denied",
+          };
+        },
+      },
+      coordinator: h.coordinator,
+      now: () => h.at().toISOString(),
+      receipts: receiptPort,
+    });
+    const handler = createSupervisorMessageV2RecipientHttpHandler({
+      authenticator: {
+        authenticate: (request) => {
+          const supervisorId = request.headers.get("x-test-recipient") ?? "";
+          const entry = config.supervisors.find(
+            (candidate) => candidate.supervisorId === supervisorId
+          );
+          return entry
+            ? { principal: entry.principal, supervisorId }
+            : undefined;
+        },
+      },
+      governance,
+      pathname: "/recipient",
+      resolveAssignment: () => Promise.resolve(scope),
+    });
+    const send = async (
+      recipient: string,
+      operation: "acknowledge" | "claim",
+      workflowId: string
+    ) => {
+      const response = await handler(
+        new Request("http://local/recipient", {
+          body: JSON.stringify({
+            operation,
+            requestId: `a2a-ack:${operation}:${workflowId}`,
+            workflowId,
+          }),
+          headers: {
+            "content-type": "application/json",
+            "x-test-recipient": recipient,
+          },
+          method: "POST",
+        })
+      );
+      return { body: await response.json(), status: response.status };
+    };
+    for (const recipient of [ROLE_ID, FLAT_ID]) {
+      const { projection, workflowId } = await h.receive(
+        scope,
+        inputFor(`ack-${recipient.length}`, recipient),
+        `request:${recipient}`
+      );
+      expect(projection.deliveredAt).not.toBeNull();
+      expect(await send(recipient, "claim", workflowId)).toMatchObject({
+        body: { phase: "claimed" },
+        status: 200,
+      });
+      expect(await send(recipient, "acknowledge", workflowId)).toMatchObject({
+        body: { phase: "acknowledged", workResultCompleted: false },
+        status: 200,
+      });
+      expect(await h.status(workflowId)).toMatchObject({
+        phase: "acknowledged",
+      });
+    }
+    expect(receipts).toEqual([
+      { claimant: ROLE_ID, operation: "claim" },
+      { claimant: ROLE_ID, operation: "acknowledge" },
+      { claimant: FLAT_ID, operation: "claim" },
+      { claimant: FLAT_ID, operation: "acknowledge" },
+    ]);
   });
 });

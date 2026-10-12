@@ -1,4 +1,5 @@
 import { SQL } from "bun";
+import { isSupervisorId } from "./supervisor-id";
 import {
   deriveSupervisorMessageV2ReceiptId,
   parseSupervisorMessageV2GovernanceReceipt,
@@ -74,6 +75,21 @@ const reference = (value: unknown, field: string): string => {
     throw new WorkflowError(
       "invalid-command",
       `SupervisorMessage V2 governance ${field} is invalid`
+    );
+  }
+  return value;
+};
+
+/**
+ * A claimant is a supervisor id, flat or an RA1 role id
+ * (`supervisor:<owner>/<name>/<project>`). `reference` has no '/', so it
+ * refused every role-id recipient's claim and acknowledge.
+ */
+const claimantOf = (value: unknown): string => {
+  if (!isSupervisorId(value)) {
+    throw new WorkflowError(
+      "invalid-command",
+      "SupervisorMessage V2 governance claimant is invalid"
     );
   }
   return value;
@@ -289,7 +305,7 @@ export class GovernedSupervisorMessageV2Service {
       this.#coordinator.claim(
         command.trustedScope,
         command.workflowId,
-        reference(command.claimant, "claimant"),
+        claimantOf(command.claimant),
         command.requestId
       )
     );
@@ -302,7 +318,7 @@ export class GovernedSupervisorMessageV2Service {
       this.#coordinator.acknowledge(
         command.trustedScope,
         command.workflowId,
-        reference(command.claimant, "claimant"),
+        claimantOf(command.claimant),
         command.requestId
       )
     );
@@ -322,7 +338,7 @@ export class GovernedSupervisorMessageV2Service {
     );
     const request = parseSupervisorMessageV2GovernanceRequest(
       {
-        claimant: reference(command.claimant, "claimant"),
+        claimant: claimantOf(command.claimant),
         from: projection.from,
         operation,
         principal: command.trustedScope.principal,
