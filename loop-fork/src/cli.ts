@@ -80,6 +80,7 @@ import {
   defaultOwnershipProbes,
   recordedProcessClassifier,
 } from "./loop/shared-process-ownership";
+import { runTokenCommand, TOKEN_COMMAND } from "./loop/token-code-command";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import { UTILITY_WORKER_SUBCOMMAND } from "./loop/utility-constants";
@@ -517,11 +518,26 @@ const runConnectCliCommand = async (argv: string[]): Promise<boolean> => {
   return true;
 };
 
+/**
+ * `loop token code`: mint an enrollment code through the server's owner
+ * route. Lines name who it is for, the file and the expiry, never the code.
+ */
+const runTokenCliCommand = async (argv: string[]): Promise<boolean> => {
+  if (argv[0] !== TOKEN_COMMAND) {
+    return false;
+  }
+  for (const line of await runTokenCommand(argv)) {
+    process.stdout.write(`${line}\n`);
+  }
+  return true;
+};
+
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   runProjectCliCommand(argv) ||
   (await runMailboxCliCommand(argv)) ||
   (await runA2ACliCommand(argv)) ||
   (await runConnectCliCommand(argv)) ||
+  (await runTokenCliCommand(argv)) ||
   (await runOrchestrationCommand(argv)) ||
   (await runStoppedRunReconcileCommand(argv)) ||
   (await runStopCommand(argv)) ||
