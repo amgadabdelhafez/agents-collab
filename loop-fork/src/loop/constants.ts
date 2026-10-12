@@ -71,6 +71,8 @@ Usage:
                                            A supervisor's own A2A V2 client: enroll or release its endpoint, send, read status, acknowledge (never completion); reads only that supervisor's token and refuses an environment holding another's
   loop connect --as <supervisor-id> --deliver <claude|codex|seat> ...
                                            MCP server (stdio) holding that supervisor's outbound inbox stream (no inbound port): delivers to the Claude channel, a Codex thread or a run seat; inbox_ack is the read ACK, never completion
+  loop token code --as <supervisor-id> --for <supervisor-id> --out <new-file> [--trust-file <ca.pem>] [--allow-multi-token-env]
+                                           Mint a single-use enrollment code through the server's owner route (an owner session only); writes it to a new 0600 file, never prints it
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
   oss-loop [options] [prompt]              Alias for: loop --oss-only
