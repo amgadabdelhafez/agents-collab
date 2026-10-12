@@ -3,6 +3,7 @@ import type {
   SupervisorA2AAuthenticator,
 } from "./a2a-supervisor-http";
 import { readBoundedRequestText } from "./bounded-request-body";
+import { isSupervisorId } from "./supervisor-id";
 import {
   deriveSupervisorMessageV2DeliveryId,
   SUPERVISOR_MESSAGE_V2_MAX_DELIVERY_ATTEMPTS,
@@ -137,7 +138,9 @@ export const createSupervisorMessageV2RecipientHttpHandler =
       !(
         identity &&
         reference.test(identity.principal) &&
-        reference.test(identity.supervisorId)
+        // A flat or an RA1 role id (`supervisor:<owner>/<name>/<project>`):
+        // `reference` has no '/', so it refused every role-id recipient.
+        isSupervisorId(identity.supervisorId)
       )
     ) {
       return response(401, "unauthenticated");

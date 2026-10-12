@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { orchestrationAuthenticator } from "../../src/loop/loop-orchestration-server";
+import type { OrchestrationTokenService } from "../../src/loop/orchestration-token-service";
 import type { SupervisorMessageV2Projection } from "../../src/loop/supervisor-message-v2-contract";
 import { createSupervisorMessageV2RecipientHttpHandler } from "../../src/loop/supervisor-message-v2-http";
 import { SupervisorMessageV2RecipientTooEarlyError } from "../../src/loop/supervisor-message-v2-runtime";
@@ -236,4 +238,118 @@ test("recipient route names an early claim or acknowledge, with when to retry, a
       status: 409,
     });
   }
+});
+
+// 2026-10-12 live repro: a session enrolled as the RA1 role id
+// `supervisor:harvto-llc/harvto/backend` streamed its V2 message but its
+// recipient ACK answered 401, while the flat `supervisor:harness` ACKed. The
+// route's identity check used a reference pattern without '/'.
+test("a session token for a role id or a flat id claims and acknowledges its delivered V2 message", async () => {
+  const supervisors = [
+    {
+      principal: "principal:harvto-backend",
+      role: {
+        project: "backend",
+        repoKey: "harvto-llc/harvto",
+        role: "supervisor",
+      },
+      supervisorId: "supervisor:harvto-llc/harvto/backend",
+      tokenEnv: "HARVTO_BACKEND_TOKEN",
+    },
+    {
+      principal: "principal:harness",
+      role: {
+        project: "harness",
+        repoKey: "amgad/harness-engineering",
+        role: "supervisor",
+      },
+      supervisorId: "supervisor:harness",
+      tokenEnv: "HARNESS_TOKEN",
+    },
+  ];
+  // The session token service stand-in: a token names the address it enrolled.
+  const tokens = {
+    verify: (token: string) =>
+      token.startsWith("session:")
+        ? { address: token.slice("session:".length) }
+        : undefined,
+  } as unknown as Pick<OrchestrationTokenService, "verify">;
+  const commands: { claimant: string; operation: string }[] = [];
+  const projection = (phase: "acknowledged" | "claimed") =>
+    Promise.resolve({
+      acknowledgedAt: phase === "acknowledged" ? "2026-10-12T00:00:01Z" : null,
+      claimedAt: "2026-10-12T00:00:00Z",
+      phase,
+    } as SupervisorMessageV2Projection);
+  const handler = createSupervisorMessageV2RecipientHttpHandler({
+    pathname: "/recipient",
+    authenticator: orchestrationAuthenticator(
+      { hostname: "0.0.0.0", supervisors } as Parameters<
+        typeof orchestrationAuthenticator
+      >[0],
+      {},
+      tokens
+    ),
+    resolveAssignment: ({ identity, workflowId }) =>
+      Promise.resolve(
+        workflowId === "workflow:delivered" &&
+          supervisors.some(
+            (entry) =>
+              entry.supervisorId === identity.supervisorId &&
+              entry.principal === identity.principal
+          )
+          ? { principal: "principal:sender", tenantId: "tenant:owned" }
+          : undefined
+      ),
+    governance: {
+      claim: (command) => {
+        commands.push({ claimant: command.claimant, operation: "claim" });
+        return projection("claimed");
+      },
+      acknowledge: (command) => {
+        commands.push({ claimant: command.claimant, operation: "acknowledge" });
+        return projection("acknowledged");
+      },
+    },
+  });
+  const send = (address: string, operation: "acknowledge" | "claim") =>
+    handler(
+      new Request("http://local/recipient", {
+        body: JSON.stringify({
+          operation,
+          requestId: `request:${operation}`,
+          workflowId: "workflow:delivered",
+        }),
+        headers: {
+          authorization: `Bearer session:${address}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      })
+    );
+  for (const { supervisorId } of supervisors) {
+    const claimed = await send(supervisorId, "claim");
+    expect(claimed.status).toBe(200);
+    expect(await claimed.json()).toMatchObject({ phase: "claimed" });
+    const acknowledged = await send(supervisorId, "acknowledge");
+    expect(acknowledged.status).toBe(200);
+    expect(await acknowledged.json()).toMatchObject({
+      phase: "acknowledged",
+      workResultCompleted: false,
+    });
+  }
+  expect(commands).toEqual([
+    { claimant: "supervisor:harvto-llc/harvto/backend", operation: "claim" },
+    {
+      claimant: "supervisor:harvto-llc/harvto/backend",
+      operation: "acknowledge",
+    },
+    { claimant: "supervisor:harness", operation: "claim" },
+    { claimant: "supervisor:harness", operation: "acknowledge" },
+  ]);
+  // A token for an address that is not configured is still refused.
+  expect(
+    (await send("supervisor:harvto-llc/harvto/other", "claim")).status
+  ).toBe(401);
+  expect(commands).toHaveLength(4);
 });
