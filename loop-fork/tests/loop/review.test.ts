@@ -107,7 +107,7 @@ test("runReview accepts final signal with surrounding whitespace", async () => {
   });
 });
 
-test("runReview accepts final signal from combined output with trailing blank lines", async () => {
+test("runReview rejects a combined-only signal when parsed reviewer output exists", async () => {
   const runReview = createRunReview(() =>
     Promise.resolve(
       makeRunResult({
@@ -118,15 +118,9 @@ test("runReview accepts final signal from combined output with trailing blank li
   );
   const result = await runReview(["codex"], "task", makeOptions());
 
-  expect(result).toEqual({
-    advisoryReviewers: [],
-    approved: true,
-    consensusFail: false,
-    failureCount: 0,
-    failures: [],
-    notes: "",
-    reviews: passReviews("codex"),
-  });
+  expect(result.approved).toBe(false);
+  expect(result.failureCount).toBe(1);
+  expect(result.notes).toContain("missing a valid final review signal");
 });
 
 test("runReview rejects output with missing final review signal", async () => {

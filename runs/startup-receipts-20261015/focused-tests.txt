@@ -1,0 +1,43 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file sh scripts/test-hermetic.sh bun test tests/loop/tmux.test.ts -t Claude
+bun test v1.4.2 (744846f84)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux fails closed when Claude never reaches an input-ready prompt [20.66ms]
+(pass) runInTmux still terminalizes an unexpected Claude readiness probe failure [8.69ms]
+(pass) runInTmux fails closed and cleans up when the Claude kickoff is never confirmed [17.64ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused [0.24ms]
+(pass) runInTmux replays the captured Claude pre-connect warning before bootstrap [4.21ms]
+(pass) captured Claude suggestions are not ready without an active probe [0.07ms]
+(pass) Claude suggestion probe preserves and rejects a human Try draft [0.40ms]
+(pass) Claude suggestion probe requires an acknowledged redraw [0.23ms]
+(pass) Claude suggestion probe treats a send timeout as recoverable draft risk [0.07ms]
+(pass) Claude suggestion probe rejects attached or piped panes [0.06ms]
+(pass) Claude suggestion probe waits across the activity second [0.44ms]
+(pass) Claude changed suggestions receive a fresh acknowledged probe [0.23ms]
+(pass) Claude draft probe restores Home and fails closed when activity acknowledgment is missing [0.32ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [1.19ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [0.90ms]
+(pass) Claude dev-channel confirmation settles before retrying a swallowed key [3.09ms]
+(pass) Claude dev-channel confirmation never retries after activity advances on a stale frame [0.19ms]
+(pass) Claude dev-channel progress extends the readiness deadline past twenty seconds [0.73ms]
+(pass) Claude post-confirmation initialization waits for a delayed composer [0.23ms]
+(pass) Claude post-confirmation initialization remains bounded and refuses ambiguity [0.41ms]
+(pass) Claude dev-channel confirmation fails closed after bounded swallowed keys [0.36ms]
+(pass) Claude dev-channel confirmation waits through an incomplete modal redraw [0.12ms]
+(pass) Claude dev-channel confirmation never enters when exit is selected [0.06ms]
+(pass) Claude dev-channel confirmation ignores a stale modal above the current composer [0.03ms]
+(pass) Claude bypass confirmation never enters when navigation is swallowed [0.31ms]
+(pass) Claude bypass confirmation enters only after a fresh selected-accept capture [0.07ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [1.22ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.84ms]
+(pass) runInTmux refuses Claude's folder trust prompt by default, at once, and terminalizes the start [1.26ms]
+(pass) runInTmux never mutates home Claude MCP registration on startup failure [11.21ms]
+(pass) tmux internals launch Claude in bypass mode [0.49ms]
+(pass) Claude reviewer command mechanically denies filesystem and shell tools [0.02ms]
+(pass) claudeSeatHasNoShell is true only for a Claude seat that is not the primary [0.02ms]
+
+ 33 pass
+ 103 filtered out
+ 0 fail
+ 129 expect() calls
+Ran 33 tests across 1 file. [123.00ms]

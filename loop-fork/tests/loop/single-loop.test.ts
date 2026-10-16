@@ -65,3 +65,18 @@ test("runSingleLoop uses the resumed session id on the first turn and stops on d
     "session-1"
   );
 });
+
+test("runSingleLoop does not accept a raw-only done signal when parsed output is owned", async () => {
+  const { runSingleLoop } = await loadSingleLoop();
+  tryRunAgent
+    .mockResolvedValueOnce({
+      combined: '<foreign>"<done/>"</foreign>',
+      exitCode: 0,
+      parsed: "owner is still working",
+    })
+    .mockResolvedValueOnce(makeResult("<done/>"));
+
+  await runSingleLoop("Ship feature", makeOptions({ maxIterations: 2 }));
+
+  expect(tryRunAgent).toHaveBeenCalledTimes(2);
+});

@@ -1,0 +1,410 @@
+{
+  "task": "loop-continuation-20261015",
+  "status": "pass",
+  "verdict": "pass",
+  "branchHead": "cca256376bcd7d89eda935618b86ebe28be2d1f1",
+  "branchHeadUnchanged": true,
+  "landingBase": "cca256376bcd7d89eda935618b86ebe28be2d1f1",
+  "candidateKind": "synthetic-snapshot-commit-temporary-index",
+  "finalSnapshotBinding": "S4 74b5db02b28b90b9054071c15c0a3249bd553366; later records-only follow-up identity in external handoff",
+  "iteration3OuterReview": {
+    "threadId": "01a14403-c448-7780-9042-dbf7ae1bb640",
+    "verdict": "FAIL",
+    "finding": "HIGH acceptance integrity: item text attributed by outer params only; foreign item-level/nested thread or turn identity could make DONE/PASS/FAIL authoritative",
+    "disposition": "repaired: selectTurnState requires ownsNestedIdentity over the whole payload before every sink",
+    "supersedes": {
+      "candidate": "df13e98fc768489d48625a01f6cf971c06fc90b1",
+      "tree": "4051f3c3e8c0a6ada540672481cd1a5d3807d020",
+      "claimedPassThread": "01a143fe-8773"
+    }
+  },
+  "aggregateLoopLog": {
+    "identity": "runs/loop-continuation-20261015/loop.log",
+    "state": "deleted by previous driver; not reconstructed; not evidence"
+  },
+  "focusedTests": {
+    "commandForm": "cd loop-fork && bun run test:file -- tests/loop/<file>",
+    "files": 13,
+    "passed": 424,
+    "failed": 0,
+    "assertions": 1760,
+    "skipped": [],
+    "namedFailures": [],
+    "perFile": {
+      "codex-app-server": [
+        66,
+        0,
+        436
+      ],
+      "ws-client": [
+        9,
+        0,
+        18
+      ],
+      "pr": [
+        29,
+        0,
+        81
+      ],
+      "args": [
+        74,
+        0,
+        168
+      ],
+      "tmux": [
+        136,
+        0,
+        710
+      ],
+      "single-loop": [
+        2,
+        0,
+        3
+      ],
+      "review": [
+        24,
+        0,
+        56
+      ],
+      "paired-loop": [
+        28,
+        0,
+        112
+      ],
+      "00-paired-loop.integration": [
+        1,
+        0,
+        12
+      ],
+      "codex-render": [
+        8,
+        0,
+        13
+      ],
+      "utils": [
+        7,
+        0,
+        10
+      ],
+      "review-run": [
+        17,
+        0,
+        62
+      ],
+      "runner": [
+        23,
+        0,
+        79
+      ]
+    },
+    "mutationControl": "66-test file: ownsNestedIdentity gate removed -> 6 negatives fail (60/6); gate plus outer thread checks removed -> 7 fail (59/7); positive passes"
+  },
+  "structuralChecks": {
+    "bunRunCheck": "pass-1211-files",
+    "candidateDiffCheck": "clean over loop-fork, docs, specs, PLAN.md, status.md, runs/loop-continuation-20261015; whole-candidate hits only preserved verbatim runs/startup-receipts-20261015/verify.txt (38) and baseline-tmux.txt (1)"
+  },
+  "excludedArtifacts": [
+    {
+      "identity": "runs/loop-continuation-20261015/loop.log",
+      "reason": "aggregate internal transcript and cross-project child output are not bounded final evidence"
+    },
+    {
+      "identity": "runs/startup-receipts-20261015/peer-review.log",
+      "reason": "retained untouched in the user worktree but excluded because it is not final-only review evidence"
+    },
+    {
+      "identity": "runs/loop-attribution-fix-20261016/loop.log",
+      "reason": "this continuation's aggregate loop log; cross-project attribution defect; not bounded evidence"
+    }
+  ],
+  "skipped": [
+    {
+      "identity": "scripts/verify.sh later broad-suite and build gates",
+      "reason": "free swap 1336.88 MiB is below the task's 4 GiB hard gate"
+    },
+    {
+      "identity": "live app-server, provider, tmux, installed binary, publication, push, PR, merge, deploy, remote and hosting checks",
+      "reason": "outside the authorized local fake-transport source-validation scope"
+    }
+  ],
+  "noPublication": "no push, PR, merge, install, deploy, remote/hosting change, live provider/app-server/tmux/session intervention, or nested Loop launch",
+  "review": {
+    "verdict": "PASS",
+    "candidate": "74b5db02b28b90b9054071c15c0a3249bd553366",
+    "tree": "c3d0baa398da17759022e3dc12e534aab9f1a850",
+    "changedPaths": 361,
+    "binaryPatchSha256": "eaa0cfcdcf055bbc22241c0b4d8a1d46c4e1010587010d57ecfe43c50227e9d0",
+    "ref": "refs/loop-snapshots/item-identity-s4",
+    "reviewer": "fresh read-only worktree-isolated Claude Code subagent (Code Reviewer), agent id a41e703ffc9e40119",
+    "driverSessionId": "bbcab76e-2a80-4447-bfcd-b5af624b952a",
+    "reviewTurnId": null,
+    "reviewMessageId": null,
+    "identityNote": "runtime exposes no provider turn/message UUID for subagent reports; none invented",
+    "scope": "complete landing-base-to-candidate diff, retained dependencies, consumers, docs, canonical handoff; S3->S4 records-only verified",
+    "findings": [
+      "LOW stale history pointer in runs status.md (corrected in records-only follow-up)",
+      "LOW verify.md lacks nested-identity criterion; no owned-alias depth<=32 acceptance test (open gap)",
+      "INFO remote handleWsServerRequest auto-accept unchanged from base",
+      "INFO vertical-cleanup scripts formatting-only, not run"
+    ]
+  },
+  "history": {
+    "previousTopLevel": {
+      "status": "pass",
+      "verdict": "pass",
+      "focusedTests": {
+        "files": 13,
+        "passed": 416,
+        "failed": 0,
+        "assertions": 1579
+      },
+      "review": {
+        "verdict": "PASS",
+        "scope": "complete landing-base-to-final-snapshot diff including retained dependencies, surrounding consumers, tests, docs and frozen canonical handoff",
+        "reviewer": "/root/final_candidate_review plus external final reviewer",
+        "reviewSessionId": null,
+        "reviewThreadId": null,
+        "reviewTurnId": null,
+        "reviewMessageId": null,
+        "changedPaths": 361,
+        "binaryPatchSha256": "external-final-review-output-after-handoff-freeze",
+        "findings": [],
+        "identityBinding": "external final review output owns exact final candidate and session-thread-turn-message identifiers"
+      }
+    },
+    "supersededReview": {
+      "candidate": "fed9a5685cf64389fd8c5378a45cf8afcb824d24",
+      "tree": "fa67b9f97967e548a103c71f3c695544c9b615ef",
+      "verdict": "SUPERSEDED_BY_CONNECT_BOUNDARY_FINDING"
+    },
+    "firstPostRepairReview": {
+      "candidate": "fa089651ff22c174e7cd2711d723056f2151c107",
+      "tree": "d24cbf9466deef431f883beef527af900323afde",
+      "reviewThreadId": "01a14374-33ee-70b3-a648-71eeb7961b3b",
+      "verdict": "FAIL",
+      "findings": [
+        "startup-child-exit-cleanup-hidden-before-ready",
+        "rejected-or-stalled-websocket-handshake-retains-raw-socket"
+      ],
+      "resolution": "both repaired with focused fake and raw-transport controls; final whole-diff review pending"
+    },
+    "secondPostRepairReview": {
+      "candidate": "948af25134904137023375a53af3f06376023e7d",
+      "tree": "b6cd84a4b1bdcddb50367eaa1952642bc3fdd621",
+      "changedPaths": 359,
+      "binaryPatchSha256": "7ea9836d28cc9376d36ef548bb2edfaf4d3cbc974b26dc136bd681a18462ce3d",
+      "reviewThreadId": "01a14382-86a4-7aa2-9219-9b5ef4713559",
+      "reviewMessageId": "item_53",
+      "verdict": "FAIL",
+      "findings": [
+        "pending-websocket-upgrade-cancellation-cannot-reach-exact-raw-socket"
+      ],
+      "resolution": "repaired with per-launch abort and controls for open and late-acquired exact raw sockets; final whole-diff review pending"
+    },
+    "thirdPostRepairReview": {
+      "candidate": "d7bbbf714ea501768f172a259a5551346376183d",
+      "tree": "2194195c2d43332a980ad0f95f60300204bab2ed",
+      "changedPaths": 359,
+      "binaryPatchSha256": "57def0f88d008afb0b5b98711758c9f65de3b453b30552dc1744db10bf3d2230",
+      "reviewThreadId": "01a1438d-ff0c-7482-bb1e-dee7dde1c2ce",
+      "reviewMessageId": "item_56",
+      "verdict": "FAIL",
+      "findings": [
+        "nested-child-marker-in-parent-collab-tool-raw-fallback-causes-false-completion"
+      ],
+      "resolution": "repaired by admitting only canonical parent agent-message text to completion-authoritative raw and combined output; final whole-diff review pending"
+    },
+    "fourthPostRepairReview": {
+      "candidate": "9f898ceabf32380d1d4e04bc31c61a3e7386ae05",
+      "tree": "dddae400111f0aa976837c8cb5015875ae6e2889",
+      "changedPaths": 359,
+      "binaryPatchSha256": "3c46ef3355b895180625911cf563814d18c6fea5c4860c6ec61c12da5561fa0e",
+      "reviewThreadId": "01a1439a-9296-7290-9e60-f968595e6d68",
+      "reviewMessageId": "item_53",
+      "verdict": "FAIL",
+      "findings": [
+        "contradictory-identity-aliases-authorize-completion",
+        "nested-object-delta-child-text-authorizes-completion",
+        "canonical-raw-projection-loses-whitespace-and-item-identity",
+        "tmux-chained-failure-cause-unproved"
+      ],
+      "resolution": "evidence classification corrected; source now rejects contradictory aliases and nested object deltas and preserves whitespace plus item identity; final whole-diff review pending"
+    },
+    "fifthPostRepairReview": {
+      "candidate": "7567f3e6728ae70770a78ee50b4971e5abadff44",
+      "tree": "55b9895698912df32916a102f1634914686fc6b3",
+      "changedPaths": 359,
+      "binaryPatchSha256": "27e0264cf4c5832d30d7233f32875c026542f01b100985f4dd3434637186f89f",
+      "reviewThreadId": "01a143a6-a84a-7de3-9388-2563f526b0fe",
+      "reviewMessageId": "item_75",
+      "verdict": "FAIL",
+      "findings": [
+        "stale-socket-message-callback-contaminates-replacement-turn",
+        "whitespace-only-and-repeated-equal-scalar-deltas-are-dropped",
+        "upgraded-rejected-foreign-socket-lacks-bounded-forced-disposal"
+      ],
+      "resolution": "repaired with immutable generation-child-socket message fencing, exact scalar streaming plus per-item aggregate completion deduplication, and exact forced socket disposal with bounded graceful close; final whole-diff review pending"
+    },
+    "sixthPostRepairReview": {
+      "candidate": "c677639134989e5c52d3c57052f76d76e622b73c",
+      "tree": "ac0a99cdc830498d10d985ebea8ac69a75aec994",
+      "changedPaths": 359,
+      "binaryPatchSha256": "3bdd7bd56151194fc73d2410a7650c7cf436cc14ec870005b6d7d24213e056e1",
+      "reviewThreadId": "01a143b9-49c0-7623-8870-6d5a93b5e74e",
+      "reviewMessageId": "item_72",
+      "verdict": "FAIL",
+      "findings": [
+        "completed-agent-message-recursively-imports-nested-foreign-payload",
+        "renderer-drops-same-item-completion-suffix"
+      ],
+      "resolution": "repaired with schema-specific parent completed-message projection and renderer per-item aggregate suffix reconciliation; seventh review found narrower immediate-content identity and replay defects"
+    },
+    "seventhPostRepairReview": {
+      "candidate": "6a3dfe7304eab513bb5d8432b804b404d4ad11ee",
+      "tree": "8a0d16444bf9fcbc01f79ddd14882f0de54c3d8e",
+      "changedPaths": 361,
+      "binaryPatchSha256": "9c7539e5a5efc2cecd87767defb0b8058f0c0ab49bac89535571a875e54f8bef",
+      "reviewThreadId": "01a143c7-67e2-7061-b7d3-a5c5d525cf87",
+      "reviewMessageId": "item_56",
+      "verdict": "FAIL",
+      "findings": [
+        "foreign-identity-bearing-immediate-content-text-injects-completion-and-review-signals",
+        "exact-completed-item-replay-duplicates-adapter-parsed-and-raw-output"
+      ],
+      "resolution": "repaired with strict legacy content-part shape validation and completed-item identity/content replay suppression; 392 focused tests and 1511 assertions pass; eighth review found stale per-command ledger rows"
+    },
+    "eighthPostRepairReview": {
+      "candidate": "7e7337d2e50194261c72ef5d755fad6f15bdda18",
+      "tree": "dd8458adcc37ec024ace84fd916f656f2351c54f",
+      "changedPaths": 361,
+      "binaryPatchSha256": "253fc7f5d66837a9a30e932e36163a455e7853dd37c1815b7a5140cf2e50df25",
+      "reviewThreadId": "01a143d1-de15-7771-9879-b72334f9e88e",
+      "reviewMessageId": "item_180",
+      "verdict": "FAIL",
+      "findings": [
+        "per-command-producer-ledger-retained-pre-seventh-app-server-and-renderer-counts"
+      ],
+      "resolution": "corrected from actual supported-command receipts to app-server 58/0/255 and renderer 8/0/13; complete exact re-review pending"
+    },
+    "ninthPostRepairReview": {
+      "candidate": "8be56ad8ae3a94f7d5e71fe3f9ef49183c5a7a55",
+      "candidateIdentityKind": "tree",
+      "changedPaths": 361,
+      "binaryPatchSha256": "7ef44953209b50ccc26a4111b48e37f6d7c95962ea3c8e0d00afbbfffe994d3a",
+      "reviewer": "/root/whole_diff_review",
+      "verdict": "FAIL",
+      "findings": [
+        "permissive-github-remote-owner-repo-parsing-and-unquoted-model-shell-instruction"
+      ],
+      "resolution": "repaired with shared positive validation, strict URL capability checks, shell quoting, programmatic remote-name validation, and negative/positive controls"
+    },
+    "preFinalHandoffReview": {
+      "candidate": "dd58c68eee67964c3fc7eea295f318dd19412612",
+      "tree": "9085dbb779f5f805038b53ab3706db251db2c795",
+      "changedPaths": 361,
+      "binaryPatchSha256": "47f290c84676a397eda3a09811f0440740a24bf4a1df8a92e22b0f48f1e585f9",
+      "reviewer": "/root/final_candidate_review",
+      "sourceVerdict": "PASS",
+      "overallVerdict": "FAIL_PENDING_CANONICAL_HANDOFF",
+      "findings": [
+        "canonical-tasks-eval-and-handoff-still-pending"
+      ],
+      "resolution": "resolved in final handoff; external final review binds the resulting non-self-referential candidate"
+    }
+  },
+  "reviewRounds": [
+    {
+      "round": "S1",
+      "candidate": "abdc6278eea2e478faa51276b91288009cd9dc51",
+      "tree": "d5dc1f8ed490b1139cf1151dd09caf1a8f5b8719",
+      "changedPaths": 361,
+      "binaryPatchSha256": "40fc3b2334840dc0ea4f2e65c09e37ab951267e0ddc0ef614a7954a6596ebf47",
+      "reviewer": "Claude read-only worktree-isolated agent a108224d261363469",
+      "verdict": "PASS",
+      "findings": [
+        "LOW records cited foreign-turn test as foreign-thread DONE control",
+        "LOW no committed outer foreign-thread DONE regression"
+      ],
+      "disposition": "both resolved; candidate changed; superseded",
+      "codexRequest": "bridge 9446c62c-b3ba-47b0-aa3b-db644e265661 superseded"
+    },
+    {
+      "round": "S2",
+      "candidate": "f8839c18795b5541a1324c3caf4ea83320f6388d",
+      "tree": "61b9dd1595acb6bc981449c9eb0d9500049f2080",
+      "changedPaths": 361,
+      "binaryPatchSha256": "24136f60dae1ed32fc881af9d1990237d36d4aabc53d94a574710d827c1b8c4c",
+      "reviewer": "Claude read-only worktree-isolated agent a5babca73b80b93bd",
+      "verdict": "FAIL",
+      "findings": [
+        "MEDIUM records: mutation count 59/5 false on 65-test file (actual 60/5)",
+        "LOW coverage: failed turn/completed nested identity, depth limit, nested approval identity",
+        "LOW pre-existing remote handleWsServerRequest auto-accept (base behavior)",
+        "LOW hypothetical fail-closed hang on populated turn.items identity-named args"
+      ],
+      "disposition": "count corrected; coverage test added; pre-existing and hypothetical risks recorded non-blocking; superseded",
+      "codexRequest": "bridge 1b38db73-9ab2-4d32-b471-dcd5dfa120c1 queued, not delivered (codexDeliveryMode none)"
+    },
+    {
+      "round": "S3",
+      "candidate": "b24938e9d59c67d167673124d7f712b1544fab1f",
+      "tree": "3ac531cbfe18477c4e67c0f89f6dd438471ca02b",
+      "changedPaths": 361,
+      "binaryPatchSha256": "a1a4ca53918945995e81eef1d39d62a251b1852d10462793a23274087a467900",
+      "reviewer": "Claude read-only worktree-isolated agent a9bf1406bb435aa0d",
+      "verdict": "FAIL",
+      "findings": [
+        "LOW records: assertion-coverage sentence over-broad",
+        "LOW records: older complete blocks not labelled superseded",
+        "LOW evidence: scoped git diff --check not recorded"
+      ],
+      "sourceConfirmed": true,
+      "disposition": "records-only corrections; superseded"
+    },
+    {
+      "round": "S4",
+      "candidate": "74b5db02b28b90b9054071c15c0a3249bd553366",
+      "tree": "c3d0baa398da17759022e3dc12e534aab9f1a850",
+      "reviewer": "a41e703ffc9e40119",
+      "verdict": "PASS"
+    }
+  ],
+  "residualRisks": [
+    "depth>32 or identity-named fields in populated turn.items would reject turn/completed; owner waits AGENT_TURN_TIMEOUT_MS 42,000,069 ms (~11.7 h); fail-closed; not in shipped v2 schema",
+    "local handleServerRequest refuses unattributed approval/user-input requests that base auto-accepted; low risk (approvalPolicy never); documented",
+    "remote handleWsServerRequest auto-accepts approvals without turn attribution (unchanged from base)"
+  ],
+  "codexPeerVerdict": [
+    {
+      "thread": "01a1440b-9be5-7e12-848f-761ee5817b66",
+      "bridgeDecisionId": "d2e7dfad-9a0e-48c5-9567-0f527b190d93",
+      "at": "2026-10-16T10:08:06.083Z",
+      "candidate": "abdc6278eea2e478faa51276b91288009cd9dc51",
+      "verdict": "PASS",
+      "findings": [],
+      "note": "late verdict on superseded S1; exact-checkout tests blocked by missing module caveman-installer/skills/caveman/SKILL.md, reran in current worktree 424/0/1760; corroborating only"
+    },
+    {
+      "thread": "01a1440b-9be5-7e12-848f-761ee5817b66",
+      "bridgeDecisionId": "ab0d745c-9e02-4fb9-bf6e-3f6e3e88fd66",
+      "at": "2026-10-16T10:10:02.597Z",
+      "candidate": "f8839c18795b5541a1324c3caf4ea83320f6388d",
+      "verdict": "PASS",
+      "findings": [],
+      "note": "missed false S2 mutation count found by a5babca73b80b93bd; S2 FAIL stands; superseded; corroborating only"
+    },
+    {
+      "thread": "01a1440b-9be5-7e12-848f-761ee5817b66",
+      "bridgeDecisionId": "bfde130d-bf0c-4c27-9020-331952d16381",
+      "at": "2026-10-16T10:11:56.218Z",
+      "candidate": "74b5db02b28b90b9054071c15c0a3249bd553366",
+      "verdict": "PASS (source/test)",
+      "recordsDeltaChecked": "93ae837f",
+      "recordsVerdict": "FAIL LOW: S6 called S2 request undelivered; already corrected in S7 875ec76e"
+    }
+  ],
+  "openGaps": [
+    "verify.md lacks explicit nested-identity criterion",
+    "no owned-alias depth<=32 acceptance boundary test"
+  ]
+}

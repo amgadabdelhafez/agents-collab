@@ -6,8 +6,10 @@ interface AppServerEvent {
 }
 
 interface CodexRenderState {
+  activeItemAggregate: string;
   activeItemHasDelta: boolean;
   activeItemId: string;
+  completedItems: Map<string, string>;
   lastCompleted: string;
   parsed: string;
   pendingMessageBreak: boolean;
@@ -84,9 +86,29 @@ const parseDeltaText = (value: unknown): string => {
 };
 
 const parseCompletedMessage = (value: unknown): string => {
+  const item = asRecord(value);
   const parts: string[] = [];
-  collectText(value, parts, "text", "delta");
-  // Keep completed-message concatenation aligned with delta concatenation.
+  const direct = asString(item.text);
+  if (direct !== undefined) {
+    parts.push(direct);
+  }
+  const content = item.content;
+  if (typeof content === "string") {
+    parts.push(content);
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === "string") {
+        parts.push(part);
+        continue;
+      }
+      const record = asRecord(part);
+      const keys = Object.keys(record);
+      const text = asString(record.text);
+      if (keys.length === 1 && keys[0] === "text" && text !== undefined) {
+        parts.push(text);
+      }
+    }
+  }
   return parts.join("");
 };
 
@@ -127,6 +149,7 @@ const appendChunk = (
 
 const markMessageBoundary = (state: CodexRenderState): void => {
   state.pendingMessageBreak = true;
+  state.activeItemAggregate = "";
   state.activeItemHasDelta = false;
   state.activeItemId = "";
 };
@@ -153,6 +176,7 @@ const handleDeltaLine = (
     return;
   }
   state.activeItemHasDelta = true;
+  state.activeItemAggregate += chunk;
   appendChunk(state, format, write, chunk);
 };
 
@@ -173,13 +197,37 @@ const handleCompletedLine = (
     Boolean(state.activeItemId) &&
     completedId === state.activeItemId;
   const candidate = parseCompletedMessage(item).trim();
+  if (completedId && state.completedItems.get(completedId) === candidate) {
+    return;
+  }
+  const normalizedAggregate = state.activeItemAggregate.trim();
+  const aggregatePrefix = candidate.startsWith(state.activeItemAggregate)
+    ? state.activeItemAggregate
+    : normalizedAggregate;
+  const extendsActive =
+    sameActive &&
+    state.activeItemHasDelta &&
+    Boolean(aggregatePrefix) &&
+    candidate.startsWith(aggregatePrefix);
+  const streamedActive = sameActive && state.activeItemHasDelta;
+  let projected = candidate;
+  if (streamedActive) {
+    projected = extendsActive ? candidate.slice(aggregatePrefix.length) : "";
+  }
   if (
-    candidate &&
-    candidate !== state.lastCompleted &&
-    !(sameActive && state.activeItemHasDelta)
+    projected &&
+    (streamedActive ||
+      Boolean(completedId) ||
+      candidate !== state.lastCompleted)
   ) {
     state.lastCompleted = candidate;
-    appendChunk(state, format, write, candidate);
+    appendChunk(state, format, write, projected);
+  }
+  if (sameActive && candidate) {
+    state.activeItemAggregate = candidate;
+  }
+  if (completedId && candidate) {
+    state.completedItems.set(completedId, candidate);
   }
   // Skip boundary when this completed event matches the item already streamed
   // via deltas. The delta handler detects item changes and sets boundaries when
@@ -193,8 +241,10 @@ export const createCodexRenderer = (
   config: CodexRendererConfig
 ): CodexRenderer => {
   const state: CodexRenderState = {
+    activeItemAggregate: "",
     activeItemHasDelta: false,
     activeItemId: "",
+    completedItems: new Map(),
     lastCompleted: "",
     parsed: "",
     pendingMessageBreak: false,

@@ -163,12 +163,11 @@ test("runPairedLoop forwards a real bridge message in default paired mode", asyn
     await module.runPairedLoop("Ship feature", makeOptions());
 
     const storage = resolveRunStorage(runId, process.cwd(), home);
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(3);
     expect(calls.map((call) => call.agent)).toEqual([
       "codex",
       "claude",
       "claude",
-      "codex",
     ]);
     expect(startAppServerCalls[0]?.threadModel).toBe("test-model");
     expect(observedCodexThreadIdsAtTurnStart[0]).toBe("codex-thread-1");
@@ -179,7 +178,9 @@ test("runPairedLoop forwards a real bridge message in default paired mode", asyn
       "Please review the implementation details."
     );
     expect(calls[2]?.prompt).toContain("Review this completed work");
-    expect(calls[3]?.prompt).toContain("Create a draft GitHub pull request");
+    expect(calls.some((call) => call.prompt.includes("draft GitHub"))).toBe(
+      false
+    );
     expect(readPendingBridgeMessages(storage.runDir)).toHaveLength(0);
     expect(readRunManifest(storage.manifestPath)?.status).toBe("done");
     expect(lastClaudeSessionId).toBe("claude-session-1");

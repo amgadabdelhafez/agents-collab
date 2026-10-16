@@ -1,0 +1,331 @@
+bun test v1.4.2 (744846f84)
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux -S '/tmp/ls-a/a.sock' attach -t 'repo-loop-2'
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux -S '/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-test-env.5vdIzI/tmux/tmux-501/default' attach -t 'repo-loop-1'
+[loop] starting tmux session...
+$ LOOP_TEST_CERTIFICATION_MODE=single-file sh scripts/test-hermetic.sh bun test tests/loop/tmux.test.ts
+
+tests/loop/tmux.test.ts:
+(pass) paired production tmux command qualification rejects every foreign socket [0.26ms]
+(pass) paired resume binds launch commands to the persisted socket, not ambient tmux [15.99ms]
+(pass) governess env passes provided helper-tier settings and omits absent settings [0.56ms]
+(pass) governess env never persists raw helper-tier API keys [0.16ms]
+(pass) governess helper env policy covers every helper-tier variable read by source [6.70ms]
+(pass) governess board display env forwards only variables source reads [6.76ms]
+(pass) paired command builders default both providers to medium effort [0.14ms]
+(pass) paired command builder maps asymmetric role effort to either provider [0.13ms]
+(pass) runInTmux returns false when --tmux is not present [0.23ms]
+(pass) runInTmux starts a detached session without auto-attach when already inside tmux [0.73ms]
+(pass) runInTmux throws install message when tmux is missing [0.06ms]
+(pass) runInTmux exposes launch socket failure before tmux contact [0.06ms]
+(pass) runInTmux socket-qualifies non-paired handoff probe, remain-on-exit, gone re-probe, and interactive attach [0.26ms]
+(pass) runInTmux keeps explicit run id in single-agent mode [0.65ms]
+992 |     tmuxSocket: "/tmp/ls-a/a.sock",
+993 |   });
+994 |   expect(bootstrapManifests[0]?.tmuxPaneGoverness).toBeUndefined();
+995 |   expect(bootstrapManifests[0]?.tmuxPaneLeft).toBeUndefined();
+996 |   expect(bootstrapManifests[0]?.tmuxPaneRight).toBeUndefined();
+997 |   expect(calls).toContainEqual([
+                      ^
+error: expect(received).toContainEqual(expected)
+
+Expected to contain: [
+  "tmux", "new-session", "-d", "-P", "-F", "#{pane_id}", "-x", "160", "-y", "48", "-s", "repo-loop-1", "-c",
+  "/repo", "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'CODEX_HOME=/repo/.loop/runs/1/codex-home' 'claude' '--session-id' 'claude-session-1' '--model' 'opus' '--effort' 'medium' '--mcp-config' '/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-6sFVOB/claude-mcp.json' '--strict-mcp-config' '--dangerously-load-development-channels' 'server:loop-bridge-repo-123-1' '--dangerously-skip-permissions'"
+]
+Received: [
+  [ "tmux", "has-session", "-t", "repo-loop-1" ], [
+    "tmux", "new-session", "-d", "-P", "-F", "#{pane_id}", "-x", "160", "-y", "48", "-s", "repo-loop-1",
+    "-c", "/repo", "'env' '-u' 'LOOP_RECIPIENT_ENROLLMENT_RUN_DIR' '-u' 'LOOP_CODEX_RECIPIENT_TOKEN' '-u' 'LOOP_CLAUDE_RECIPIENT_TOKEN' '-u' 'LOOP_RECIPIENT_RUN_DIR' '-u' 'LOOP_RECIPIENT_SEAT' '-u' 'LOOP_RECIPIENT_API_TOKEN' '-u' 'LOOP_RECIPIENT_API_URL' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'CODEX_HOME=/repo/.loop/runs/1/codex-home' 'claude' '--session-id' 'claude-session-1' '--model' 'opus' '--effort' 'medium' '--mcp-config' '/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-6sFVOB/claude-mcp.json' '--strict-mcp-config' '--dangerously-load-development-channels' 'server:loop-bridge-repo-123-1' '--dangerously-skip-permissions'"
+  ], [
+    "tmux", "split-window", "-h", "-P", "-F", "#{pane_id}", "-t", "repo-loop-1:0.0", "-c", "/repo", "'env' '-u' 'LOOP_RECIPIENT_ENROLLMENT_RUN_DIR' '-u' 'LOOP_CODEX_RECIPIENT_TOKEN' '-u' 'LOOP_CLAUDE_RECIPIENT_TOKEN' '-u' 'LOOP_RECIPIENT_RUN_DIR' '-u' 'LOOP_RECIPIENT_SEAT' '-u' 'LOOP_RECIPIENT_API_TOKEN' '-u' 'LOOP_RECIPIENT_API_URL' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'CODEX_HOME=/repo/.loop/runs/1/codex-home' 'codex' '-m' 'test-model' '-c' 'service_tier=\"standard\"' '-c' 'model_reasoning_effort=\"high\"' '-c' 'mcp_servers.loop-bridge.command=\"loop\"' '--enable' 'tui_app_server' '--remote' 'ws://127.0.0.1:4600/'"
+  ], [ "tmux", "select-layout", "-t", "repo-loop-1:0", "even-horizontal" ], [ "tmux", "load-buffer",
+    "-b", "repo-loop-1-claude-launch", "/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-6sFVOB/launch-charters/claude-bootstrap.txt"
+  ], [ "tmux", "paste-buffer", "-d", "-p", "-b", "repo-loop-1-claude-launch", "-t", "repo-loop-1:0.0" ], [ "tmux", "load-buffer", "-b", "repo-loop-1-codex-launch", "/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-6sFVOB/launch-charters/codex-bootstrap.txt" ], [ "tmux", "paste-buffer", "-d", "-p", "-b", "repo-loop-1-codex-launch", "-t", "repo-loop-1:0.1" ], [ "tmux", "send-keys", "-t", "repo-loop-1:0.1", "Enter" ], [ "tmux", "send-keys", "-t",
+    "repo-loop-1:0.0", "Enter"
+  ], [ "tmux", "select-pane", "-t", "repo-loop-1:0.0" ], [ "tmux", "has-session", "-t", "repo-loop-1" ], [ "tmux", "set-window-option", "-t", "repo-loop-1:0", "remain-on-exit", "on" ], [ "tmux",
+    "has-session", "-t", "repo-loop-1"
+  ]
+]
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:997:17)
+(fail) runInTmux paired launch emits the exact run manifest path contract line [4.21ms]
+(pass) tmux absence classification handles cold macOS socket during initial preflight without widening cleanup authority [0.08ms]
+(pass) tmux absence classification handles missing macOS socket after resource creation without widening cleanup authority
+(pass) tmux absence classification handles missing named session without widening cleanup authority
+(pass) tmux absence classification handles permission failure without widening cleanup authority
+(pass) tmux absence classification handles overlong socket path without widening cleanup authority
+(pass) runInTmux preserves stable pane targets when reattaching a live paired session [0.72ms]
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [2.22ms]
+(pass) runInTmux writes paired session refs before starting governess [15.36ms]
+(pass) the Nanny/Au Pair column defaults to the right fifth with an explicit opt-out [0.10ms]
+(pass) governed layout preserves legacy numeric fallbacks without tmux stdout [12.07ms]
+1941 |     },
+1942 |   ]);
+1943 |   expect(startCalls).toEqual([
+1944 |     { agent: "codex", kind: "work", sessionId: undefined },
+1945 |   ]);
+1946 |   expect(calls).toContainEqual([
+                       ^
+error: expect(received).toContainEqual(expected)
+
+Expected to contain: [
+  "tmux", "new-session", "-d", "-P", "-F", "#{pane_id}", "-x", "220", "-y", "60", "-s", "repo-loop-1", "-c",
+  "/repo", "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'OPENCODE_CONFIG_DIR=/tmp/loop-oss-config' 'opencode' '--model' 'openrouter/z-ai/glm-5.2'"
+]
+Received: [
+  [ "tmux", "has-session", "-t", "repo-loop-1" ], [
+    "tmux", "new-session", "-d", "-P", "-F", "#{pane_id}", "-x", "220", "-y", "60", "-s", "repo-loop-1",
+    "-c", "/repo", "'env' '-u' 'LOOP_RECIPIENT_ENROLLMENT_RUN_DIR' '-u' 'LOOP_CODEX_RECIPIENT_TOKEN' '-u' 'LOOP_CLAUDE_RECIPIENT_TOKEN' '-u' 'LOOP_RECIPIENT_RUN_DIR' '-u' 'LOOP_RECIPIENT_SEAT' '-u' 'LOOP_RECIPIENT_API_TOKEN' '-u' 'LOOP_RECIPIENT_API_URL' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'OPENCODE_CONFIG_DIR=/tmp/loop-oss-config' 'opencode' '--model' 'openrouter/z-ai/glm-5.2'"
+  ], [
+    "tmux", "split-window", "-h", "-P", "-F", "#{pane_id}", "-t", "repo-loop-1:0.0", "-c", "/repo", "'env' '-u' 'LOOP_RECIPIENT_ENROLLMENT_RUN_DIR' '-u' 'LOOP_CODEX_RECIPIENT_TOKEN' '-u' 'LOOP_CLAUDE_RECIPIENT_TOKEN' '-u' 'LOOP_RECIPIENT_RUN_DIR' '-u' 'LOOP_RECIPIENT_SEAT' '-u' 'LOOP_RECIPIENT_API_TOKEN' '-u' 'LOOP_RECIPIENT_API_URL' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'OPENCODE_CONFIG_DIR=/tmp/loop-oss-config' 'codex' '-m' 'test-model' '-c' 'service_tier=\"standard\"' '-c' 'model_reasoning_effort=\"medium\"' '-c' 'mcp_servers.loop-bridge.command=\"loop\"' '--enable' 'tui_app_server' '--remote' 'ws://127.0.0.1:4600/'"
+  ], [ "tmux", "select-layout", "-t", "repo-loop-1:0", "even-horizontal" ], [ "tmux", "load-buffer",
+    "-b", "repo-loop-1-oss-launch", "/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-sn3jMH/launch-charters/oss-bootstrap.txt"
+  ], [ "tmux", "paste-buffer", "-d", "-p", "-b", "repo-loop-1-oss-launch", "-t", "repo-loop-1:0.0" ], [ "tmux", "send-keys", "-t", "repo-loop-1:0.0", "Enter" ], [ "tmux", "load-buffer",
+    "-b", "repo-loop-1-codex-launch", "/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-sn3jMH/launch-charters/codex-bootstrap.txt"
+  ], [ "tmux", "paste-buffer", "-d", "-p", "-b", "repo-loop-1-codex-launch", "-t", "repo-loop-1:0.1" ], [ "tmux", "send-keys", "-t", "repo-loop-1:0.1", "Enter" ], [ "tmux", "select-pane",
+    "-t", "repo-loop-1:0.1"
+  ], [ "tmux", "has-session", "-t", "repo-loop-1" ], [ "tmux", "set-window-option", "-t", "repo-loop-1:0",
+    "remain-on-exit", "on"
+  ], [ "tmux", "has-session", "-t", "repo-loop-1" ]
+]
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:1946:17)
+(fail) runInTmux starts paired tmux panes for the OSS seat and Codex [1.54ms]
+(pass) runInTmux releases local codex app-server handles after paired handoff [1.21ms]
+(pass) runInTmux closes local Codex ownership without rewriting a completed manifest after attach [10.54ms]
+2283 |       "off",
+2284 |       "medium",
+2285 |       true
+2286 |     ),
+2287 |   ]);
+2288 |   expect(calls[1]).toEqual([
+                          ^
+error: expect(received).toEqual(expected)
+
+  [
+    "tmux",
+    "new-session",
+    "-d",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    "-x",
+    "220",
+    "-y",
+    "60",
+    "-s",
+    "repo-loop-1",
+    "-c",
+    "/repo",
+-   "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'claude' '--session-id' 'claude-session-1' '--model' 'claude-sonnet-5-5' '--effort' 'medium' '--mcp-config' '/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-nD7LNX/claude-mcp.json' '--strict-mcp-config' '--dangerously-load-development-channels' 'server:loop-bridge-repo-123-1' '--dangerously-skip-permissions' '--disallowedTools' 'Bash' 'Edit' 'Write' 'Agent' 'Task' 'TeamCreate'",
++   "'env' '-u' 'LOOP_RECIPIENT_ENROLLMENT_RUN_DIR' '-u' 'LOOP_CODEX_RECIPIENT_TOKEN' '-u' 'LOOP_CLAUDE_RECIPIENT_TOKEN' '-u' 'LOOP_RECIPIENT_RUN_DIR' '-u' 'LOOP_RECIPIENT_SEAT' '-u' 'LOOP_RECIPIENT_API_TOKEN' '-u' 'LOOP_RECIPIENT_API_URL' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'claude' '--session-id' 'claude-session-1' '--model' 'claude-sonnet-5-5' '--effort' 'medium' '--mcp-config' '/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/loop-tmux-run-nD7LNX/claude-mcp.json' '--strict-mcp-config' '--dangerously-load-development-channels' 'server:loop-bridge-repo-123-1' '--dangerously-skip-permissions' '--disallowedTools' 'Bash' 'Edit' 'Write' 'Agent' 'Task' 'TeamCreate'",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:2288:20)
+(fail) runInTmux starts paired interactive tmux panes without a task [1.83ms]
+(pass) runInTmux fails closed when Claude never reaches an input-ready prompt [11.19ms]
+(pass) runInTmux still terminalizes an unexpected Claude readiness probe failure [10.60ms]
+(pass) runInTmux fails closed and cleans up when the Claude kickoff is never confirmed [10.73ms]
+2738 |   expect(primaryPrompt).toContain("Internal agent communication:");
+2739 |   expect(primaryPrompt).toContain("No arbitrary item cap applies");
+2740 |   expect(primaryPrompt).toContain("commands/results");
+2741 |   expect(primaryPrompt).toContain("Never duplicate a bridge body");
+2742 |   expect(primaryPrompt).toContain("terminal nudge carries no message body");
+2743 |   expect(primaryPrompt).toContain("Delegation is mandatory");
+                               ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "Delegation is mandatory"
+Received: "Agent-to-agent pair programming: you are the primary Codex agent for this run.\n\nTask:\nShip feature\n\nYour peer is Claude. Do the initial pass yourself, then use \"mcp__loop_bridge__send_message\" when you want review or targeted help from Claude.\n\nProof requirements:\nverify with tests\n\nCAVEMAN MODE ACTIVE — level: lite\n\nUpstream: JuliusBrussee/caveman@0d95a81\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\n\n## Persistence\n\nACTIVE EVERY RESPONSE. No revert after many turns. No filler drift. Still active if unsure. Off only: \"stop caveman\" / \"normal mode\".\n\nDefault: **full**. Switch: `/caveman lite|full|ultra`.\n\n## Rules\n\nDrop: articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/of course/happy to), hedging. Fragments OK. Short synonyms (big not extensive, fix not \"implement a solution for\"). No tool-call narration, no decorative tables/emoji, no dumping long raw error logs unless asked — quote shortest decisive line. Standard well-known tech acronyms OK (DB/API/HTTP); never invent new abbreviations (cfg/impl/req/res/fn) — tokenizer split them same as full word: zero token saved, reader still decode. Full word cheaper AND clearer. No causal arrows (→) either — own token, save nothing. Technical terms exact. Code blocks unchanged. Errors quoted exact.\n\nPreserve user's dominant language. User write Portuguese → reply Portuguese caveman. User write Spanish → reply Spanish caveman. Compress the style, not the language. No forced English openings or status phrases. ALWAYS keep technical terms, code, API names, CLI commands, commit-type keywords (feat/fix/...), and exact error strings verbatim — unless user explicitly ask for translation.\n\nNo self-reference. Never name or announce the style. No \"caveman mode on\", \"me caveman think\", no third-person caveman tags. Output caveman-only — never normal answer plus \"Caveman:\" recap. Exception: user explicitly ask what the mode is.\n\nPattern: `[thing] [action] [reason]. [next step].`\n\nNot: \"Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by...\"\nYes: \"Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:\"\n\n## Intensity\n\n| Level | What change |\n|-------|------------|\n| **lite** | No filler/hedging. Keep articles + full sentences. Professional but tight |\n\nExample — \"Why React component re-render?\"\n- lite: \"Your component re-renders because you create a new object reference each render. Wrap it in `useMemo`.\"\n\nExample — \"Explain database connection pooling.\"\n- lite: \"Connection pooling reuses open connections instead of creating new ones per request. Avoids repeated handshake overhead.\"\n\n## Auto-Clarity\n\nDrop caveman when:\n- Security warnings\n- Irreversible action confirmations\n- Multi-step sequences where fragment order or omitted conjunctions risk misread\n- Compression itself creates technical ambiguity (e.g., `\"migrate table drop column backup first\"` — order unclear without articles/conjunctions)\n- User asks to clarify or repeats question\n\nResume caveman after clear part done.\n\nExample — destructive op:\n> **Warning:** This will permanently delete all rows in the `users` table and cannot be undone.\n> ```sql\n> DROP TABLE users;\n> ```\n> Caveman resume. Verify backup exist first.\n\n## Boundaries\n\nCode/commits/PRs: write normal. \"stop caveman\" or \"normal mode\": revert. Level persist until changed or session end.\n\nLoop compatibility boundary:\n- Compress explanatory prose and final summaries only.\n- Keep human/founder/supervisor reports action-first. Keep internal bridge, review, and handoff traffic evidence-dense; never trade review evidence for brevity.\n- Preserve code, commands, paths, URLs, JSON, errors, SHAs, resolver output, bridge identifiers, verdict text, citations, and evidence exactly.\n- Use normal clear prose whenever compression could make ordering, authority, scope, or safety ambiguous.\n\nDo not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; only the provider-enforceable fallback described below may receive a Governess lease.\n\nUse the MCP tool \"mcp__loop_bridge__send_message\" with target: \"claude\" for Claude-facing messages, not a human-facing message.\nThe loop bridge is the sole peer-delivery transport. A terminal nudge carries no message body; pull the durable body with receive_messages. Never duplicate a bridge body with tmux send-keys, direct terminal injection, or a second delivery path.\nInternal agent communication:\n- Machine-reviewed: evidence density wins. No arbitrary item cap applies.\n- First: purpose plus requested action or decision. Then exact scope/locations, claims, commands/results, changed assumptions, risks, unknowns, and relevant failed paths.\n- Separate observed facts from inference. End with the exact question, decision, review, or next action requested.\n- Caveman may compress connective prose, never exact paths, errors, SHAs, identifiers, citations, review reasoning, or verification evidence.\nDelegate useful independent work with \"mcp__loop_bridge__route_task\" and work_shape=separable when it reduces critical-path effort. Delegation is not a quota or a prerequisite for every native tool call. Never label ambiguous or sequence-dependent work separable.\nAt the start of an assigned request, look for a useful independent helper packet; keep safe lower-tier work in flight while the driver continues non-overlapping work. Do not manufacture packets for trivial substitutions or wait for a helper when the next step depends on current-session judgment.\nUse Nanny only for small one- or two-scope local-Qwen inspection, extraction, classification, and concise summaries. Use Au Pair for bounded multi-step inspection, utility audits, small scoped edits, and reasoning-backed focused verification. Exact deterministic work may run Direct. Governess chooses the tier; never request or assume a provider yourself.\nFor a bounded low-risk evidence audit that does not grant approval, use kind=review with review_mode=utility-audit, exact read scopes, no writes, inspect capability, and every authority flag false. Use review_mode=peer-verdict or omit review_mode for exact-SHA gates, release decisions, and any review whose verdict must come from Claude or Codex.\nFor a commit-bound utility audit, use execution_profile=git-diff without raw execution_argv or execution_cwd, put the literal base/head SHAs and required comparisons in the objective, and let Au Pair call the SHA-validating git_diff broker. Raw Git shell text is not helper authority.\nUse kind=edit for a useful scoped patch proposal when behavior is decided, one or two exact files may change, at most four exact files supply context, and no authority or cross-cutting judgment remains. Au Pair proposes; the driver reviews and applies, including in Codex-primary runs. Direct driver edits remain appropriate when delegation adds latency without independent value.\nOn refusal, read the reason once: correct a concrete packet-shape error once, or keep the work with the driver. Do not retry an unchanged refusal, disguise an edit as inspection, or widen authority to get a route. Queued or running is not completed; accept only terminal evidence or a validated patch result.\nFor an exact-scope patch proposal, risk=low describes operational side effects and authority, not reasoning difficulty. Never label ambiguous scope or unresolved design low. Use required_capabilities including scoped-edit, name each target in both read_scope and write_scope, and do not disguise code writing as inspection.\nReserve an active edit packet's write_scope: continue non-overlapping work, but do not edit those files until the job is terminal. Review the returned patch artifact before using the full-agent-only guarded apply tool; never auto-apply helper output.\nEach packet must state one objective, exact read/write scopes, truthful risk and authority flags, required capabilities, and concise acceptance criteria. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts, SHAs, source paths, and absolute paths in the objective or acceptance criteria instead.\nSplit independently answerable inspections into separate packets of at most two read scopes when practical so Nanny can take them; keep cross-file judgment together for Au Pair. Do not split a cohesive small edit into Nanny inspection plus main-agent code writing merely to stay inside the Nanny shape.\nUse the structured execution fields for exact reads, searches, Git inspection, and focused checks. Prefer separate bounded steps over an opaque compound command, then review returned evidence or patches before relying on them.\nWorkers never widen declared scope. If a packet must locate a moved or differently nested path, set read_scope to the narrowest common ancestor that can contain every acceptable candidate, not only the path you expect.\nNative tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous, sequential, or cross-cutting work, peer verdicts, and reviewing returned worker evidence. Being the assigned reviewer does not prevent you from sending separate non-authoritative utility audits to Au Pair.\nProvider-native subagents are not another worker pool. Use Direct, Nanny, and Au Pair first. Codex native spawn is disabled because Codex 0.145 inherits the full-access parent sandbox; Codex must keep using the utility tiers or targeted Claude peer review. Only Claude, after a settled helper route cannot finish a bounded read-only exploration or independent review, may call \"mcp__loop_bridge__request_native_fallback\", cite the helper task IDs, poll \"mcp__loop_bridge__native_fallback_status\" until Governess grants it, and spawn exactly the loop read-only fallback profile. Never spawn another profile or a descendant; strict mode has no native fallback.\nFor a returned Au Pair edit, review the patch artifact and use \"mcp__loop_bridge__apply_task_patch\" with its exact SHA-256; never bypass guarded preimage verification.\nCodex native spawn is disabled in governed modes because Codex 0.145 inherits the full-access parent sandbox. Do not call spawn_agent; use Direct, Nanny, Au Pair, or a targeted Claude peer review.\nWhen the terminal says bridge messages are waiting, call \"mcp__loop_bridge__receive_messages\" immediately; use \"mcp__loop_bridge__bridge_status\" only if that pull looks stuck.\n\nYou are the main worker. Claude reviews and helps on request.\nDriver check-ins:\n- Send the reviewer a short check-in before each subtask: a three-line approach plus the riskiest assumption; at every commit: SHA, diffstat, and the decision most likely to be wrong; and whenever about ten minutes have passed without a check-in.\n- Check-ins are nonblocking: send, keep working, and apply the reviewer's reply when it arrives. Blocking review happens only at the final gate or on a real STOP; check-ins are not plan-stage approval gates.\nContext role: optimize for Codex's smaller context window. Stay focused on the immediate request, current diff, latest logs, and next verification step.\nDo not reconstruct long session history unless it is directly needed. Ask Claude for missing historical context, decisions, or acceptance criteria, and make frequent targeted calls with concise findings, proof, and specific questions.\nImplement and verify first, then ask for review.\nAsk Claude for validation and feedback after every few concrete steps, after any meaningful design choice, and before finalizing. Lead with the review purpose and requested decision; include exact changed scope, proof commands/results, risks, unknowns, and relevant failed paths.\nKeep iterating until your own review and the peer review both pass.\nAfter both pass, handle the PR yourself: create a draft PR or send a follow-up commit to the existing PR.\nSession state:\n- Maintain `PLAN.md` and `status.md` in the current repo for every loop session that does project work.\n- If either file is missing, create it once the task is clear. If it exists, read it before changing work and update it instead of replacing useful history.\n- Keep `PLAN.md` focused on the current plan, decisions, acceptance criteria, and verification approach.\n- Keep `status.md` as the running handoff: what was done in this session, proof/checks run, open questions, risks, and exactly what should happen next.\n- When the human asks to update progress, check in work, stop, or hand off to a next session, update both files first so the next session can resume without hidden context.\nUse AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.\nHuman/founder/supervisor reporting:\n- First line: result, decision, blocker, or exact action required—not tool narration, history, or an investigation plan.\n- Make state visible immediately (done, blocked, or decision needed), then give the smallest supporting evidence.\n- Errors: failed operation or location, cause, fix, and verification. No emotional filler.\n- Ask for at most one concrete action only when blocked; otherwise continue agent-owned work. Keep lists short and ranked, without dropping safety or requested explanation.\n\nInspect the repo and start. Ask Claude for review once you have concrete work or a specific question.\n\nUse AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work."
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:2743:25)
+(fail) tmux prompts keep the paired review workflow explicit [0.55ms]
+(pass) fresh paired charters bind and constrain the run World Model [0.19ms]
+(pass) paired prompts apply Caveman guidance with an exact off switch [0.12ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused [0.09ms]
+(pass) tmux prompts respect --pair-with for non-default peers [0.12ms]
+(pass) interactive tmux prompts tell both agents to wait for the human [0.22ms]
+(pass) runInTmux replays the captured Claude pre-connect warning before bootstrap [3.76ms]
+(pass) the captured development-channels frame is answered only for the bridge it lists [0.79ms]
+(pass) captured Claude suggestions are not ready without an active probe [0.15ms]
+(pass) Claude suggestion probe preserves and rejects a human Try draft [0.51ms]
+(pass) runInTmux preserves the live workspace when a post-End draft capture fails [11.10ms]
+(pass) tmux pane snapshots bind styled text and cursor in one payload [0.12ms]
+(pass) Claude suggestion probe requires an acknowledged redraw [0.47ms]
+(pass) Claude suggestion probe treats a send timeout as recoverable draft risk [0.14ms]
+(pass) Claude suggestion probe rejects attached or piped panes [0.08ms]
+(pass) Claude suggestion probe waits across the activity second [0.12ms]
+(pass) Claude changed suggestions receive a fresh acknowledged probe [0.22ms]
+(pass) Claude draft probe restores Home and fails closed when activity acknowledgment is missing [0.54ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [1.74ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [1.51ms]
+(pass) Claude dev-channel confirmation settles before retrying a swallowed key [0.31ms]
+(pass) Claude dev-channel confirmation never retries after activity advances on a stale frame [0.14ms]
+(pass) Claude dev-channel progress extends the readiness deadline past twenty seconds [1.00ms]
+3476 |   }
+3477 |   if (devChannelConfirmAttempts > 0) {
+3478 |     const detail = devChannelRetrySuppressed
+3479 |       ? "pane activity or an ambiguous redraw followed confirmation"
+3480 |       : "the selected modal never transitioned";
+3481 |     throw new ClaudeStartupInputRequiredError(
+                 ^
+ClaudeChannelStartupInputRequiredError: Claude pane "%0" development-channel confirmation could not be acknowledged because pane activity or an ambiguous redraw followed confirmation; refused to retry into an uncertain input surface or paste the launch bootstrap.
+       pane: "%0",
+ paneTargets: undefined,
+ preservationReason: "unresolved Claude channel startup transition",
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/src/loop/tmux.ts:3481:11)
+      at async <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:3996:13)
+(fail) Claude post-confirmation initialization waits for a delayed composer [1.12ms]
+3997 |       expect(elapsedMs).toBe(35_000);
+3998 |     } else {
+3999 |       await expect(result).rejects.toThrow(
+4000 |         "development-channel confirmation could not be acknowledged"
+4001 |       );
+4002 |       expect(elapsedMs).toBeGreaterThanOrEqual(40_000);
+                               ^
+error: expect(received).toBeGreaterThanOrEqual(expected)
+
+Expected: >= 40000
+Received: 19750
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:4002:25)
+(fail) Claude post-confirmation initialization remains bounded and refuses ambiguity [0.46ms]
+(pass) Claude dev-channel confirmation fails closed after bounded swallowed keys [0.31ms]
+(pass) Claude dev-channel confirmation waits through an incomplete modal redraw [0.14ms]
+(pass) Claude dev-channel confirmation never enters when exit is selected [0.07ms]
+(pass) Claude dev-channel confirmation ignores a stale modal above the current composer [0.03ms]
+(pass) Claude bypass confirmation never enters when navigation is swallowed [0.35ms]
+(pass) Claude bypass confirmation enters only after a fresh selected-accept capture [0.08ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [1.29ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.86ms]
+(pass) runInTmux refuses Claude's folder trust prompt by default, at once, and terminalizes the start [0.94ms]
+(pass) runInTmux --trust-workspace confirms a delayed folder trust prompt for its workspace [1.22ms]
+4758 |       codexMcpConfigArgs
+4759 |     ),
+4760 |   ]);
+4761 | 
+4762 |   expect(delegated).toBe(true);
+4763 |   expect(calls[1]).toEqual([
+                          ^
+error: expect(received).toEqual(expected)
+
+  [
+    "tmux",
+    "new-session",
+    "-d",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    "-x",
+    "220",
+    "-y",
+    "60",
+    "-s",
+    "repo-loop-alpha",
+    "-c",
+    "/repo",
+-   "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=alpha' 'claude' '--resume' 'claude-session-1' '--model' 'opus' '--effort' 'medium' '--mcp-config' '/repo/.loop/runs/alpha/claude-mcp.json' '--strict-mcp-config' '--dangerously-load-development-channels' 'server:loop-bridge-repo-123-alpha' '--dangerously-skip-permissions' '--disallowedTools' 'Bash' 'Edit' 'Write' 'Agent' 'Task' 'TeamCreate'",
++   "'env' '-u' 'LOOP_RECIPIENT_ENROLLMENT_RUN_DIR' '-u' 'LOOP_CODEX_RECIPIENT_TOKEN' '-u' 'LOOP_CLAUDE_RECIPIENT_TOKEN' '-u' 'LOOP_RECIPIENT_RUN_DIR' '-u' 'LOOP_RECIPIENT_SEAT' '-u' 'LOOP_RECIPIENT_API_TOKEN' '-u' 'LOOP_RECIPIENT_API_URL' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=alpha' 'claude' '--resume' 'claude-session-1' '--model' 'opus' '--effort' 'medium' '--mcp-config' '/repo/.loop/runs/alpha/claude-mcp.json' '--strict-mcp-config' '--dangerously-load-development-channels' 'server:loop-bridge-repo-123-alpha' '--dangerously-skip-permissions' '--disallowedTools' 'Bash' 'Edit' 'Write' 'Agent' 'Task' 'TeamCreate'",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-startup-receipts-20261015/loop-fork/tests/loop/tmux.test.ts:4763:20)
+(fail) runInTmux reopens paired tmux panes without replaying the task [0.60ms]
+(pass) runInTmux resolves paired run id through an existing manifest [22.68ms]
+(pass) runInTmux rejects unknown run id before starting tmux session [8.78ms]
+(pass) runInTmux honors paired run resume from --session [15.41ms]
+(pass) runInTmux resolves paired resume from a worktree using git common dir [0.27ms]
+(pass) runInTmux strips a worktree suffix when git metadata is unavailable [0.17ms]
+(pass) runInTmux resolves raw stored session ids from --session [18.19ms]
+(pass) runInTmux ignores an unresolved raw session id in paired mode [13.71ms]
+(pass) runInTmux keeps raw --session values in single-agent mode [0.45ms]
+(pass) runInTmux increments session index on conflicts [0.24ms]
+(pass) runInTmux surfaces tmux startup errors [3.56ms]
+(pass) runInTmux fails nonzero when the tmux control plane times out [3.29ms]
+(pass) runInTmux refuses success when post-launch session liveness is unknown [0.27ms]
+(pass) runInTmux keeps named-socket-missing non-paired handoff liveness unknown [0.18ms]
+(pass) runInTmux keeps unrelated nonzero handoff stderr unknown [0.15ms]
+(pass) runInTmux preserves paired probe argv byte-for-byte with a launch socket available [0.24ms]
+(pass) runInTmux preserves current transport and active state on paired timeout liveness [0.97ms]
+(pass) runInTmux preserves current transport and active state on paired unrecognized nonzero liveness [0.63ms]
+(pass) runInTmux preserves current transport and active state when paired layout outcome is unknown [0.67ms]
+(pass) runInTmux never mutates home Claude MCP registration on startup failure [14.82ms]
+(pass) runInTmux terminalizes a hook-preparation failure before new-session [0.71ms]
+(pass) runInTmux never kills a winner when paired new-session loses a duplicate-session race [0.85ms]
+(pass) runInTmux cleans an owned paired session when setup fails after new-session [0.72ms]
+(pass) runInTmux terminalizes the paired manifest when the workspace disappears before attach [0.68ms]
+(pass) runInTmux preserves external transport ownership when a resumed workspace disappears [0.23ms]
+(pass) runInTmux terminalizes a paired manifest when attach confirms the workspace is gone [0.24ms]
+(pass) runInTmux preserves the active manifest when attach-path liveness is unknown [0.18ms]
+(pass) runInTmux preserves a freshly live session when the local terminal cannot attach [0.18ms]
+(pass) runInTmux rejects a failed pre-handoff window setup and terminalizes the manifest [0.18ms]
+(pass) runInTmux treats optional remain-on-exit timeout as best-effort and preserves the live manifest [0.17ms]
+(pass) runInTmux rejects a noninteractive handoff race and terminalizes the active manifest [0.18ms]
+(pass) runInTmux does not report a successful handoff for an already-failed manifest [0.19ms]
+(pass) runInTmux skips auto-attach for non-interactive sessions [0.17ms]
+(pass) persistent Codex bootstrap failure falls back to tmux delivery [0.12ms]
+(pass) runInTmux reports when tmux session exits before attach [7.12ms]
+(pass) tmux internals strip --tmux from forwarded args [0.01ms]
+(pass) tmux internals build launch argv from exec path [0.01ms]
+(pass) tmux internals build launch argv for bun-compiled binary
+(pass) tmux internals build launch argv for executable with no script arg
+(pass) tmux internals build launch argv for installed executable [0.01ms]
+(pass) tmux internals build launch argv when bun executes installed binary
+(pass) tmux internals quote single quotes safely
+(pass) tmux internals build shell command with escaping
+(pass) tmux internals unref detached helper processes [0.05ms]
+(pass) tmux internals launch Claude in bypass mode [0.02ms]
+(pass) Claude reviewer command mechanically denies filesystem and shell tools [0.02ms]
+(pass) tmux internals build run names
+(pass) tmux internals detect session conflicts
+(pass) tmux internals sanitize run base names
+(pass) claudeSeatHasNoShell is true only for a Claude seat that is not the primary
+(pass) governess env carries the gov-6 Temporal journal settings, and only when set [0.20ms]
+(pass) governess env carries the fix8 journal opt-out and orchestration config override, and only when set [0.15ms]
+(pass) every LOOP_GOVERNESS_TEMPORAL_* variable read by source reaches the Governess pane [5.61ms]
+(pass) preserved startup recovery refuses while the original launcher pid can still own the run [1.15ms]
+(pass) preserved startup recovery refuses while a live launch attempt still owns the run [0.84ms]
+(pass) preserved startup recovery refuses when another launcher took the run after preparation [0.77ms]
+(pass) preserved startup recovery never overwrites session ids that changed after its read [1.12ms]
+(pass) a failed preserved startup recovery leaves live seats non-terminal and names manual cleanup [1.18ms]
+(pass) recovered preserved startup is never terminalized while its session is still live [1.03ms]
+(pass) recovered preserved startup still terminalizes once its session is positively gone [0.96ms]
+(pass) preserved startup recovery keeps a pid ruled out by the pre-preparation record ruled out [0.98ms]
+(pass) preserved startup recovery re-reads the manifest just before its first tmux change [0.92ms]
+(pass) a refused preserved startup recovery hands the run record back to its live owner [0.80ms]
+(pass) a refused preserved startup recovery keeps writes another process made after preparation [0.81ms]
+(pass) a failed preserved startup recovery records the manual cleanup durably [1.26ms]
+(pass) a recovered preserved startup that cannot be terminalized records the manual cleanup durably [1.28ms]
+(pass) runInTmux --a2a-as claims the run once its manifest is complete, before attach [0.56ms]
+(pass) runInTmux --a2a-as never fails the launch when the claim is refused [0.20ms]
+(pass) runInTmux releases the A2A endpoint after a failed handoff, after the run is terminal, without masking it [0.36ms]
+
+7 tests failed:
+(fail) runInTmux paired launch emits the exact run manifest path contract line [4.21ms]
+(fail) runInTmux starts paired tmux panes for the OSS seat and Codex [1.54ms]
+(fail) runInTmux starts paired interactive tmux panes without a task [1.83ms]
+(fail) tmux prompts keep the paired review workflow explicit [0.55ms]
+(fail) Claude post-confirmation initialization waits for a delayed composer [1.12ms]
+(fail) Claude post-confirmation initialization remains bounded and refuses ambiguity [0.46ms]
+(fail) runInTmux reopens paired tmux panes without replaying the task [0.60ms]
+
+ 129 pass
+ 7 fail
+ 638 expect() calls
+Ran 136 tests across 1 file. [326.00ms]
+error: script "test:file" exited with code 1

@@ -1,0 +1,270 @@
+=== verify.sh: task=startup-receipts-20261015 feature=startup-receipts-20261015 ===
+--- lint ---
+$ ultracite check
+scripts/vertical-cleanup-health.ts:3:21 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Template literals are preferred over string concatenation.
+  
+    1 │ const child = Bun.spawn(["/private/tmp/harness-vertical-release-928bd1db", "__bridge-mcp", "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50", "supervisor"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    2 │ for (const [index, target] of ["codex", "claude"].entries()) {
+  > 3 │   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "tools/call", params: { name: "send_message", arguments: { target, type: "work_request", dedupe_key: `vertical-run50-health-${target}-v1`, message: "Cleanup-only health proof. Receive this governed message and return HEALTH_ACK_RUN50 to supervisor, replying to this message. No writes, nested launches, credentials or lifecycle actions. Then remain ready for supervisor teardown." } } }) + "\n");
+      │                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    4 │ }
+    5 │ child.stdin.end();
+  
+  i Unsafe fix: Use a template literal.
+  
+    1 1 │   const child = Bun.spawn(["/private/tmp/harness-vertical-release-928bd1db", "__bridge-mcp", "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50", "supervisor"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    2 2 │   for (const [index, target] of ["codex", "claude"].entries()) {
+    3   │ - ··child.stdin.write(JSON.stringify({·jsonrpc:·"2.0",·id:·index·+·1,·method:·"tools/call",·params:·{·name:·"send_message",·arguments:·{·target,·type:·"work_request",·dedupe_key:·`vertical-run50-health-${target}-v1`,·message:·"Cleanup-only·health·proof.·Receive·this·governed·message·and·return·HEALTH_ACK_RUN50·to·supervisor,·replying·to·this·message.·No·writes,·nested·launches,·credentials·or·lifecycle·actions.·Then·remain·ready·for·supervisor·teardown."·}·}·})·+·"\n");
+      3 │ + ··child.stdin.write(`${JSON.stringify({·jsonrpc:·"2.0",·id:·index·+·1,·method:·"tools/call",·params:·{·name:·"send_message",·arguments:·{·target,·type:·"work_request",·dedupe_key:·`vertical-run50-health-${target}-v1`,·message:·"Cleanup-only·health·proof.·Receive·this·governed·message·and·return·HEALTH_ACK_RUN50·to·supervisor,·replying·to·this·message.·No·writes,·nested·launches,·credentials·or·lifecycle·actions.·Then·remain·ready·for·supervisor·teardown."·}·}·})}\n`);
+    4 4 │   }
+    5 5 │   child.stdin.end();
+  
+
+scripts/vertical-cleanup-health.ts:7:1 lint/style/useBlockStatements  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  × Block statements are preferred in this position.
+  
+    5 │ child.stdin.end();
+    6 │ const output = await new Response(child.stdout).text();
+  > 7 │ if (await child.exited !== 0) throw new Error("Health submission failed");
+      │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    8 │ for (const line of output.trim().split("\n")) { const response = JSON.parse(line); if (response.error) throw new Error("Health submission refused"); console.log(JSON.stringify(response)); }
+    9 │ 
+  
+  i Safe fix: Wrap the statement with a `JsBlockStatement`
+  
+    7 │ if·(await·child.exited·!==·0)·{·throw·new·Error("Health·submission·failed");·}
+      │                               ++                                            ++
+
+scripts/vertical-cleanup-health.ts:8:84 lint/style/useBlockStatements  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  × Block statements are preferred in this position.
+  
+    6 │ const output = await new Response(child.stdout).text();
+    7 │ if (await child.exited !== 0) throw new Error("Health submission failed");
+  > 8 │ for (const line of output.trim().split("\n")) { const response = JSON.parse(line); if (response.error) throw new Error("Health submission refused"); console.log(JSON.stringify(response)); }
+      │                                                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    9 │ 
+  
+  i Safe fix: Wrap the statement with a `JsBlockStatement`
+  
+    6 6 │   const output = await new Response(child.stdout).text();
+    7 7 │   if (await child.exited !== 0) throw new Error("Health submission failed");
+    8   │ - for·(const·line·of·output.trim().split("\n"))·{·const·response·=·JSON.parse(line);·if·(response.error)·throw·new·Error("Health·submission·refused");·console.log(JSON.stringify(response));·}
+      8 │ + for·(const·line·of·output.trim().split("\n"))·{·const·response·=·JSON.parse(line);·if·(response.error)·{·throw·new·Error("Health·submission·refused");··}console.log(JSON.stringify(response));·}
+    9 9 │   
+  
+
+scripts/vertical-cleanup-health.ts:1:15 lint/correctness/noUndeclaredVariables ━━━━━━━━━━━━━━━━━━━━━
+
+  × The Bun variable is undeclared.
+  
+  > 1 │ const child = Bun.spawn(["/private/tmp/harness-vertical-release-928bd1db", "__bridge-mcp", "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50", "supervisor"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      │               ^^^
+    2 │ for (const [index, target] of ["codex", "claude"].entries()) {
+    3 │   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "tools/call", params: { name: "send_message", arguments: { target, type: "work_request", dedupe_key: `vertical-run50-health-${target}-v1`, message: "Cleanup-only health proof. Receive this governed message and return HEALTH_ACK_RUN50 to supervisor, replying to this message. No writes, nested launches, credentials or lifecycle actions. Then remain ready for supervisor teardown." } } }) + "\n");
+  
+  i By default, Biome recognizes browser and Node.js globals.
+    You can ignore more globals using the javascript.globals configuration.
+  
+
+scripts/vertical-cleanup-health.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    1    │ - const·child·=·Bun.spawn(["/private/tmp/harness-vertical-release-928bd1db",·"__bridge-mcp",·"/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50",·"supervisor"],·{·stdin:·"pipe",·stdout:·"pipe",·stderr:·"pipe"·});
+       1 │ + const·child·=·Bun.spawn(
+       2 │ + ··[
+       3 │ + ····"/private/tmp/harness-vertical-release-928bd1db",
+       4 │ + ····"__bridge-mcp",
+       5 │ + ····"/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50",
+       6 │ + ····"supervisor",
+       7 │ + ··],
+       8 │ + ··{·stdin:·"pipe",·stdout:·"pipe",·stderr:·"pipe"·}
+       9 │ + );
+    2 10 │   for (const [index, target] of ["codex", "claude"].entries()) {
+    3    │ - ··child.stdin.write(JSON.stringify({·jsonrpc:·"2.0",·id:·index·+·1,·method:·"tools/call",·params:·{·name:·"send_message",·arguments:·{·target,·type:·"work_request",·dedupe_key:·`vertical-run50-health-${target}-v1`,·message:·"Cleanup-only·health·proof.·Receive·this·governed·message·and·return·HEALTH_ACK_RUN50·to·supervisor,·replying·to·this·message.·No·writes,·nested·launches,·credentials·or·lifecycle·actions.·Then·remain·ready·for·supervisor·teardown."·}·}·})·+·"\n");
+      11 │ + ··child.stdin.write(
+      12 │ + ····JSON.stringify({
+      13 │ + ······jsonrpc:·"2.0",
+      14 │ + ······id:·index·+·1,
+      15 │ + ······method:·"tools/call",
+      16 │ + ······params:·{
+      17 │ + ········name:·"send_message",
+      18 │ + ········arguments:·{
+      19 │ + ··········target,
+      20 │ + ··········type:·"work_request",
+      21 │ + ··········dedupe_key:·`vertical-run50-health-${target}-v1`,
+      22 │ + ··········message:
+      23 │ + ············"Cleanup-only·health·proof.·Receive·this·governed·message·and·return·HEALTH_ACK_RUN50·to·supervisor,·replying·to·this·message.·No·writes,·nested·launches,·credentials·or·lifecycle·actions.·Then·remain·ready·for·supervisor·teardown.",
+      24 │ + ········},
+      25 │ + ······},
+      26 │ + ····})·+·"\n"
+      27 │ + ··);
+    4 28 │   }
+    5 29 │   child.stdin.end();
+    6 30 │   const output = await new Response(child.stdout).text();
+    7    │ - if·(await·child.exited·!==·0)·throw·new·Error("Health·submission·failed");
+    8    │ - for·(const·line·of·output.trim().split("\n"))·{·const·response·=·JSON.parse(line);·if·(response.error)·throw·new·Error("Health·submission·refused");·console.log(JSON.stringify(response));·}
+      31 │ + if·((await·child.exited)·!==·0)·throw·new·Error("Health·submission·failed");
+      32 │ + for·(const·line·of·output.trim().split("\n"))·{
+      33 │ + ··const·response·=·JSON.parse(line);
+      34 │ + ··if·(response.error)·throw·new·Error("Health·submission·refused");
+      35 │ + ··console.log(JSON.stringify(response));
+      36 │ + }
+    9 37 │   
+  
+
+scripts/vertical-cleanup-launch.ts:1:1 assist/source/organizeImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  × The imports and exports are not sorted.
+  
+  > 1 │ import { existsSync, readFileSync } from "node:fs";
+      │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    2 │ const predecessor=JSON.parse(readFileSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/49/manifest.json","utf8"));
+    3 │ if(!predecessor.workspaceReleasedAt||existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50"))throw new Error("Single successor preflight refused");
+  
+  i Safe fix: Organize Imports (Biome)
+  
+     1  1 │   import { existsSync, readFileSync } from "node:fs";
+        2 │ + 
+     2  3 │   const predecessor=JSON.parse(readFileSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/49/manifest.json","utf8"));
+     3  4 │   if(!predecessor.workspaceReleasedAt||existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50"))throw new Error("Single successor preflight refused");
+  
+
+scripts/vertical-cleanup-launch.ts:3:1 lint/style/useBlockStatements  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  × Block statements are preferred in this position.
+  
+    1 │ import { existsSync, readFileSync } from "node:fs";
+    2 │ const predecessor=JSON.parse(readFileSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/49/manifest.json","utf8"));
+  > 3 │ if(!predecessor.workspaceReleasedAt||existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50"))throw new Error("Single successor preflight refused");
+      │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    4 │ const env={...process.env};
+    5 │ for(const key of ["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY","ANTHROPIC_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","CLAUDE_CODE_SUBAGENT_MODEL","LOOP_RECIPIENT_API_TOKEN","LOOP_CODEX_RECIPIENT_TOKEN","LOOP_CLAUDE_RECIPIENT_TOKEN","LOOP_RECIPIENT_ENROLLMENT_RUN_DIR","LOOP_RECIPIENT_API_URL","LOOP_VERTICAL_DATABASE_URL","LOOP_VERTICAL_SUPERVISOR_TOKEN"])delete env[key];
+  
+  i Safe fix: Wrap the statement with a `JsBlockStatement`
+  
+    3 │ if(!predecessor.workspaceReleasedAt||existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50"))·{·throw·new·Error("Single·successor·preflight·refused");·}
+      │                                                                                                          +++                                                      ++
+
+scripts/vertical-cleanup-launch.ts:5:1 lint/style/useBlockStatements  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  × Block statements are preferred in this position.
+  
+    3 │ if(!predecessor.workspaceReleasedAt||existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50"))throw new Error("Single successor preflight refused");
+    4 │ const env={...process.env};
+  > 5 │ for(const key of ["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY","ANTHROPIC_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","CLAUDE_CODE_SUBAGENT_MODEL","LOOP_RECIPIENT_API_TOKEN","LOOP_CODEX_RECIPIENT_TOKEN","LOOP_CLAUDE_RECIPIENT_TOKEN","LOOP_RECIPIENT_ENROLLMENT_RUN_DIR","LOOP_RECIPIENT_API_URL","LOOP_VERTICAL_DATABASE_URL","LOOP_VERTICAL_SUPERVISOR_TOKEN"])delete env[key];
+      │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    6 │ env.LOOP_TMUX_SOCKET="/private/tmp/harness-vertical-cleanup-slice.sock";
+    7 │ env.LOOP_STARTUP_MAINTENANCE="0";
+  
+  i Safe fix: Wrap the statement with a `JsBlockStatement`
+  
+    5 │ for(const·key·of·["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY","ANTHROPIC_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","CLAUDE_CODE_SUBAGENT_MODEL","LOOP_RECIPIENT_API_TOKEN","LOOP_CODEX_RECIPIENT_TOKEN","LOOP_CLAUDE_RECIPIENT_TOKEN","LOOP_RECIPIENT_ENROLLMENT_RUN_DIR","LOOP_RECIPIENT_API_URL","LOOP_VERTICAL_DATABASE_URL","LOOP_VERTICAL_SUPERVISOR_TOKEN"])·{·delete·env[key];·}
+      │                                                                                                                                                                                                                                                                                                                                                                                     +++                ++
+
+scripts/vertical-cleanup-launch.ts:8:13 lint/correctness/noUndeclaredVariables ━━━━━━━━━━━━━━━━━━━━━
+
+  × The Bun variable is undeclared.
+  
+     6 │ env.LOOP_TMUX_SOCKET="/private/tmp/harness-vertical-cleanup-slice.sock";
+     7 │ env.LOOP_STARTUP_MAINTENANCE="0";
+   > 8 │ const child=Bun.spawn(["/private/tmp/harness-vertical-release-928bd1db","--agent","codex","--pair-with","claude","--codex-model","gpt-5.6-terra","--effort-driver","max","--claude-reviewer-model","sonnet","--effort-reviewer","low","--workspace","/private/tmp/harness-vertical-test-slice-1","--tmux","--review-plan","none","--prompt","/private/tmp/harness-vertical-release-composition-v1/specs/harness-control-plane-vertical-release-v1/cleanup-charter.md"],{cwd:"/Users/amgad/dev_projects/agents-collab",env,stdin:"inherit",stdout:"inherit",stderr:"inherit"});
+       │             ^^^
+     9 │ process.on("SIGINT",()=>child.kill("SIGINT"));
+    10 │ process.exit(await child.exited);
+  
+  i By default, Biome recognizes browser and Node.js globals.
+    You can ignore more globals using the javascript.globals configuration.
+  
+
+scripts/vertical-cleanup-launch.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     1  1 │   import { existsSync, readFileSync } from "node:fs";
+     2    │ - const·predecessor=JSON.parse(readFileSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/49/manifest.json","utf8"));
+     3    │ - if(!predecessor.workspaceReleasedAt||existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50"))throw·new·Error("Single·successor·preflight·refused");
+     4    │ - const·env={...process.env};
+     5    │ - for(const·key·of·["ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","ANTHROPIC_API_KEY","ANTHROPIC_MODEL","ANTHROPIC_DEFAULT_SONNET_MODEL","CLAUDE_CODE_SUBAGENT_MODEL","LOOP_RECIPIENT_API_TOKEN","LOOP_CODEX_RECIPIENT_TOKEN","LOOP_CLAUDE_RECIPIENT_TOKEN","LOOP_RECIPIENT_ENROLLMENT_RUN_DIR","LOOP_RECIPIENT_API_URL","LOOP_VERTICAL_DATABASE_URL","LOOP_VERTICAL_SUPERVISOR_TOKEN"])delete·env[key];
+     6    │ - env.LOOP_TMUX_SOCKET="/private/tmp/harness-vertical-cleanup-slice.sock";
+     7    │ - env.LOOP_STARTUP_MAINTENANCE="0";
+     8    │ - const·child=Bun.spawn(["/private/tmp/harness-vertical-release-928bd1db","--agent","codex","--pair-with","claude","--codex-model","gpt-5.6-terra","--effort-driver","max","--claude-reviewer-model","sonnet","--effort-reviewer","low","--workspace","/private/tmp/harness-vertical-test-slice-1","--tmux","--review-plan","none","--prompt","/private/tmp/harness-vertical-release-composition-v1/specs/harness-control-plane-vertical-release-v1/cleanup-charter.md"],{cwd:"/Users/amgad/dev_projects/agents-collab",env,stdin:"inherit",stdout:"inherit",stderr:"inherit"});
+     9    │ - process.on("SIGINT",()=>child.kill("SIGINT"));
+        2 │ + const·predecessor·=·JSON.parse(
+        3 │ + ··readFileSync(
+        4 │ + ····"/Users/amgad/.loop/runs/agents-collab-fa87e8608224/49/manifest.json",
+        5 │ + ····"utf8"
+        6 │ + ··)
+        7 │ + );
+        8 │ + if·(
+        9 │ + ··!predecessor.workspaceReleasedAt·||
+       10 │ + ··existsSync("/Users/amgad/.loop/runs/agents-collab-fa87e8608224/50")
+       11 │ + )
+       12 │ + ··throw·new·Error("Single·successor·preflight·refused");
+       13 │ + const·env·=·{·...process.env·};
+       14 │ + for·(const·key·of·[
+       15 │ + ··"ANTHROPIC_BASE_URL",
+       16 │ + ··"ANTHROPIC_AUTH_TOKEN",
+       17 │ + ··"ANTHROPIC_API_KEY",
+       18 │ + ··"ANTHROPIC_MODEL",
+       19 │ + ··"ANTHROPIC_DEFAULT_SONNET_MODEL",
+       20 │ + ··"CLAUDE_CODE_SUBAGENT_MODEL",
+       21 │ + ··"LOOP_RECIPIENT_API_TOKEN",
+       22 │ + ··"LOOP_CODEX_RECIPIENT_TOKEN",
+       23 │ + ··"LOOP_CLAUDE_RECIPIENT_TOKEN",
+       24 │ + ··"LOOP_RECIPIENT_ENROLLMENT_RUN_DIR",
+       25 │ + ··"LOOP_RECIPIENT_API_URL",
+       26 │ + ··"LOOP_VERTICAL_DATABASE_URL",
+       27 │ + ··"LOOP_VERTICAL_SUPERVISOR_TOKEN",
+       28 │ + ])
+       29 │ + ··delete·env[key];
+       30 │ + env.LOOP_TMUX_SOCKET·=·"/private/tmp/harness-vertical-cleanup-slice.sock";
+       31 │ + env.LOOP_STARTUP_MAINTENANCE·=·"0";
+       32 │ + const·child·=·Bun.spawn(
+       33 │ + ··[
+       34 │ + ····"/private/tmp/harness-vertical-release-928bd1db",
+       35 │ + ····"--agent",
+       36 │ + ····"codex",
+       37 │ + ····"--pair-with",
+       38 │ + ····"claude",
+       39 │ + ····"--codex-model",
+       40 │ + ····"gpt-5.6-terra",
+       41 │ + ····"--effort-driver",
+       42 │ + ····"max",
+       43 │ + ····"--claude-reviewer-model",
+       44 │ + ····"sonnet",
+       45 │ + ····"--effort-reviewer",
+       46 │ + ····"low",
+       47 │ + ····"--workspace",
+       48 │ + ····"/private/tmp/harness-vertical-test-slice-1",
+       49 │ + ····"--tmux",
+       50 │ + ····"--review-plan",
+       51 │ + ····"none",
+       52 │ + ····"--prompt",
+       53 │ + ····"/private/tmp/harness-vertical-release-composition-v1/specs/harness-control-plane-vertical-release-v1/cleanup-charter.md",
+       54 │ + ··],
+       55 │ + ··{
+       56 │ + ····cwd:·"/Users/amgad/dev_projects/agents-collab",
+       57 │ + ····env,
+       58 │ + ····stdin:·"inherit",
+       59 │ + ····stdout:·"inherit",
+       60 │ + ····stderr:·"inherit",
+       61 │ + ··}
+       62 │ + );
+       63 │ + process.on("SIGINT",·()·=>·child.kill("SIGINT"));
+    10 64 │   process.exit(await child.exited);
+    11 65 │   
+  
+
+Checked 1211 files in 345ms. No fixes applied.
+Found 10 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "check" exited with code 1

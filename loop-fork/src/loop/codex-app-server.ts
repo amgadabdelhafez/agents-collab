@@ -1,4 +1,4 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import {
   AGENT_TURN_TIMEOUT_MS,
   DEFAULT_CODEX_REASONING_EFFORT,
@@ -7,6 +7,7 @@ import {
 import { findFreePort } from "./ports";
 import { DETACH_CHILD_PROCESS, killChildProcess } from "./process";
 import type { Options, RunResult } from "./types";
+import type { ConnectWsOptions } from "./ws-client";
 
 type ExitSignal = "SIGINT" | "SIGTERM";
 type TransportMode = "app-server" | "exec";
@@ -46,13 +47,19 @@ interface PendingTurnCompletion {
 }
 
 interface TurnState {
+  activeItemAggregate: string;
+  activeItemHasDelta: boolean;
+  activeItemId: string;
   combined: string;
-  lastChunk: string;
+  completedItems: Map<string, string>;
   onParsed: Callback;
   onRaw: Callback;
   parsed: string;
+  pendingMessageBreak: boolean;
   reject: (error: Error) => void;
   resolve: (result: RunResult) => void;
+  threadId: string;
+  turnId: string;
 }
 
 const APP_SERVER_CMD = "codex";
@@ -62,6 +69,7 @@ const WS_CONNECT_ATTEMPTS = 40;
 const WS_CONNECT_DELAY_MS = 150;
 const USER_INPUT_TEXT_ELEMENTS = "text_elements";
 const NOOP_CALLBACK: Callback = () => undefined;
+const WHITESPACE_RE = /\s+/;
 
 export const CODEX_TRANSPORT_APP_SERVER: TransportMode = "app-server";
 export const CODEX_TRANSPORT_EXEC: TransportMode = "exec";
@@ -98,14 +106,34 @@ const BRIDGE_OPT_OUT_NOTIFICATION_METHODS = [
 ] as const;
 
 type SpawnFn = (...args: Parameters<typeof spawn>) => ReturnType<typeof spawn>;
-type ConnectWsFn = (url: string) => Promise<import("./ws-client").WsClient>;
+type ConnectWsFn = (
+  url: string,
+  options?: ConnectWsOptions
+) => Promise<import("./ws-client").WsClient>;
+type ListenerOwnerPidFn = (port: number) => number | undefined;
 
 let spawnFn: SpawnFn = spawn;
-const defaultConnectWs: ConnectWsFn = async (url) => {
+const defaultConnectWs: ConnectWsFn = async (url, options) => {
   const { connectWs } = await import("./ws-client");
-  return connectWs(url);
+  return connectWs(url, options);
 };
 let connectWsFn: ConnectWsFn = defaultConnectWs;
+const defaultListenerOwnerPid: ListenerOwnerPidFn = (port) => {
+  const result = spawnSync(
+    ["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
+    { stderr: "ignore", stdout: "pipe" }
+  );
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+  const pids = new TextDecoder()
+    .decode(result.stdout)
+    .split(WHITESPACE_RE)
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  return pids.length === 1 ? pids[0] : undefined;
+};
+let listenerOwnerPidFn: ListenerOwnerPidFn = defaultListenerOwnerPid;
 
 const isString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -194,6 +222,35 @@ const parseText = (value: unknown): string | undefined => {
     : undefined;
 };
 
+const parseAgentMessageText = (
+  item: Record<string, unknown>
+): string | undefined => {
+  const parts: string[] = [];
+  const direct = asString(item.text);
+  if (direct) {
+    parts.push(direct);
+  }
+  const content = item.content;
+  if (isString(content)) {
+    parts.push(content);
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (isString(part)) {
+        parts.push(part);
+        continue;
+      }
+      const record = asRecord(part);
+      const keys = Object.keys(record);
+      const text = asString(record.text);
+      if (keys.length === 1 && keys[0] === "text" && text) {
+        parts.push(text);
+      }
+    }
+  }
+  const text = parts.join("").trim();
+  return text || undefined;
+};
+
 const isUnsupportedTransportError = (error: unknown): boolean => {
   const message = parseErrorText(error)?.toLowerCase();
   return (
@@ -244,19 +301,164 @@ const isBusyTurnError = (value: unknown): boolean => {
   );
 };
 
-const extractTurnId = (value: unknown): string | undefined => {
-  const record = asRecord(value);
-  const fromValue = asString(record.turnId) ?? asString(record.turn_id);
-  if (fromValue) {
-    return fromValue;
+interface NormalizedIdentity {
+  conflict: boolean;
+  threadId?: string;
+  turnId?: string;
+}
+
+const normalizeAliasedIdentity = (
+  fields: [Record<string, unknown>, string][]
+): { conflict: boolean; value?: string } => {
+  const values: string[] = [];
+  for (const [record, key] of fields) {
+    if (!Object.hasOwn(record, key)) {
+      continue;
+    }
+    const value = asString(record[key]);
+    if (!value) {
+      return { conflict: true };
+    }
+    values.push(value);
   }
+  const distinct = new Set(values);
+  if (distinct.size > 1) {
+    return { conflict: true };
+  }
+  return { conflict: false, value: values[0] };
+};
+
+const normalizeIdentity = (value: unknown): NormalizedIdentity => {
+  const record = asRecord(value);
   const turn = asRecord(record.turn);
-  return asString(turn.id);
+  const normalizedTurn = normalizeAliasedIdentity([
+    [record, "turnId"],
+    [record, "turn_id"],
+    [turn, "id"],
+  ]);
+  const normalizedThread = normalizeAliasedIdentity([
+    [record, "threadId"],
+    [record, "thread_id"],
+  ]);
+  return {
+    conflict: normalizedTurn.conflict || normalizedThread.conflict,
+    threadId: normalizedThread.value,
+    turnId: normalizedTurn.value,
+  };
+};
+
+const NESTED_IDENTITY_DEPTH_LIMIT = 32;
+const THREAD_ALIASES = ["threadId", "thread_id"];
+const TURN_ALIASES = ["turnId", "turn_id"];
+
+const aliasesMatch = (
+  record: Record<string, unknown>,
+  keys: string[],
+  expected: string
+): boolean =>
+  keys.every((key) => !Object.hasOwn(record, key) || record[key] === expected);
+
+const nestedIdMatches = (
+  record: Record<string, unknown>,
+  key: string,
+  expected: string
+): boolean => {
+  if (!Object.hasOwn(record, key)) {
+    return true;
+  }
+  const nested = record[key];
+  if (!(isRecord(nested) && Object.hasOwn(nested, "id"))) {
+    return true;
+  }
+  return nested.id === expected;
+};
+
+/**
+ * Every thread/turn identity alias anywhere inside a notification payload,
+ * including its item and nested records, must name the exact owned turn.
+ * Outer params alone cannot attribute an item that carries another identity.
+ */
+const ownsNestedIdentity = (
+  value: unknown,
+  owner: { threadId: string; turnId: string },
+  depth = 0
+): boolean => {
+  if (depth > NESTED_IDENTITY_DEPTH_LIMIT) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => ownsNestedIdentity(entry, owner, depth + 1));
+  }
+  if (!isRecord(value)) {
+    return true;
+  }
+  if (
+    !(
+      aliasesMatch(value, THREAD_ALIASES, owner.threadId) &&
+      aliasesMatch(value, TURN_ALIASES, owner.turnId) &&
+      nestedIdMatches(value, "thread", owner.threadId) &&
+      nestedIdMatches(value, "turn", owner.turnId)
+    )
+  ) {
+    return false;
+  }
+  return Object.values(value).every((entry) =>
+    ownsNestedIdentity(entry, owner, depth + 1)
+  );
+};
+
+const extractTurnId = (value: unknown): string | undefined => {
+  const identity = normalizeIdentity(value);
+  return identity.conflict ? undefined : identity.turnId;
 };
 
 const extractThreadId = (value: unknown): string | undefined => {
-  const record = asRecord(value);
-  return asString(record.threadId) ?? asString(record.thread_id);
+  const identity = normalizeIdentity(value);
+  return identity.conflict ? undefined : identity.threadId;
+};
+
+const normalizeItemId = (
+  params: Record<string, unknown>,
+  item: Record<string, unknown> = {}
+): { conflict: boolean; value?: string } =>
+  normalizeAliasedIdentity([
+    [params, "itemId"],
+    [params, "item_id"],
+    [params, "id"],
+    [item, "id"],
+  ]);
+
+const isSameActiveItem = (
+  state: TurnState,
+  itemId: string | undefined
+): boolean =>
+  state.activeItemHasDelta &&
+  ((Boolean(itemId) && itemId === state.activeItemId) ||
+    !(itemId || state.activeItemId));
+
+const completedItemProjection = (
+  state: TurnState,
+  itemId: string | undefined,
+  candidate: string
+): { needsBoundary: boolean; suffix: string } => {
+  const sameItem = isSameActiveItem(state, itemId);
+  const normalizedAggregate = state.activeItemAggregate.trim();
+  if (sameItem && candidate === normalizedAggregate) {
+    return { needsBoundary: false, suffix: "" };
+  }
+  const aggregatePrefix = candidate.startsWith(state.activeItemAggregate)
+    ? state.activeItemAggregate
+    : normalizedAggregate;
+  const continuesAggregate =
+    sameItem &&
+    Boolean(aggregatePrefix) &&
+    candidate.startsWith(aggregatePrefix);
+  return {
+    needsBoundary: !continuesAggregate,
+    suffix: continuesAggregate
+      ? candidate.slice(aggregatePrefix.length)
+      : candidate,
+  };
 };
 
 const extractThreadFromTurnStart = (value: unknown): { id?: string } => {
@@ -365,8 +567,7 @@ const handleWsServerRequest = (
 
 const extractNotificationTurnId = (
   params: Record<string, unknown>
-): string | undefined =>
-  extractTurnId(params) || asString(asRecord(params.turn).id);
+): string | undefined => extractTurnId(params);
 
 const settlePendingTurn = (
   pendingTurns: Map<string, PendingTurnCompletion>,
@@ -596,6 +797,15 @@ export const codexAppServerInternals = {
   restoreConnectWsFn: (): void => {
     connectWsFn = defaultConnectWs;
   },
+  setListenerOwnerPidFn: (next: ListenerOwnerPidFn): void => {
+    listenerOwnerPidFn = next;
+  },
+  restoreListenerOwnerPidFn: (): void => {
+    listenerOwnerPidFn = defaultListenerOwnerPid;
+  },
+  cleanupOnProcessExit: (): void => {
+    cleanupAppServerOnProcessExit();
+  },
 };
 
 class AppServerClient {
@@ -615,8 +825,15 @@ class AppServerClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly turns = new Map<string, TurnState>();
   private lock: Promise<void> = Promise.resolve();
+  private launchGeneration = 0;
+  private launchAbortController: AbortController | undefined;
+  private startPromise: Promise<void> | undefined;
 
   get process(): ReturnType<typeof spawn> | undefined {
+    return this.ready ? this.child : undefined;
+  }
+
+  get processForExit(): ReturnType<typeof spawn> | undefined {
     return this.child;
   }
 
@@ -625,11 +842,11 @@ class AppServerClient {
   }
 
   getConnectUrl(): string {
-    return this.connectUrl;
+    return this.ready ? this.connectUrl : "";
   }
 
   hasProcess(): boolean {
-    return this.child !== undefined;
+    return this.ready && this.child !== undefined;
   }
 
   needsRestart(options: AppServerLaunchOptions = {}): boolean {
@@ -672,11 +889,33 @@ class AppServerClient {
   }
 
   async start(): Promise<void> {
+    if (this.startPromise) {
+      await this.startPromise;
+      await this.ensurePersistentLaunchThread();
+      return;
+    }
     if (this.started) {
       await this.ensurePersistentLaunchThread();
       return;
     }
+    const startPromise = this.startExclusive();
+    this.startPromise = startPromise;
+    try {
+      await startPromise;
+    } finally {
+      if (this.startPromise === startPromise) {
+        this.startPromise = undefined;
+      }
+    }
+  }
+
+  private async startExclusive(): Promise<void> {
     this.started = true;
+    const generation = ++this.launchGeneration;
+    const abortController = new AbortController();
+    this.launchAbortController = abortController;
+    let ownedChild: ReturnType<typeof spawn> | undefined;
+    let ownedWs: import("./ws-client").WsClient | undefined;
     try {
       const port = await this.findPort();
       const listenUrl = `ws://127.0.0.1:${port}`;
@@ -693,24 +932,46 @@ class AppServerClient {
           stdout: this.orphanOnExit ? "ignore" : "pipe",
         }
       );
+      ownedChild = child;
       this.child = child;
       if (this.orphanOnExit) {
         child.unref?.();
         child.exited.then(() => {
-          if (!this.closed) {
-            this.handleUnexpectedExit();
-          }
+          this.handleUnexpectedExit(generation, child);
         });
       } else {
         this.consumeFrames(child).finally(() => {
-          if (!this.closed) {
-            this.handleUnexpectedExit();
-          }
+          this.handleUnexpectedExit(generation, child);
         });
       }
-      const ws = await this.connectWebSocket(connectUrl);
+      await this.waitForOwnedListener(port, generation, child);
+      const ownsListener = (): boolean =>
+        this.launchOwnsListener(port, generation, child);
+      const ws = await this.connectWebSocket(
+        connectUrl,
+        ownsListener,
+        abortController.signal
+      );
+      ownedWs = ws;
+      if (!ownsListener()) {
+        throw new CodexAppServerFallbackError(
+          "codex app-server listener is not owned by the spawned process"
+        );
+      }
+      if (!this.launchOwnsConnection(generation, child, ws)) {
+        throw new CodexAppServerFallbackError(
+          "codex app-server connection was not accepted by the spawned process"
+        );
+      }
       this.ws = ws;
       ws.onmessage = (data) => {
+        if (
+          generation !== this.launchGeneration ||
+          this.child !== child ||
+          this.ws !== ws
+        ) {
+          return;
+        }
         for (const line of data.split("\n")) {
           if (line.trim()) {
             this.handleStdoutLine(line);
@@ -718,9 +979,7 @@ class AppServerClient {
         }
       };
       ws.onclose = () => {
-        if (!this.closed) {
-          this.handleUnexpectedExit();
-        }
+        this.handleUnexpectedExit(generation, child, ws);
       };
       await this.sendRequest(METHOD_INITIALIZE, {
         clientInfo: {
@@ -733,40 +992,134 @@ class AppServerClient {
       this.sendNotification(METHOD_INITIALIZED);
       this.ready = true;
       await this.ensurePersistentLaunchThread();
+      if (this.launchAbortController === abortController) {
+        this.launchAbortController = undefined;
+      }
     } catch (error) {
-      const ws = this.ws;
-      this.ws = undefined;
-      if (ws) {
-        try {
-          ws.close();
-        } catch {
-          // ignore close errors
-        }
-      }
-      if (this.child) {
-        killChildProcess(this.child, "SIGTERM");
-        this.child = undefined;
-      }
-      this.connectUrl = "";
-      this.ready = false;
-      this.started = false;
+      this.cleanupFailedLaunch(
+        generation,
+        ownedChild,
+        ownedWs,
+        abortController
+      );
       throw new CodexAppServerFallbackError(
         toError(error).message || "failed to start codex app-server"
       );
     }
   }
 
+  private cleanupFailedLaunch(
+    generation: number,
+    child: ReturnType<typeof spawn> | undefined,
+    ws: import("./ws-client").WsClient | undefined,
+    abortController: AbortController
+  ): void {
+    abortController.abort();
+    if (this.launchAbortController === abortController) {
+      this.launchAbortController = undefined;
+    }
+    if (this.launchGeneration === generation && this.ws === ws) {
+      this.ws = undefined;
+    }
+    if (ws) {
+      try {
+        ws.terminate();
+      } catch {
+        // ignore termination errors
+      }
+    }
+    if (child) {
+      killChildProcess(child, "SIGTERM");
+    }
+    if (this.launchGeneration !== generation || this.child !== child) {
+      return;
+    }
+    this.child = undefined;
+    this.connectUrl = "";
+    this.ready = false;
+    this.started = false;
+  }
+
   private findPort(): Promise<number> {
     return findFreePort(APP_SERVER_BASE_PORT, APP_SERVER_PORT_RANGE);
   }
 
+  private launchOwnsListener(
+    port: number,
+    generation: number,
+    child: ReturnType<typeof spawn>
+  ): boolean {
+    return (
+      generation === this.launchGeneration &&
+      this.child === child &&
+      listenerOwnerPidFn(port) === child.pid
+    );
+  }
+
+  private launchOwnsConnection(
+    generation: number,
+    child: ReturnType<typeof spawn>,
+    ws: import("./ws-client").WsClient
+  ): boolean {
+    return (
+      generation === this.launchGeneration &&
+      this.child === child &&
+      ws.acceptedByPid(child.pid)
+    );
+  }
+
+  private async waitForOwnedListener(
+    port: number,
+    generation: number,
+    child: ReturnType<typeof spawn>
+  ): Promise<void> {
+    for (let attempt = 0; attempt < WS_CONNECT_ATTEMPTS; attempt += 1) {
+      if (generation !== this.launchGeneration || this.child !== child) {
+        break;
+      }
+      const ownerPid = listenerOwnerPidFn(port);
+      if (ownerPid === child.pid) {
+        return;
+      }
+      // An occupied port is not startup latency: another process owns it.
+      if (ownerPid !== undefined) {
+        break;
+      }
+      if (attempt < WS_CONNECT_ATTEMPTS - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, WS_CONNECT_DELAY_MS)
+        );
+      }
+    }
+    throw new CodexAppServerFallbackError(
+      "codex app-server listener is not owned by the spawned process"
+    );
+  }
+
   private async connectWebSocket(
-    url: string
+    url: string,
+    ownsListener: () => boolean,
+    signal: AbortSignal
   ): Promise<import("./ws-client").WsClient> {
     for (let i = 0; i < WS_CONNECT_ATTEMPTS; i++) {
+      if (signal.aborted) {
+        throw new CodexAppServerFallbackError(
+          "codex app-server WebSocket connection cancelled"
+        );
+      }
+      if (!ownsListener()) {
+        throw new CodexAppServerFallbackError(
+          "codex app-server listener is not owned by the spawned process"
+        );
+      }
       try {
-        return await connectWsFn(url);
+        return await connectWsFn(url, { signal });
       } catch {
+        if (signal.aborted) {
+          throw new CodexAppServerFallbackError(
+            "codex app-server WebSocket connection cancelled"
+          );
+        }
         if (i === WS_CONNECT_ATTEMPTS - 1) {
           throw new CodexAppServerFallbackError(
             "failed to connect to codex app-server WebSocket"
@@ -804,8 +1157,19 @@ class AppServerClient {
   async close(): Promise<void> {
     this.closed = true;
     this.failAll(new Error("codex app-server closed"));
+    const abortController = this.launchAbortController;
+    if (this.launchAbortController === abortController) {
+      this.launchAbortController = undefined;
+    }
+    abortController?.abort();
+    const generation = this.launchGeneration;
+    const invalidatedGeneration = generation + 1;
+    this.launchGeneration = invalidatedGeneration;
+    const child = this.child;
     const ws = this.ws;
-    this.ws = undefined;
+    if (this.ws === ws) {
+      this.ws = undefined;
+    }
     if (ws) {
       try {
         ws.close();
@@ -813,13 +1177,25 @@ class AppServerClient {
         // ignore close errors
       }
     }
-    if (!this.child) {
-      this.started = false;
-      this.ready = false;
+    if (!child) {
+      if (
+        this.launchGeneration === invalidatedGeneration &&
+        this.child === child
+      ) {
+        this.connectUrl = "";
+        this.started = false;
+        this.ready = false;
+      }
       return;
     }
-    killChildProcess(this.child, "SIGTERM");
-    await this.child.exited;
+    killChildProcess(child, "SIGTERM");
+    await child.exited;
+    if (
+      this.launchGeneration !== invalidatedGeneration ||
+      this.child !== child
+    ) {
+      return;
+    }
     this.child = undefined;
     this.connectUrl = "";
     this.ready = false;
@@ -829,8 +1205,19 @@ class AppServerClient {
   release(): void {
     this.closed = true;
     this.failAll(new Error("codex app-server released"));
+    const abortController = this.launchAbortController;
+    if (this.launchAbortController === abortController) {
+      this.launchAbortController = undefined;
+    }
+    abortController?.abort();
+    const generation = this.launchGeneration;
+    const invalidatedGeneration = generation + 1;
+    this.launchGeneration = invalidatedGeneration;
+    const child = this.child;
     const ws = this.ws;
-    this.ws = undefined;
+    if (this.ws === ws) {
+      this.ws = undefined;
+    }
     if (ws) {
       try {
         ws.close();
@@ -838,10 +1225,15 @@ class AppServerClient {
         // ignore close errors
       }
     }
-    this.child = undefined;
-    this.connectUrl = "";
-    this.ready = false;
-    this.started = false;
+    if (
+      this.launchGeneration === invalidatedGeneration &&
+      this.child === child
+    ) {
+      this.child = undefined;
+      this.connectUrl = "";
+      this.ready = false;
+      this.started = false;
+    }
   }
 
   private async ensureThread(
@@ -903,13 +1295,19 @@ class AppServerClient {
     const turnId = turn.id;
     return new Promise<RunResult>((resolve, reject) => {
       const state: TurnState = {
+        activeItemAggregate: "",
+        activeItemHasDelta: false,
+        activeItemId: "",
         combined: "",
-        lastChunk: "",
+        completedItems: new Map(),
         onParsed,
         onRaw,
         parsed: "",
+        pendingMessageBreak: false,
         reject,
         resolve,
+        threadId,
+        turnId,
       };
       this.turns.set(turnId, state);
       const timeout = setTimeout(() => {
@@ -985,32 +1383,116 @@ class AppServerClient {
   }
 
   private readonly handleStdoutLine = (line: string): void => {
-    for (const turn of this.turns.values()) {
-      turn.combined += `${line}\n`;
-      turn.onRaw(line);
-    }
     const frame = parseLine(line);
     if (!frame) {
       return;
     }
+    const method = asString(frame.method);
+    if (method && frame.id === undefined) {
+      const params = asRecord(frame.params);
+      const state = this.selectTurnState(params);
+      const rawLine = state
+        ? this.completionAuthoritativeRawLine(state, method, params)
+        : undefined;
+      if (state && rawLine) {
+        state.combined += `${rawLine}\n`;
+        state.onRaw(rawLine);
+      }
+    }
     this.handleFrame(frame);
   };
 
-  private readonly handleStdErrLine = (line: string): void => {
-    for (const turn of this.turns.values()) {
-      turn.combined += `${line}\n`;
-      turn.onRaw(line);
+  private completionAuthoritativeRawLine(
+    state: TurnState,
+    method: string,
+    params: Record<string, unknown>
+  ): string | undefined {
+    if (method === METHOD_ITEM_DELTA) {
+      const text = asString(params.delta);
+      if (!text) {
+        return undefined;
+      }
+      const itemId = normalizeItemId(params);
+      if (itemId.conflict) {
+        return undefined;
+      }
+      return JSON.stringify({
+        method,
+        params: {
+          delta: text,
+          ...(itemId.value ? { itemId: itemId.value } : {}),
+        },
+      });
     }
-  };
+    if (method !== METHOD_ITEM_COMPLETED) {
+      return undefined;
+    }
+    const item = asRecord(params.item);
+    const itemType = asString(item.type);
+    if (itemType !== "agentMessage" && itemType !== "agent_message") {
+      return undefined;
+    }
+    const candidate = parseAgentMessageText(item);
+    if (!candidate) {
+      return undefined;
+    }
+    const itemId = normalizeItemId(params, item);
+    if (itemId.conflict) {
+      return undefined;
+    }
+    if (itemId.value && state.completedItems.get(itemId.value) === candidate) {
+      return undefined;
+    }
+    const sameItem = isSameActiveItem(state, itemId.value);
+    if (sameItem && candidate === state.activeItemAggregate.trim()) {
+      return undefined;
+    }
+    return JSON.stringify({
+      method,
+      params: {
+        item: {
+          content: [{ text: candidate }],
+          ...(itemId.value ? { id: itemId.value } : {}),
+          type: "agentMessage",
+        },
+      },
+    });
+  }
+
+  // Process stderr has no thread/turn identity. Keep it out of every turn's
+  // renderer and decision input rather than attributing one process-level line
+  // to whichever task happens to be active.
+  private readonly handleStdErrLine = (_line: string): void => undefined;
 
   private selectTurnState(
     payload: Record<string, unknown>
   ): TurnState | undefined {
-    const turnId = extractTurnId(payload) || extractThreadId(payload);
-    if (turnId) {
-      return this.turns.get(turnId);
+    const identity = normalizeIdentity(payload);
+    if (identity.conflict) {
+      return undefined;
     }
-    return this.turns.size === 1 ? [...this.turns.values()][0] : undefined;
+    const state = this.selectOuterTurnState(identity);
+    return state && ownsNestedIdentity(payload, state) ? state : undefined;
+  }
+
+  private selectOuterTurnState({
+    threadId,
+    turnId,
+  }: NormalizedIdentity): TurnState | undefined {
+    if (turnId) {
+      const state = this.turns.get(turnId);
+      if (!state || (threadId && state.threadId !== threadId)) {
+        return undefined;
+      }
+      return state;
+    }
+    if (threadId) {
+      const matches = [...this.turns.values()].filter(
+        (state) => state.threadId === threadId
+      );
+      return matches.length === 1 ? matches[0] : undefined;
+    }
+    return undefined;
   }
 
   private handleFrame(frame: JsonFrame): void {
@@ -1018,7 +1500,7 @@ class AppServerClient {
     const requestId = asRequestId(frame.id);
 
     if (requestId && method) {
-      this.handleServerRequest(requestId, method);
+      this.handleServerRequest(requestId, method, asRecord(frame.params));
       return;
     }
     if (requestId) {
@@ -1059,7 +1541,18 @@ class AppServerClient {
     request.resolve(result);
   }
 
-  private handleServerRequest(requestId: string, method: string): void {
+  private handleServerRequest(
+    requestId: string,
+    method: string,
+    params: Record<string, unknown>
+  ): void {
+    if (!this.selectTurnState(params)) {
+      this.sendResponse(requestId, undefined, {
+        code: -32_601,
+        message: "request is not attributed to an active loop turn",
+      });
+      return;
+    }
     if (
       method === METHOD_COMMAND_APPROVAL ||
       method === METHOD_FILE_CHANGE_APPROVAL
@@ -1120,17 +1613,38 @@ class AppServerClient {
     if (!state) {
       return;
     }
-    const chunk = parseText(params.delta || params);
+    const chunk = asString(params.delta);
     if (!chunk) {
       return;
     }
-    const text = chunk.trim();
-    if (!text || text === state.lastChunk) {
+    const itemId = normalizeItemId(params);
+    if (itemId.conflict) {
       return;
     }
-    state.lastChunk = text;
-    state.parsed = `${state.parsed ? `${state.parsed}\n` : ""}${text}`;
-    state.onParsed(text);
+    const itemChanged =
+      Boolean(state.activeItemId) &&
+      Boolean(itemId.value) &&
+      state.activeItemId !== itemId.value;
+    if (itemChanged) {
+      state.activeItemAggregate = "";
+      state.activeItemHasDelta = false;
+    }
+    if (
+      (itemChanged || state.pendingMessageBreak) &&
+      state.parsed &&
+      !state.parsed.endsWith("\n") &&
+      !chunk.startsWith("\n")
+    ) {
+      state.parsed += "\n";
+    }
+    state.pendingMessageBreak = false;
+    if (itemId.value) {
+      state.activeItemId = itemId.value;
+    }
+    state.activeItemHasDelta = true;
+    state.activeItemAggregate += chunk;
+    state.parsed += chunk;
+    state.onParsed(chunk);
   }
 
   private handleItemCompletedNotification(
@@ -1145,73 +1659,57 @@ class AppServerClient {
     if (itemType !== "agentMessage" && itemType !== "agent_message") {
       return;
     }
-    const text = parseText(item);
-    if (!text) {
+    const candidate = parseAgentMessageText(item);
+    if (!candidate) {
       return;
     }
-    const candidate = text.trim();
-    if (!candidate || candidate === state.lastChunk) {
+    const itemId = normalizeItemId(params, item);
+    if (itemId.conflict) {
       return;
     }
-    state.lastChunk = candidate;
-    state.parsed = `${state.parsed ? `${state.parsed}\n` : ""}${candidate}`;
-    state.onParsed(candidate);
+    if (itemId.value && state.completedItems.get(itemId.value) === candidate) {
+      return;
+    }
+    const projection = completedItemProjection(state, itemId.value, candidate);
+    if (projection.suffix) {
+      const insertBoundary =
+        projection.needsBoundary &&
+        Boolean(state.parsed) &&
+        !state.parsed.endsWith("\n") &&
+        !projection.suffix.startsWith("\n");
+      state.parsed += `${insertBoundary ? "\n" : ""}${projection.suffix}`;
+      state.onParsed(projection.suffix);
+    }
+    if (itemId.value) {
+      state.completedItems.set(itemId.value, candidate);
+    }
+    state.activeItemAggregate = "";
+    state.activeItemHasDelta = false;
+    state.activeItemId = "";
+    state.pendingMessageBreak = true;
   }
 
   private handleErrorNotification(
     state: TurnState | undefined,
     params: Record<string, unknown>
   ): void {
-    const turnId = extractTurnId(params) || extractThreadId(params);
-    if (state) {
-      for (const [turnId, current] of this.turns.entries()) {
-        if (current === state) {
-          this.turns.delete(turnId);
-          break;
-        }
+    if (!state) {
+      return;
+    }
+    for (const [turnId, current] of this.turns.entries()) {
+      if (current === state) {
+        this.turns.delete(turnId);
+        break;
       }
-      state.reject(new Error(parseErrorText(params) || "codex turn failed"));
-      return;
     }
-    if (turnId && this.turns.has(turnId)) {
-      const activeState = this.turns.get(turnId);
-      if (!activeState) {
-        return;
-      }
-      this.turns.delete(turnId);
-      activeState.reject(
-        new Error(parseErrorText(params) || `turn ${turnId} failed`)
-      );
-      return;
-    }
-    if (turnId) {
-      return;
-    }
-    if (this.turns.size !== 1) {
-      return;
-    }
-    const [first] = this.turns.values();
-    this.turns.clear();
-    first?.reject(new Error(parseErrorText(params) || "codex turn failed"));
+    state.reject(new Error(parseErrorText(params) || "codex turn failed"));
   }
 
   private handleTurnCompletedNotification(
     state: TurnState | undefined,
     params: Record<string, unknown>
   ): void {
-    const turnId = extractTurnId(params) || extractThreadId(params);
     if (!state) {
-      if (turnId) {
-        return;
-      }
-      if (this.turns.size !== 1) {
-        return;
-      }
-      const first = [...this.turns.values()][0];
-      if (!first) {
-        return;
-      }
-      this.resolveTurnState(first, params);
       return;
     }
     this.resolveTurnState(state, params);
@@ -1224,7 +1722,7 @@ class AppServerClient {
     const turn = asRecord(params.turn);
     const status = asString(params.status) ?? asString(turn.status);
     const exitCode = status === "failed" ? 1 : 0;
-    const turnId = extractTurnId(params) || asString(turn.id);
+    const turnId = extractTurnId(params);
 
     if (turnId && this.turns.has(turnId)) {
       this.turns.delete(turnId);
@@ -1340,7 +1838,22 @@ class AppServerClient {
     this.pending.clear();
   }
 
-  private handleUnexpectedExit(): void {
+  private handleUnexpectedExit(
+    generation: number,
+    child: ReturnType<typeof spawn>,
+    sourceWs?: import("./ws-client").WsClient
+  ): void {
+    if (
+      this.closed ||
+      generation !== this.launchGeneration ||
+      this.child !== child ||
+      (sourceWs !== undefined && this.ws !== sourceWs)
+    ) {
+      return;
+    }
+    const abortController = this.launchAbortController;
+    this.launchAbortController = undefined;
+    abortController?.abort();
     this.child = undefined;
     this.connectUrl = "";
     const ws = this.ws;
@@ -1352,6 +1865,7 @@ class AppServerClient {
         // ignore close errors
       }
     }
+    killChildProcess(child, "SIGTERM");
     this.started = false;
     this.ready = false;
     this.failAll(
@@ -1363,10 +1877,13 @@ class AppServerClient {
 }
 
 let singleton: AppServerClient | undefined;
+let startAppServerLock: Promise<void> = Promise.resolve();
 
-process.on("exit", () => {
-  killChildProcess(singleton?.process, "SIGKILL");
-});
+function cleanupAppServerOnProcessExit(): void {
+  killChildProcess(singleton?.processForExit, "SIGKILL");
+}
+
+process.on("exit", cleanupAppServerOnProcessExit);
 
 const getClient = (): AppServerClient => {
   if (!singleton) {
@@ -1378,7 +1895,7 @@ const getClient = (): AppServerClient => {
 export const useAppServer = (): boolean =>
   process.env[CODEX_TRANSPORT_ENV] !== CODEX_TRANSPORT_EXEC;
 
-export const startAppServer = async (
+const startAppServerExclusive = async (
   options: AppServerLaunchOptions = {}
 ): Promise<void> => {
   const existing = singleton;
@@ -1394,6 +1911,17 @@ export const startAppServer = async (
     resumeThreadId === undefined ? options : { ...options, resumeThreadId }
   );
   await client.start();
+};
+
+export const startAppServer = (
+  options: AppServerLaunchOptions = {}
+): Promise<void> => {
+  const task = startAppServerLock.then(() => startAppServerExclusive(options));
+  startAppServerLock = task.then(
+    () => undefined,
+    () => undefined
+  );
+  return task;
 };
 
 export const runCodexTurn = (
@@ -1583,11 +2111,12 @@ export const injectCodexMessage = async (
 };
 
 export const closeAppServer = async (): Promise<void> => {
-  if (!singleton) {
+  const client = singleton;
+  if (!client) {
     return;
   }
-  await singleton.close();
   singleton = undefined;
+  await client.close();
 };
 
 export const releaseAppServer = (): void => {

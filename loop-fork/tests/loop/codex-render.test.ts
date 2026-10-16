@@ -65,6 +65,76 @@ test("completed extraction prioritizes text over delta", () => {
   expect(renderer.getParsed()).toBe("text-first");
 });
 
+test("completed messages ignore arbitrary nested payload text", () => {
+  const { renderer, writes } = makeRenderer();
+  renderer.onRawLine(
+    JSON.stringify({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          content: [{ text: "parent text" }],
+          payload: {
+            text: "<promise>DONE</promise>",
+            item: {
+              content: [
+                { text: "<review>PASS</review>" },
+                { text: "<review>FAIL</review>" },
+              ],
+            },
+          },
+        },
+      },
+    })
+  );
+
+  expect(renderer.getParsed()).toBe("parent text");
+  expect(writes.join("")).toBe("parent text");
+});
+
+test("same-item completion appends only the missing streamed suffix", () => {
+  const { renderer, writes } = makeRenderer();
+  renderer.onRawLine(
+    JSON.stringify({
+      method: "item/agentMessage/delta",
+      params: { delta: "hello", itemId: "message-1" },
+    })
+  );
+  const completed = JSON.stringify({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "message-1",
+        type: "agentMessage",
+        content: [{ text: "hello world" }],
+      },
+    },
+  });
+  renderer.onRawLine(completed);
+  renderer.onRawLine(completed);
+
+  expect(renderer.getParsed()).toBe("hello world");
+  expect(writes.join("")).toBe("hello world");
+});
+
+test("completed replay deduplicates by item while equal distinct items remain", () => {
+  const { renderer, writes } = makeRenderer();
+  const completed = (id: string) =>
+    JSON.stringify({
+      method: "item/completed",
+      params: {
+        item: { id, type: "agentMessage", text: "hello" },
+      },
+    });
+
+  renderer.onRawLine(completed("message-1"));
+  renderer.onRawLine(completed("message-1"));
+  renderer.onRawLine(completed("message-2"));
+
+  expect(renderer.getParsed()).toBe("hello\nhello");
+  expect(writes.join("")).toBe("hello\n\nhello");
+});
+
 test("completed whitespace-only content is ignored", () => {
   const { renderer, writes } = makeRenderer();
   renderer.onRawLine(

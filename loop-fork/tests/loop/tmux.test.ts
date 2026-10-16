@@ -26,6 +26,7 @@ import {
   writeRunManifest,
 } from "../../src/loop/run-state";
 import {
+  buildPairedPaneEnv,
   runInTmux,
   TMUX_MISSING_ERROR,
   tmuxInternals,
@@ -916,11 +917,14 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
     { opts, task: "Ship feature" }
   );
 
-  const env = [
-    "LOOP_RUN_BASE=repo",
-    "LOOP_RUN_ID=1",
-    `CODEX_HOME=${codexHome}`,
-  ];
+  const env = buildPairedPaneEnv({
+    codexHome,
+    governess: false,
+    inheritedEnv: {},
+    nativeSubagentMode: "off",
+    runBase: "repo",
+    runId: "1",
+  });
   const claudeChannelServer = tmuxInternals.buildClaudeChannelServerName(
     "1",
     storage.repoId
@@ -1048,9 +1052,13 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
   expect(typed).toEqual([]);
   expect(logs[0]).toBe("[loop] starting paired tmux workspace...");
   expect(logs).toContain('[loop] started tmux session "repo-loop-1"');
-  expect(logs).toContain(
-    "[loop] attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'"
-  );
+  expect(
+    logs.some(
+      (line) =>
+        line.startsWith("[loop] attach with: tmux -S '") &&
+        line.endsWith("' attach -t 'repo-loop-1'")
+    )
+  ).toBe(true);
   expect(manifest.claudeSessionId).toBe("claude-session-1");
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
@@ -1913,10 +1921,16 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
     { opts, task: "Ship feature" }
   );
 
-  const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
   // Both panes share one tmux env list; the OSS config dir is a path, inert for
   // the Codex pane, and carries no credential.
-  const ossEnv = [...env, "OPENCODE_CONFIG_DIR=/tmp/loop-oss-config"];
+  const ossEnv = buildPairedPaneEnv({
+    governess: false,
+    inheritedEnv: {},
+    nativeSubagentMode: "off",
+    ossConfigDir: "/tmp/loop-oss-config",
+    runBase: "repo",
+    runId: "1",
+  });
   const ossCommand = tmuxInternals.buildShellCommand([
     "env",
     ...ossEnv,
@@ -2264,7 +2278,13 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
 
   expect(delegated).toBe(true);
   expect(calls[0]).toEqual(["tmux", "has-session", "-t", "repo-loop-1"]);
-  const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
+  const env = buildPairedPaneEnv({
+    governess: false,
+    inheritedEnv: {},
+    nativeSubagentMode: "off",
+    runBase: "repo",
+    runId: "1",
+  });
   const claudeChannelServer = tmuxInternals.buildClaudeChannelServerName(
     "1",
     storage.repoId
@@ -2727,7 +2747,11 @@ test("tmux prompts keep the paired review workflow explicit", () => {
     "Context role: optimize for Codex's smaller context window."
   );
   expect(primaryPrompt).toContain("Ask Claude for missing historical context");
+  expect(primaryPrompt).toContain("accurate local-source handoff");
   expect(primaryPrompt).toContain(
+    "Draft publication, push, and follow-up commits are not authorized"
+  );
+  expect(primaryPrompt).not.toContain(
     "create a draft PR or send a follow-up commit to the existing PR"
   );
   expect(primaryPrompt).not.toContain("Wait briefly if it arrives");
@@ -2740,13 +2764,13 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("commands/results");
   expect(primaryPrompt).toContain("Never duplicate a bridge body");
   expect(primaryPrompt).toContain("terminal nudge carries no message body");
-  expect(primaryPrompt).toContain("Delegation is mandatory");
+  expect(primaryPrompt).toContain("Delegation is not a quota");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__route_task"');
-  expect(primaryPrompt).toContain("one to three independent bounded packets");
+  expect(primaryPrompt).toContain("Split independently answerable inspections");
   expect(primaryPrompt).toContain("Use Nanny");
   expect(primaryPrompt).toContain("Use Au Pair");
   expect(primaryPrompt).toContain("Governess chooses the tier");
-  expect(primaryPrompt).toContain("keep lower-tier work in flight");
+  expect(primaryPrompt).toContain("keep safe lower-tier work in flight");
   expect(primaryPrompt).toContain("Do not proactively create");
   expect(primaryPrompt).toContain("Use Direct, Nanny, and Au Pair first");
   expect(primaryPrompt).toContain("Governess lease");
@@ -2776,8 +2800,8 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).not.toContain(
     "the run task text is context, not an assignment"
   );
-  expect(peerPrompt).toContain("Delegation is mandatory");
-  expect(peerPrompt).toContain("one to three independent bounded packets");
+  expect(peerPrompt).toContain("Delegation is not a quota");
+  expect(peerPrompt).toContain("Split independently answerable inspections");
   expect(peerPrompt).toContain("Governess chooses the tier");
   expect(peerPrompt).toContain("sole peer-delivery transport");
   expect(peerPrompt).toContain("Human/founder/supervisor reporting:");
@@ -3949,6 +3973,62 @@ test("Claude dev-channel progress extends the readiness deadline past twenty sec
   expect(sentAt).toEqual([21_000]);
 });
 
+for (const becomesReady of [true, false]) {
+  test(`Claude post-confirmation initialization ${becomesReady ? "waits for a delayed composer" : "remains bounded and refuses ambiguity"}`, async () => {
+    const modal = [
+      "WARNING: Loading development channels",
+      "--dangerously-load-development-channels is for local channel development only.",
+      RUN_1_CHANNEL_LINE,
+      "❯ 1. I am using this for local development",
+      "  2. Exit",
+    ].join("\n");
+    let elapsedMs = 0;
+    let confirmations = 0;
+    const currentText = () => {
+      if (confirmations === 0) {
+        return modal;
+      }
+      if (becomesReady && elapsedMs >= 35_000) {
+        return "❯ ";
+      }
+      return "Initializing channel…";
+    };
+    const result = tmuxInternals.unblockClaudePane(
+      "%0",
+      {
+        capturePane: currentText,
+        capturePaneSnapshot: () => ({
+          activeClients: 0,
+          cursor: { x: -1, y: -1 },
+          pipeOpen: false,
+          text: currentText(),
+          windowActivity: confirmations === 0 ? 100 : 101,
+        }),
+        nowMs: () => elapsedMs,
+        sendKeys: (_pane, keys) => {
+          expect(keys).toEqual(["Enter"]);
+          confirmations += 1;
+        },
+        sleep: (ms) => {
+          elapsedMs += ms;
+          return Promise.resolve();
+        },
+      },
+      DEV_CHANNEL_STARTUP
+    );
+    if (becomesReady) {
+      await result;
+      expect(elapsedMs).toBe(35_000);
+    } else {
+      await expect(result).rejects.toThrow(
+        "development-channel confirmation could not be acknowledged"
+      );
+      expect(elapsedMs).toBe(41_000);
+    }
+    expect(confirmations).toBe(1);
+  });
+}
+
 test("Claude dev-channel confirmation fails closed after bounded swallowed keys", async () => {
   const modal = [
     "WARNING: Loading development channels",
@@ -4671,7 +4751,13 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     { opts, task: "Ship feature" }
   );
 
-  const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=alpha"];
+  const env = buildPairedPaneEnv({
+    governess: false,
+    inheritedEnv: {},
+    nativeSubagentMode: "off",
+    runBase: "repo",
+    runId: "alpha",
+  });
   const claudeChannelServer = tmuxInternals.buildClaudeChannelServerName(
     "alpha",
     storage.repoId

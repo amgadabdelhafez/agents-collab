@@ -43,6 +43,7 @@ export type ValueFlag =
   | "max"
   | "done"
   | "proof"
+  | "publishDraftPrRemote"
   | "pairWith"
   | "effort"
   | "driverEffort"
@@ -382,6 +383,8 @@ export interface Options {
   pairWith?: Agent;
   promptInput?: string;
   proof: string;
+  /** Explicit opt-in and exact Git remote for post-review draft publication. */
+  publishDraftPrRemote?: string;
   reservedRunId?: string;
   resumeRunId?: string;
   review?: ReviewMode;

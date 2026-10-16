@@ -90,6 +90,7 @@ Options:
   -m, --max-iterations <number>            Max loops (default: ${DEFAULT_MAX_ITERATIONS})
   -d, --done <signal>                      Done signal (default: <promise>DONE</promise>)
   --proof <text>                           Proof requirements for task completion
+  --publish-draft-pr <remote>              After review, allow draft GitHub publication through this exact named remote
   --codex-model <model>                    Override codex model (default: ${DEFAULT_CODEX_MODEL})
   --codex-reviewer-model <model>           Override codex review model (default: ${DEFAULT_CODEX_REVIEWER_MODEL})
   --oss-model <provider/model>             Override the OSS seat model (default: ${DEFAULT_OSS_MODEL})
@@ -181,6 +182,7 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "-d": "done",
   "--done": "done",
   "--proof": "proof",
+  "--publish-draft-pr": "publishDraftPrRemote",
   "--pair-with": "pairWith",
   "--reviewer": "pairWith",
   "--effort": "effort",

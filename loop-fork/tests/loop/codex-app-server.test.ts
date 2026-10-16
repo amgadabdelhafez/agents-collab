@@ -1,6 +1,9 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import { buildCodexBridgeConfigArgs } from "../../src/loop/bridge-config";
+import { createCodexRenderer } from "../../src/loop/codex-render";
+import { createRunReview } from "../../src/loop/review";
 import type { Options } from "../../src/loop/types";
+import { hasSignal } from "../../src/loop/utils";
 
 interface RequestFrame {
   error?: unknown;
@@ -24,6 +27,13 @@ interface TestProcess {
   pid: number;
   unrefCount: number;
   writes: string[];
+}
+
+interface TestSocket {
+  acceptedByPid: number | undefined;
+  client: import("../../src/loop/ws-client").WsClient;
+  closeCount: number;
+  terminateCount: number;
 }
 
 type ResponseWriter = (frame: Record<string, unknown>) => void;
@@ -59,6 +69,8 @@ let processes: TestProcess[] = [];
 let currentHandler: RequestHandler = noopRequestHandler;
 let lastSpawnCommand: string[] = [];
 let wsWrites: string[] = [];
+let sockets: TestSocket[] = [];
+let killClosesProcess = true;
 
 const makeStreamResponse = (
   request: RequestFrame,
@@ -110,7 +122,9 @@ const installSpawn = (appServerModule: AppServerModule): void => {
         exited,
         kill: (signal?: string) => {
           killSignals.push(signal ?? "SIGTERM");
-          close();
+          if (killClosesProcess) {
+            close();
+          }
         },
         pid,
         unref: () => {
@@ -138,35 +152,58 @@ const installSpawn = (appServerModule: AppServerModule): void => {
   );
 };
 
-const installConnectWs = (appServerModule: AppServerModule): void => {
-  appServerModule.codexAppServerInternals.setConnectWsFn(() => {
-    const client: import("../../src/loop/ws-client").WsClient = {
-      onmessage: undefined,
-      onclose: undefined,
-      send: (data: string) => {
-        for (const raw of data.split("\n")) {
-          if (!raw.trim()) {
-            continue;
-          }
-          wsWrites.push(raw);
-          const proc = processes.at(-1);
-          if (proc) {
-            proc.writes.push(raw);
-          }
-          const request = JSON.parse(raw) as RequestFrame;
-          makeStreamResponse(request, (frame) => {
-            queueMicrotask(() => {
-              client.onmessage?.(JSON.stringify(frame));
-            });
-          });
+const createTestSocket = (
+  acceptedByPid = latestProcess()?.pid
+): import("../../src/loop/ws-client").WsClient => {
+  const nativeSocketFd = 200 + sockets.length;
+  const socket: TestSocket = {
+    acceptedByPid,
+    client: undefined as never,
+    closeCount: 0,
+    terminateCount: 0,
+  };
+  const client: import("../../src/loop/ws-client").WsClient = {
+    acceptedByPid: (pid) => socket.acceptedByPid === pid,
+    nativeSocketFd,
+    onmessage: undefined,
+    onclose: undefined,
+    send: (data: string) => {
+      for (const raw of data.split("\n")) {
+        if (!raw.trim()) {
+          continue;
         }
-      },
-      close: () => {
-        // noop for tests
-      },
-    };
-    return Promise.resolve(client);
-  });
+        wsWrites.push(raw);
+        const proc = processes.at(-1);
+        if (proc) {
+          proc.writes.push(raw);
+        }
+        const request = JSON.parse(raw) as RequestFrame;
+        makeStreamResponse(request, (frame) => {
+          queueMicrotask(() => {
+            client.onmessage?.(JSON.stringify(frame));
+          });
+        });
+      }
+    },
+    close: () => {
+      socket.closeCount += 1;
+    },
+    terminate: () => {
+      socket.terminateCount += 1;
+    },
+  };
+  socket.client = client;
+  sockets.push(socket);
+  return client;
+};
+
+const installConnectWs = (appServerModule: AppServerModule): void => {
+  appServerModule.codexAppServerInternals.setListenerOwnerPidFn(
+    () => processes.at(-1)?.pid
+  );
+  appServerModule.codexAppServerInternals.setConnectWsFn(() =>
+    Promise.resolve(createTestSocket())
+  );
 };
 
 const getModule = async (): Promise<AppServerModule> => {
@@ -212,8 +249,11 @@ const resetState = async (): Promise<void> => {
   currentHandler = noopRequestHandler;
   lastSpawnCommand = [];
   wsWrites = [];
+  sockets = [];
+  killClosesProcess = true;
   appServer.codexAppServerInternals.restoreSpawnFn();
   appServer.codexAppServerInternals.restoreConnectWsFn();
+  appServer.codexAppServerInternals.restoreListenerOwnerPidFn();
 };
 
 afterEach(async () => {
@@ -251,6 +291,10 @@ test("startAppServer fails fast when initialize returns an error", async () => {
     appServer.CodexAppServerFallbackError
   );
   expect(latestWrites().length).toBeGreaterThan(0);
+  expect(appServer.getCodexAppServerPid()).toBeUndefined();
+  expect(appServer.getCodexAppServerUrl()).toBe("");
+  expect(latestProcess()?.killSignals).toEqual(["SIGTERM"]);
+  expect(sockets.at(-1)?.terminateCount).toBe(1);
 });
 
 test("startAppServer forwards config overrides into the app-server command", async () => {
@@ -286,9 +330,361 @@ test("startAppServer exposes the app-server websocket URL", async () => {
 
   await appServer.startAppServer();
   expect(appServer.getCodexAppServerUrl()).toMatch(LOCAL_WS_URL_RE);
+  const ownedProcess = latestProcess();
+  const ownedSocket = sockets.at(-1);
 
   await appServer.closeAppServer();
   expect(appServer.getCodexAppServerUrl()).toBe("");
+  expect(ownedProcess?.killSignals).toEqual(["SIGTERM"]);
+  expect(ownedSocket?.closeCount).toBe(1);
+});
+
+test("startAppServer refuses a foreign listener before connecting", async () => {
+  const appServer = await getModule();
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(() => 99_999);
+
+  await expect(appServer.startAppServer()).rejects.toThrow(
+    "listener is not owned by the spawned process"
+  );
+
+  expect(appServer.getCodexAppServerPid()).toBeUndefined();
+  expect(appServer.getCodexAppServerUrl()).toBe("");
+  expect(latestProcess()?.killSignals).toEqual(["SIGTERM"]);
+  expect(sockets).toHaveLength(0);
+});
+
+test("process exit cleanup retains the exact child during listener wait", async () => {
+  const appServer = await getModule();
+  let cleanupCalled = false;
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(() => {
+    if (!cleanupCalled) {
+      cleanupCalled = true;
+      expect(appServer.getCodexAppServerPid()).toBeUndefined();
+      appServer.codexAppServerInternals.cleanupOnProcessExit();
+    }
+    return undefined;
+  });
+
+  await expect(appServer.startAppServer()).rejects.toBeInstanceOf(
+    appServer.CodexAppServerFallbackError
+  );
+
+  expect(cleanupCalled).toBe(true);
+  expect(latestProcess()?.killSignals[0]).toBe("SIGKILL");
+  expect(sockets).toHaveLength(0);
+});
+
+test("process exit cleanup retains exact child and socket during connect", async () => {
+  const appServer = await getModule();
+  let attemptedSocket: TestSocket | undefined;
+  appServer.codexAppServerInternals.setConnectWsFn(() => {
+    expect(appServer.getCodexAppServerPid()).toBeUndefined();
+    appServer.codexAppServerInternals.cleanupOnProcessExit();
+    const client = createTestSocket();
+    attemptedSocket = sockets.at(-1);
+    return Promise.resolve(client);
+  });
+
+  await expect(appServer.startAppServer()).rejects.toBeInstanceOf(
+    appServer.CodexAppServerFallbackError
+  );
+
+  expect(latestProcess()?.killSignals[0]).toBe("SIGKILL");
+  expect(attemptedSocket?.closeCount).toBeGreaterThanOrEqual(1);
+});
+
+test("a rejected WebSocket handshake cleans the exact startup child", async () => {
+  const appServer = await getModule();
+  let listenerPid: number | undefined;
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(
+    () => listenerPid ?? latestProcess()?.pid
+  );
+  appServer.codexAppServerInternals.setConnectWsFn(() => {
+    listenerPid = 99_999;
+    return Promise.reject(new Error("WebSocket upgrade failed: HTTP 403"));
+  });
+
+  await expect(appServer.startAppServer()).rejects.toBeInstanceOf(
+    appServer.CodexAppServerFallbackError
+  );
+
+  expect(latestProcess()?.killSignals).toContain("SIGTERM");
+  expect(appServer.getCodexAppServerPid()).toBeUndefined();
+  expect(appServer.getCodexAppServerUrl()).toBe("");
+});
+
+test("startAppServer rejects a listener replacement during connection", async () => {
+  const appServer = await getModule();
+  let attemptedChild: TestProcess | undefined;
+  let listenerPid: number | undefined;
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(
+    () => listenerPid ?? latestProcess()?.pid
+  );
+  appServer.codexAppServerInternals.setConnectWsFn(() => {
+    attemptedChild = latestProcess();
+    listenerPid = 99_999;
+    return Promise.resolve(createTestSocket());
+  });
+
+  await expect(appServer.startAppServer()).rejects.toThrow(
+    "listener is not owned by the spawned process"
+  );
+
+  expect(attemptedChild?.killSignals).toEqual(["SIGTERM"]);
+  expect(sockets.at(-1)?.terminateCount).toBe(1);
+  expect(sockets.at(-1)?.closeCount).toBe(0);
+  expect(latestWrites()).toEqual([]);
+});
+
+test("startAppServer rejects an owner change immediately after connect", async () => {
+  const appServer = await getModule();
+  let ownershipChecks = 0;
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(() => {
+    ownershipChecks += 1;
+    return ownershipChecks <= 2 ? latestProcess()?.pid : 99_999;
+  });
+
+  await expect(appServer.startAppServer()).rejects.toThrow(
+    "listener is not owned by the spawned process"
+  );
+
+  expect(ownershipChecks).toBe(3);
+  expect(latestProcess()?.killSignals).toEqual(["SIGTERM"]);
+  expect(sockets.at(-1)?.terminateCount).toBe(1);
+  expect(sockets.at(-1)?.closeCount).toBe(0);
+  expect(latestWrites()).toEqual([]);
+});
+
+test("startAppServer rejects child-to-foreign-to-child connection ABA", async () => {
+  const appServer = await getModule();
+  let listenerChecks = 0;
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(() => {
+    listenerChecks += 1;
+    return latestProcess()?.pid;
+  });
+  appServer.codexAppServerInternals.setConnectWsFn(() =>
+    Promise.resolve(createTestSocket(99_999))
+  );
+
+  await expect(appServer.startAppServer()).rejects.toThrow(
+    "connection was not accepted by the spawned process"
+  );
+
+  expect(listenerChecks).toBe(3);
+  expect(latestProcess()?.killSignals).toEqual(["SIGTERM"]);
+  expect(sockets.at(-1)?.acceptedByPid).toBe(99_999);
+  expect(sockets.at(-1)?.terminateCount).toBe(1);
+  expect(sockets.at(-1)?.closeCount).toBe(0);
+  expect(latestWrites()).toEqual([]);
+});
+
+test("startAppServer accepts an unchanged exact-child listener", async () => {
+  const appServer = await getModule();
+  const observedOwners: Array<number | undefined> = [];
+  appServer.codexAppServerInternals.setListenerOwnerPidFn(() => {
+    const pid = latestProcess()?.pid;
+    observedOwners.push(pid);
+    return pid;
+  });
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+    }
+  };
+
+  await appServer.startAppServer();
+
+  expect(observedOwners).toEqual([
+    latestProcess()?.pid,
+    latestProcess()?.pid,
+    latestProcess()?.pid,
+  ]);
+  expect(appServer.getCodexAppServerPid()).toBe(latestProcess()?.pid);
+  expect(sockets.at(-1)?.closeCount).toBe(0);
+});
+
+test("process exit cleanup retains exact child and socket during initialize", async () => {
+  const appServer = await getModule();
+  currentHandler = (request) => {
+    if (request.method === "initialize") {
+      expect(appServer.getCodexAppServerPid()).toBeUndefined();
+      appServer.codexAppServerInternals.cleanupOnProcessExit();
+    }
+  };
+
+  await expect(appServer.startAppServer()).rejects.toBeInstanceOf(
+    appServer.CodexAppServerFallbackError
+  );
+
+  expect(latestProcess()?.killSignals[0]).toBe("SIGKILL");
+  expect(sockets.at(-1)?.closeCount).toBeGreaterThanOrEqual(1);
+});
+
+test("cancelled connecting launch cannot clear a later replacement", async () => {
+  const appServer = await getModule();
+  let markConnectStarted = () => undefined;
+  const connectStarted = new Promise<void>((resolve) => {
+    markConnectStarted = resolve;
+  });
+  appServer.codexAppServerInternals.setConnectWsFn(
+    (_url, options) =>
+      new Promise((_resolve, reject) => {
+        const cancelledSocket = createTestSocket(latestProcess()?.pid);
+        const rejectCancelled = () => {
+          cancelledSocket.close();
+          reject(new Error("WebSocket upgrade cancelled"));
+        };
+        if (options?.signal?.aborted) {
+          rejectCancelled();
+          return;
+        }
+        options?.signal?.addEventListener("abort", rejectCancelled, {
+          once: true,
+        });
+        markConnectStarted();
+      })
+  );
+
+  const cancelledStart = appServer.startAppServer();
+  await connectStarted;
+  const cancelledChild = latestProcess();
+  const cancelledSocket = sockets.at(-1);
+  const cancelledClose = appServer.closeAppServer();
+
+  await expect(cancelledStart).rejects.toBeInstanceOf(
+    appServer.CodexAppServerFallbackError
+  );
+  await cancelledClose;
+  expect(cancelledChild?.killSignals).toContain("SIGTERM");
+  expect(cancelledSocket?.closeCount).toBe(1);
+
+  installConnectWs(appServer);
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+    }
+  };
+  await appServer.startAppServer();
+  const replacement = latestProcess();
+  expect(appServer.getCodexAppServerPid()).toBe(replacement?.pid);
+  expect(replacement?.killSignals).toEqual([]);
+});
+
+test("stale child EOF cannot clear a replacement launch generation", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+    }
+  };
+  killClosesProcess = false;
+  await appServer.startAppServer();
+  const oldProcess = latestProcess();
+  const oldSocket = sockets.at(-1);
+  oldSocket?.client.onclose?.();
+  expect(oldProcess?.killSignals).toEqual(["SIGTERM"]);
+
+  await appServer.startAppServer();
+  const replacement = latestProcess();
+  const replacementSocket = sockets.at(-1);
+  oldProcess?.close();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(appServer.getCodexAppServerPid()).toBe(replacement?.pid);
+  expect(replacementSocket?.closeCount).toBe(0);
+  killClosesProcess = true;
+  await appServer.closeAppServer();
+  expect(replacement?.killSignals).toEqual(["SIGTERM"]);
+});
+
+test("stale socket messages cannot enter a replacement turn", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+    }
+  };
+  await appServer.startAppServer();
+  const oldSocket = sockets.at(-1);
+  oldSocket?.client.onclose?.();
+
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        oldSocket?.client.onmessage?.(
+          `${JSON.stringify({
+            method: "item/agentMessage/delta",
+            params: {
+              threadId: "thread-1",
+              delta: "<promise>DONE</promise>",
+            },
+          })}\n`
+        );
+        write({
+          method: "item/agentMessage/delta",
+          params: { turnId: "turn-1", delta: "replacement output" },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+  await appServer.startAppServer();
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("replacement output");
+  expect(result.combined).not.toContain("<promise>DONE</promise>");
+  expect(rawLines.join("\n")).not.toContain("<promise>DONE</promise>");
+});
+
+test("a deferred old close cannot clear a replacement singleton", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+    }
+  };
+  killClosesProcess = false;
+  await appServer.startAppServer();
+  const oldProcess = latestProcess();
+  const oldSocket = sockets.at(-1);
+
+  const oldClose = appServer.closeAppServer();
+  expect(oldProcess?.killSignals).toEqual(["SIGTERM"]);
+  expect(oldSocket?.closeCount).toBe(1);
+
+  await appServer.startAppServer();
+  const replacement = latestProcess();
+  const replacementSocket = sockets.at(-1);
+  oldProcess?.close();
+  await oldClose;
+
+  expect(appServer.getCodexAppServerPid()).toBe(replacement?.pid);
+  expect(replacementSocket?.closeCount).toBe(0);
+  expect(replacement?.killSignals).toEqual([]);
+  killClosesProcess = true;
+  await appServer.closeAppServer();
+  expect(replacement?.killSignals).toEqual(["SIGTERM"]);
 });
 
 test("startAppServer sends initialized after initialize", async () => {
@@ -328,7 +724,9 @@ test("releaseAppServer drops local handles without killing the detached child", 
   expect(appServer.getCodexAppServerUrl()).toMatch(LOCAL_WS_URL_RE);
   expect(latestProcess()?.unrefCount).toBe(1);
   appServer.releaseAppServer();
+  appServer.codexAppServerInternals.cleanupOnProcessExit();
   expect(latestProcess()?.killSignals).toEqual([]);
+  expect(sockets.at(-1)?.closeCount).toBe(1);
   expect(appServer.getCodexAppServerUrl()).toBe("");
 });
 
@@ -1058,6 +1456,8 @@ test("runCodexTurn parses successful deltas and completion", async () => {
         write({
           method: "item/completed",
           params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
             item: { type: "agentMessage", content: [{ text: " there" }] },
           },
         });
@@ -1094,7 +1494,7 @@ test("runCodexTurn parses successful deltas and completion", async () => {
   expect(result.combined).toContain("item/agentMessage/delta");
   expect(rawLines.length).toBeGreaterThan(0);
   expect(rawLines.join(" ")).toContain("item/agentMessage/delta");
-  expect(rawLines.join(" ")).toContain("turn/completed");
+  expect(rawLines.join(" ")).not.toContain("turn/completed");
 });
 
 test("runCodexTurn ignores foreign subagent turn notifications", async () => {
@@ -1111,6 +1511,27 @@ test("runCodexTurn ignores foreign subagent turn notifications", async () => {
     if (request.method === "turn/start") {
       write({ id: request.id, result: { turn: { id: "turn-1" } } });
       setTimeout(() => {
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread-1",
+            turnId: "sub-turn-1",
+            delta:
+              "<promise>DONE</promise> <review>PASS</review> <review>FAIL</review>",
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: { delta: "identity-less foreign output" },
+        });
+        write({
+          method: "error",
+          params: { error: { message: "identity-less foreign failure" } },
+        });
+        write({
+          method: "turn/completed",
+          params: { status: "completed" },
+        });
         write({
           method: "error",
           params: {
@@ -1147,14 +1568,993 @@ test("runCodexTurn ignores foreign subagent turn notifications", async () => {
     }
   };
 
+  const rawLines: string[] = [];
   const result = await appServer.runCodexTurn("say hi", makeOptions(), {
     onParsed: () => undefined,
-    onRaw: () => undefined,
+    onRaw: (line) => rawLines.push(line),
   });
 
   expect(result.exitCode).toBe(0);
   expect(result.parsed).toContain("parent turn finished");
   expect(result.parsed).not.toContain("subagent failed");
+  expect(result.combined).not.toContain("sub-turn-1");
+  expect(result.combined).not.toContain("identity-less foreign output");
+  expect(rawLines.join("\n")).not.toContain("<promise>DONE</promise>");
+  expect(rawLines.join("\n")).not.toContain("identity-less foreign output");
+});
+
+test("runCodexTurn rejects contradictory identity aliases at every sink", async () => {
+  const appServer = await getModule();
+  const rejectedMarkers = [
+    "conflicting turn alias output",
+    "conflicting nested turn output",
+    "conflicting thread alias output",
+    "conflicting completed output",
+    "conflicting error",
+  ];
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            turnId: "turn-1",
+            turn_id: "foreign-turn",
+            delta: rejectedMarkers[0],
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "foreign-turn" },
+            delta: rejectedMarkers[1],
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread-1",
+            thread_id: "foreign-thread",
+            turnId: "turn-1",
+            delta: rejectedMarkers[2],
+          },
+        });
+        write({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            turn_id: "foreign-turn",
+            item: {
+              type: "agentMessage",
+              content: [{ text: rejectedMarkers[3] }],
+            },
+          },
+        });
+        write({
+          method: "error",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "foreign-turn" },
+            error: { message: rejectedMarkers[4] },
+          },
+        });
+        write({
+          id: 101,
+          method: "item/commandExecution/requestApproval",
+          params: {
+            command: "foreign command",
+            threadId: "thread-1",
+            thread_id: "foreign-thread",
+            turnId: "turn-1",
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: { turnId: "turn-1", delta: "parent output" },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("parent output");
+  for (const marker of rejectedMarkers) {
+    expect(result.parsed).not.toContain(marker);
+    expect(result.combined).not.toContain(marker);
+    expect(rawLines.join("\n")).not.toContain(marker);
+  }
+  const approvalResponse = latestFrames().find(
+    (frame) => String(frame.id) === "101"
+  );
+  expect(approvalResponse?.result).toBeUndefined();
+  expect(approvalResponse?.error).toMatchObject({
+    code: -32_601,
+    message: "request is not attributed to an active loop turn",
+  });
+});
+
+test("runCodexTurn rejects nested object deltas from authoritative sinks", async () => {
+  const appServer = await getModule();
+  const doneSignal = "<promise>DONE</promise>";
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            delta: {
+              payload: {
+                threadId: "child-thread",
+                turnId: "child-turn",
+                text: doneSignal,
+              },
+            },
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: { turnId: "turn-1", delta: "parent output" },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("parent output");
+  expect(result.combined).not.toContain(doneSignal);
+  expect(rawLines.join("\n")).not.toContain(doneSignal);
+  expect(hasSignal(result.parsed, doneSignal)).toBe(false);
+  expect(hasSignal(result.combined, doneSignal)).toBe(false);
+});
+
+test("app-server projection preserves delta spacing and item identity", async () => {
+  const appServer = await getModule();
+  const writes: string[] = [];
+  const renderer = createCodexRenderer({
+    format: "pretty",
+    write: (text) => writes.push(text),
+  });
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            itemId: "message-1",
+            delta: "hello ",
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item_id: "message-1",
+            delta: "world",
+          },
+        });
+        write({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              id: "message-1",
+              type: "agentMessage",
+              content: [{ text: "hello world" }],
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => {
+      rawLines.push(line);
+      renderer.onRawLine(line);
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("hello world");
+  expect(rawLines.map((line) => JSON.parse(line))).toEqual([
+    {
+      method: "item/agentMessage/delta",
+      params: { delta: "hello ", itemId: "message-1" },
+    },
+    {
+      method: "item/agentMessage/delta",
+      params: { delta: "world", itemId: "message-1" },
+    },
+  ]);
+  expect(renderer.getParsed()).toBe("hello world");
+  expect(writes.join("")).toBe("hello world");
+});
+
+test("app-server preserves whitespace-only and repeated scalar deltas", async () => {
+  const appServer = await getModule();
+  const writes: string[] = [];
+  const renderer = createCodexRenderer({
+    format: "pretty",
+    write: (text) => writes.push(text),
+  });
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        for (const delta of ["hello", " ", "world"]) {
+          write({
+            method: "item/agentMessage/delta",
+            params: {
+              turnId: "turn-1",
+              itemId: "message-1",
+              delta,
+            },
+          });
+        }
+        write({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            item: {
+              id: "message-1",
+              type: "agentMessage",
+              content: [{ text: "hello world" }],
+            },
+          },
+        });
+        for (const delta of ["ha", "ha"]) {
+          write({
+            method: "item/agentMessage/delta",
+            params: {
+              turnId: "turn-1",
+              itemId: "message-2",
+              delta,
+            },
+          });
+        }
+        write({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            item: {
+              id: "message-2",
+              type: "agentMessage",
+              content: [{ text: "haha" }],
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => {
+      rawLines.push(line);
+      renderer.onRawLine(line);
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("hello world\nhaha");
+  expect(renderer.getParsed()).toBe("hello world\nhaha");
+  expect(writes.join("")).toBe("hello world\n\nhaha");
+  expect(
+    rawLines.map(
+      (line) => (JSON.parse(line).params as Record<string, unknown>).delta
+    )
+  ).toEqual(["hello", " ", "world", "ha", "ha"]);
+});
+
+test("app-server suppresses exact completed-item replay by item identity", async () => {
+  const appServer = await getModule();
+  const writes: string[] = [];
+  const renderer = createCodexRenderer({
+    format: "pretty",
+    write: (text) => writes.push(text),
+  });
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        const completed = (id: string) => ({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            item: {
+              id,
+              type: "agentMessage",
+              text: "hello",
+            },
+          },
+        });
+        write(completed("message-1"));
+        write(completed("message-1"));
+        write(completed("message-2"));
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => {
+      rawLines.push(line);
+      renderer.onRawLine(line);
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("hello\nhello");
+  expect(result.combined.match(/item\/completed/g)).toHaveLength(2);
+  expect(rawLines).toHaveLength(2);
+  expect(renderer.getParsed()).toBe("hello\nhello");
+  expect(writes.join("")).toBe("hello\n\nhello");
+});
+
+test("runCodexTurn excludes nested collab completion from authoritative output", async () => {
+  const appServer = await getModule();
+  const doneSignal = "<promise>DONE</promise>";
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "collabAgentToolCall",
+              agentsStates: {
+                child: { message: doneSignal, status: "completed" },
+              },
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("");
+  expect(result.combined).toBe("");
+  expect(rawLines).toEqual([]);
+  expect(hasSignal(result.combined, doneSignal)).toBe(false);
+});
+
+test("completed parent messages exclude nested payload signals", async () => {
+  const appServer = await getModule();
+  const doneSignal = "<promise>DONE</promise>";
+  const reviewPass = "<review>PASS</review>";
+  const reviewFail = "<review>FAIL</review>";
+  const writes: string[] = [];
+  const renderer = createCodexRenderer({
+    format: "pretty",
+    write: (text) => writes.push(text),
+  });
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            item: {
+              id: "message-1",
+              type: "agentMessage",
+              text: "parent completion",
+              content: [
+                {
+                  text: doneSignal,
+                  threadId: "thread-1",
+                },
+                {
+                  text: reviewPass,
+                  turnId: "turn-1",
+                },
+                {
+                  text: reviewFail,
+                  type: "agentMessage",
+                },
+              ],
+              payload: {
+                text: doneSignal,
+                item: {
+                  content: [{ text: reviewPass }, { text: reviewFail }],
+                },
+              },
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => {
+      rawLines.push(line);
+      renderer.onRawLine(line);
+    },
+  });
+  const raw = rawLines.join("\n");
+  const rendered = renderer.getParsed();
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toContain("parent completion");
+  expect(rendered).toContain("parent completion");
+  expect(writes.join("")).toContain("parent completion");
+  for (const output of [result.parsed, result.combined, raw, rendered]) {
+    expect(output).not.toContain(doneSignal);
+    expect(output).not.toContain(reviewPass);
+    expect(output).not.toContain(reviewFail);
+  }
+  expect(hasSignal(result.parsed, doneSignal)).toBe(false);
+  expect(hasSignal(result.combined, doneSignal)).toBe(false);
+  const review = await createRunReview(() => Promise.resolve(result))(
+    ["codex"],
+    "review",
+    { ...makeOptions(), review: "codex" }
+  );
+  expect(review.approved).toBe(false);
+  expect(review.failureCount).toBe(1);
+});
+
+test("completed parent messages preserve authentic review signals", async () => {
+  const appServer = await getModule();
+  const reviewPass = "<review>PASS</review>";
+  const reviewFail = "<review>FAIL</review>";
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/completed",
+          params: {
+            turnId: "turn-1",
+            item: {
+              id: "message-1",
+              type: "agentMessage",
+              text: `${reviewPass}\n${reviewFail}`,
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("review", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+  const raw = rawLines.join("\n");
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe(`${reviewPass}\n${reviewFail}`);
+  expect(result.combined).toContain(reviewPass);
+  expect(result.combined).toContain(reviewFail);
+  expect(raw).toContain(reviewPass);
+  expect(raw).toContain(reviewFail);
+});
+
+const runItemIdentityControl = async (
+  items: Record<string, unknown>[],
+  outer: Record<string, unknown> = { threadId: "thread-1", turnId: "turn-1" }
+) => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        for (const item of items) {
+          write({
+            method: "item/completed",
+            params: { ...outer, item: { type: "agentMessage", ...item } },
+          });
+        }
+        write({
+          method: "item/agentMessage/delta",
+          params: { ...outer, delta: "owner output" },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+  return { raw: rawLines.join("\n"), result };
+};
+
+const FOREIGN_ITEM_SIGNALS = [
+  "<promise>DONE</promise>",
+  "<review>PASS</review>",
+  "<review>FAIL</review>",
+];
+
+const expectForeignItemRejected = async (identity: Record<string, unknown>) => {
+  const { raw, result } = await runItemIdentityControl(
+    FOREIGN_ITEM_SIGNALS.map((text, index) => ({
+      ...identity,
+      id: `foreign-item-${index}`,
+      text,
+    }))
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe("owner output");
+  for (const signal of FOREIGN_ITEM_SIGNALS) {
+    expect(result.parsed).not.toContain(signal);
+    expect(result.combined).not.toContain(signal);
+    expect(raw).not.toContain(signal);
+  }
+  expect(hasSignal(result.combined, FOREIGN_ITEM_SIGNALS[0])).toBe(false);
+  const review = await createRunReview(() => Promise.resolve(result))(
+    ["codex"],
+    "review",
+    { ...makeOptions(), review: "codex" }
+  );
+  expect(review.approved).toBe(false);
+  expect(review.failureCount).toBe(1);
+};
+
+test("item-level foreign thread identity cannot reach authoritative sinks", async () => {
+  await expectForeignItemRejected({ threadId: "foreign-thread" });
+  await expectForeignItemRejected({ thread_id: "foreign-thread" });
+});
+
+test("item-level foreign turn identity cannot reach authoritative sinks", async () => {
+  await expectForeignItemRejected({ turnId: "foreign-turn" });
+  await expectForeignItemRejected({ turn_id: "foreign-turn" });
+});
+
+test("conflicting item aliases stay rejected when outer params match", async () => {
+  await expectForeignItemRejected({
+    threadId: "thread-1",
+    thread_id: "foreign-thread",
+  });
+  await expectForeignItemRejected({
+    turnId: "turn-1",
+    turn_id: "foreign-turn",
+  });
+  await expectForeignItemRejected({ threadId: 7 });
+});
+
+test("nested item identity aliases cannot reach authoritative sinks", async () => {
+  await expectForeignItemRejected({ turn: { id: "foreign-turn" } });
+  await expectForeignItemRejected({ thread: { id: "foreign-thread" } });
+  await expectForeignItemRejected({
+    metadata: { source: { thread_id: "foreign-thread" } },
+  });
+  await expectForeignItemRejected({
+    content: [{ text: "parent", turnId: "foreign-turn" }],
+  });
+});
+
+test("foreign item identity is rejected from error and failure sinks", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "error",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            error: { message: "foreign failure", threadId: "foreign-thread" },
+          },
+        });
+        write({
+          method: "item/agentMessage/delta",
+          params: { threadId: "thread-1", turnId: "turn-1", delta: "owner" },
+        });
+        write({
+          method: "error",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            error: { message: "owner failure" },
+          },
+        });
+      }, 0);
+    }
+  };
+  await expect(
+    appServer.runCodexTurn("say hi", makeOptions(), {
+      onParsed: () => undefined,
+      onRaw: () => undefined,
+    })
+  ).rejects.toThrow("owner failure");
+});
+
+test("outer foreign thread identity cannot make DONE authoritative", async () => {
+  const doneSignal = "<promise>DONE</promise>";
+  for (const outer of [
+    { threadId: "foreign-thread", turnId: "turn-1" },
+    { threadId: "foreign-thread" },
+    { thread_id: "foreign-thread", turn: { id: "turn-1" } },
+  ]) {
+    const appServer = await getModule();
+    currentHandler = (request, write) => {
+      if (request.method === "initialize") {
+        write({ id: request.id, result: {} });
+        return;
+      }
+      if (request.method === "thread/start") {
+        write({ id: request.id, result: { thread: { id: "thread-1" } } });
+        return;
+      }
+      if (request.method === "turn/start") {
+        write({ id: request.id, result: { turn: { id: "turn-1" } } });
+        setTimeout(() => {
+          write({
+            method: "item/agentMessage/delta",
+            params: { ...outer, delta: doneSignal },
+          });
+          write({
+            method: "item/completed",
+            params: {
+              ...outer,
+              item: {
+                id: "foreign-item",
+                type: "agentMessage",
+                text: doneSignal,
+              },
+            },
+          });
+          write({
+            method: "turn/completed",
+            params: {
+              turnId: "turn-1",
+              turn: { id: "turn-1", status: "completed" },
+            },
+          });
+        }, 0);
+      }
+    };
+    const rawLines: string[] = [];
+    const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+      onParsed: () => undefined,
+      onRaw: (line) => rawLines.push(line),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.parsed).toBe("");
+    expect(rawLines.join("\n")).not.toContain(doneSignal);
+    expect(hasSignal(result.parsed, doneSignal)).toBe(false);
+    expect(hasSignal(result.combined, doneSignal)).toBe(false);
+  }
+});
+
+test("foreign nested identity cannot fail, deepen or approve the owner turn", async () => {
+  const appServer = await getModule();
+  let deep: Record<string, unknown> = { threadId: "thread-1" };
+  for (let level = 0; level < 40; level += 1) {
+    deep = { nested: deep };
+  }
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "agentMessage",
+              text: "<promise>DONE</promise>",
+              metadata: deep,
+            },
+          },
+        });
+        write({
+          id: 202,
+          method: "item/commandExecution/requestApproval",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: { command: "foreign command", threadId: "foreign-thread" },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            turn: {
+              id: "turn-1",
+              status: "failed",
+              error: { message: "foreign failure", turnId: "foreign-turn" },
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            turn: {
+              id: "turn-1",
+              status: "failed",
+              error: { message: "owner failure" },
+            },
+          },
+        });
+      }, 0);
+    }
+  };
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.parsed).toBe("owner failure");
+  expect(result.parsed).not.toContain("foreign failure");
+  expect(hasSignal(result.combined, "<promise>DONE</promise>")).toBe(false);
+  expect(rawLines.join("\n")).not.toContain("<promise>DONE</promise>");
+  const approvalResponse = latestFrames().find(
+    (frame) => String(frame.id) === "202"
+  );
+  expect(approvalResponse?.result).toBeUndefined();
+  expect(approvalResponse?.error).toMatchObject({
+    code: -32_601,
+    message: "request is not attributed to an active loop turn",
+  });
+});
+
+test("correctly attributed item identity remains authoritative", async () => {
+  const doneSignal = "<promise>DONE</promise>";
+  const { raw, result } = await runItemIdentityControl([
+    {
+      id: "owner-item",
+      text: doneSignal,
+      threadId: "thread-1",
+      thread_id: "thread-1",
+      turnId: "turn-1",
+      turn: { id: "turn-1" },
+    },
+  ]);
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe(`${doneSignal}\nowner output`);
+  expect(raw).toContain(doneSignal);
+  expect(hasSignal(result.combined, doneSignal)).toBe(true);
+});
+
+test("runCodexTurn keeps genuine parent completion authoritative", async () => {
+  const appServer = await getModule();
+  const doneSignal = "<promise>DONE</promise>";
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/start") {
+      write({ id: request.id, result: { thread: { id: "thread-1" } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-1" } } });
+      setTimeout(() => {
+        write({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "agentMessage",
+              content: [{ text: doneSignal }],
+            },
+          },
+        });
+        write({
+          method: "turn/completed",
+          params: {
+            turnId: "turn-1",
+            turn: { id: "turn-1", status: "completed" },
+          },
+        });
+      }, 0);
+    }
+  };
+
+  const rawLines: string[] = [];
+  const result = await appServer.runCodexTurn("say hi", makeOptions(), {
+    onParsed: () => undefined,
+    onRaw: (line) => rawLines.push(line),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.parsed).toBe(doneSignal);
+  expect(rawLines.join("\n")).toContain(doneSignal);
+  expect(hasSignal(result.combined, doneSignal)).toBe(true);
 });
 
 test("runCodexTurn maps failed turns to non-zero exit", async () => {
@@ -1247,6 +2647,8 @@ test("runCodexTurn accepts snake_case agent message item type", async () => {
         write({
           method: "item/completed",
           params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
             item: {
               type: "agent_message",
               content: [{ text: "works with snake_case" }],
@@ -1292,6 +2694,8 @@ test("runCodexTurn responds to approval requests", async () => {
           method: "item/commandExecution/requestApproval",
           params: {
             command: "rm -rf /",
+            threadId: "thread-1",
+            turnId: "turn-1",
           },
         });
         write({

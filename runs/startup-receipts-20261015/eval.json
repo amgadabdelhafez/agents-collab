@@ -1,0 +1,18 @@
+{
+  "task": "startup-receipts-20261015",
+  "status": "incomplete",
+  "focused_tests": {
+    "claude": 33,
+    "preserved_startup": 1
+  },
+  "baseline_tmux_failures": [
+    "runInTmux paired launch emits the exact run manifest path contract line",
+    "runInTmux starts paired tmux panes for the OSS seat and Codex",
+    "runInTmux starts paired interactive tmux panes without a task",
+    "tmux prompts keep the paired review workflow explicit",
+    "runInTmux reopens paired tmux panes without replaying the task"
+  ],
+  "required_verify": "stopped at 10 lint diagnostics",
+  "live_acceptance": false,
+  "independent_review": "one test assertion finding repaired; final re-review pending"
+}

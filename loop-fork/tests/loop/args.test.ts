@@ -134,6 +134,7 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   expect(opts.pairWith).toBe("codex");
   expect(opts.doneSignal).toBe(DEFAULT_DONE_SIGNAL);
   expect(opts.proof).toBe("");
+  expect(opts.publishDraftPrRemote).toBeUndefined();
   expect(opts.format).toBe("pretty");
   expect(opts.maxIterations).toBe(DEFAULT_MAX_ITERATIONS);
   expect(opts.codexModel).toBe(DEFAULT_CODEX_MODEL);
@@ -150,6 +151,20 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   expect(opts.resumeRunId).toBeUndefined();
   expect(opts.tmux).toBe(false);
   expect(opts.worktree).toBe(false);
+});
+
+test("parseArgs requires an exact named remote for draft publication", () => {
+  expect(
+    parseArgs(["--publish-draft-pr", "github", "--proof", "verify"])
+      .publishDraftPrRemote
+  ).toBe("github");
+  expect(
+    parseArgs(["--publish-draft-pr=release", "--proof", "verify"])
+      .publishDraftPrRemote
+  ).toBe("release");
+  expect(() =>
+    parseArgs(["--publish-draft-pr", "../origin", "--proof", "verify"])
+  ).toThrow("Invalid --publish-draft-pr remote");
 });
 
 test("parseArgs resolves global and per-role effort with order-independent CLI precedence", () => {

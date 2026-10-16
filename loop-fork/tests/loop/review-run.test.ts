@@ -198,7 +198,7 @@ test("runReview marks consensus failure when every reviewer fails", async () => 
   expect(result.notes).toContain("[claude]");
 });
 
-test("runReview accepts pass signal from combined output with parsed body", async () => {
+test("runReview rejects combined-only pass when owned parsed output exists", async () => {
   const { runReview } = makeRunReview(() => ({
     combined: `\n\t${REVIEW_PASS}\n`,
     exitCode: 0,
@@ -211,15 +211,16 @@ test("runReview accepts pass signal from combined output with parsed body", asyn
     makeOptions()
   );
 
-  expect(result).toEqual({
-    advisoryReviewers: [],
-    approved: true,
-    consensusFail: false,
-    failureCount: 0,
-    failures: [],
-    notes: "",
-    reviews: passReviews("codex", "claude"),
-  });
+  expect(result.approved).toBe(false);
+  expect(result.consensusFail).toBe(true);
+  expect(result.failureCount).toBe(2);
+  expect(result.failures.map((failure) => failure.reviewer)).toEqual([
+    "codex",
+    "claude",
+  ]);
+  expect(
+    result.failures.every((failure) => failure.reason.includes("missing"))
+  ).toBe(true);
 });
 
 test("runReview reads fail signal from combined output with body", async () => {

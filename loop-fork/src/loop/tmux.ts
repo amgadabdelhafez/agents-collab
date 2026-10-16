@@ -199,6 +199,8 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_DEV_CHANNEL_CONFIRM_MAX_ATTEMPTS = 3;
 const CLAUDE_MODAL_SETTLE_INTERVALS = 4;
 const CLAUDE_MODAL_PROGRESS_GRACE_POLLS = 80;
+// Observe a confirmed channel transition without resending input.
+const CLAUDE_CHANNEL_TRANSITION_GRACE_POLLS = 160;
 const CLAUDE_PROMPT_MAX_POLLS = 80;
 const CLAUDE_PROMPT_HARD_MAX_POLLS = 240;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
@@ -503,6 +505,9 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
   const peer = capitalize(pairedPeer(opts));
 
   if (agent === opts.agent) {
+    const publicationGuidance = opts.publishDraftPrRemote
+      ? `After both pass, draft publication is authorized only through the exact Git remote "${opts.publishDraftPrRemote}"; do not select another remote.`
+      : "After both pass, stop with an accurate local-source handoff. Draft publication, push, and follow-up commits are not authorized by this launch.";
     return [
       `You are the main worker. ${peer} reviews and helps on request.`,
       pairedCheckInGuidance(false),
@@ -510,7 +515,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
       "Implement and verify first, then ask for review.",
       reviewerCheckpointGuidance(peer),
       "Keep iterating until your own review and the peer review both pass.",
-      "After both pass, handle the PR yourself: create a draft PR or send a follow-up commit to the existing PR.",
+      publicationGuidance,
       SESSION_STATE_GUIDANCE,
       humanClarificationGuidance(),
       HUMAN_REPORTING_GUIDANCE,
@@ -3214,6 +3219,7 @@ const unblockClaudePane = async (
   let bypassInitialStability: ClaudeModalStability | undefined;
   let bypassNavigationSent = false;
   let devChannelConfirmAttempts = 0;
+  let devChannelTransitionObserved = false;
   let devChannelPreConfirmStability: ClaudeModalStability | undefined;
   let devChannelRetryStability: ClaudeModalStability | undefined;
   let devChannelRetrySuppressed = false;
@@ -3469,6 +3475,18 @@ const unblockClaudePane = async (
     }
     if (devChannelConfirmAttempts > 0 && prompt === undefined) {
       devChannelRetrySuppressed = true;
+      if (!devChannelTransitionObserved) {
+        // A disappearing confirmed modal is progress, not an empty composer.
+        // Observe only: readiness/draft checks above still control bootstrap.
+        pollLimit = Math.min(
+          CLAUDE_PROMPT_HARD_MAX_POLLS,
+          Math.max(
+            pollLimit,
+            attempt + 1 + CLAUDE_CHANNEL_TRANSITION_GRACE_POLLS
+          )
+        );
+        devChannelTransitionObserved = true;
+      }
     }
     if (attempt + 1 < pollLimit) {
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);

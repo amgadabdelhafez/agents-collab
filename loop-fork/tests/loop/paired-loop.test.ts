@@ -619,7 +619,10 @@ test("runPairedLoop does not mark a run completed when the draft PR step fails",
 
   await withTempHome("4c", async (runDir) => {
     await expect(
-      module.runPairedLoop("Ship feature", makeOptions({ review: "codex" }))
+      module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ publishDraftPrRemote: "github", review: "codex" })
+      )
     ).rejects.toThrow("draft PR codex exited with code 1");
 
     const transcript = readFileSync(join(runDir, "transcript.jsonl"), "utf8");

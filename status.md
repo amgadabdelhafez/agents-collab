@@ -1,3 +1,433 @@
+# October 16 loop-continuation session
+
+## October 16 item-identity continuation (current; supersedes all completion claims below)
+
+Status: ACCEPTED. Fresh independent read-only review of synthetic snapshot
+S4 `74b5db02b28b90b9054071c15c0a3249bd553366` returned PASS; see "Accepted
+candidate and final review" at the end of this section.
+
+- Prior loop: launcher 65267, app-server port 4506, driver threads
+  01a14348-d967, 01a14369-0537, 01a143ec-5775, exited at max iterations. The
+  driver's final handoff claimed PASS from external reviewer thread
+  01a143fe-8773 on `df13e98fc768489d48625a01f6cf971c06fc90b1` (tree
+  `4051f3c3e8c0a6ada540672481cd1a5d3807d020`), but the loop's own iteration-3
+  outer reviewer, thread `01a14403-c448-7780-9042-dbf7ae1bb640`, returned FAIL
+  afterwards. That FAIL controls; the df13e98f PASS and every "complete",
+  "pass" or "no remaining finding" statement below are superseded history.
+- The previous driver deleted the aggregate
+  `runs/loop-continuation-20261015/loop.log`. It is not reconstructed and is not
+  evidence. This continuation's own aggregate
+  `runs/loop-attribution-fix-20261016/loop.log` is excluded from the candidate
+  for the same cross-project attribution reason.
+- Iteration-3 HIGH finding (acceptance integrity): item text was attributed by
+  outer notification params only, so an `agentMessage` item carrying a foreign
+  item-level or nested thread/turn identity could make a foreign DONE, PASS or
+  FAIL authoritative. Disposition: repaired. `selectTurnState` in
+  `loop-fork/src/loop/codex-app-server.ts` now requires `ownsNestedIdentity`:
+  every `threadId`/`thread_id`/`turnId`/`turn_id` alias and every nested
+  `thread.id`/`turn.id` anywhere in the payload (item, content parts, nested
+  metadata; depth limit 32 fails closed) must equal the exact owned thread and
+  turn. That one gate precedes the raw/combined projection, parsed deltas and
+  completed items, error rejection, turn completion and approval-request
+  attribution. Non-string or conflicting item aliases are rejected even when
+  outer params match.
+- New fake-transport controls in `loop-fork/tests/loop/codex-app-server.test.ts`:
+  item-level foreign thread (`threadId`, `thread_id`), item-level foreign turn
+  (`turnId`, `turn_id`), conflicting item aliases with matching outer params
+  (plus a non-string alias), nested alias forms (`turn.id`, `thread.id`,
+  `metadata.source.thread_id`, content-part `turnId`), foreign item identity on
+  the error sink with the attributed owner failure still rejecting the turn,
+  "foreign nested identity cannot fail, deepen or approve the owner turn"
+  (foreign `turn.error.turnId` on a failed `turn/completed` does not end the
+  turn while the attributed owner failure still yields exit 1; an owned alias
+  nested beyond depth 32 is rejected; an approval request whose nested item
+  carries a foreign `threadId` is refused as unattributed),
+  and a positive control for a correctly attributed item whose DONE stays
+  authoritative. The four `expectForeignItemRejected` tests (item thread, item
+  turn, conflicting aliases, nested aliases) assert parsed, combined, raw,
+  `hasSignal` and `createRunReview` (not approved, failureCount 1). The
+  error-sink test asserts only that the turn rejects with the owner failure;
+  the outer foreign-thread DONE test asserts parsed, raw and `hasSignal`; the
+  combined nested test asserts parsed, raw, `hasSignal(combined)` and the
+  approval refusal. None of those three calls `createRunReview`. The existing
+  "completed parent messages exclude nested payload signals" fixture now gives
+  its non-canonical content parts the owned identity, so it still proves those
+  parts are excluded while foreign nested identity is covered by the new tests.
+- Mutation controls on the current 66-test file: with the `ownsNestedIdentity`
+  gate removed, exactly the 6 item/nested-identity negatives fail (60 pass /
+  6 fail); with the gate and the outer thread checks removed, those 6 plus the
+  outer foreign-thread DONE test fail (59 pass / 7 fail). The positive control
+  passes in both. (The S1 64-test file gave 59/5 for the first mutation.)
+- Earlier repairs reconfirmed by their existing controls in the same green run:
+  foreign-thread DONE with an outer foreign `threadId`/`thread_id` and owned or
+  missing turn ("outer foreign thread identity cannot make DONE
+  authoritative", added after the S1 review), foreign turn on the owned thread
+  and identity-less `turn/completed` not ending the owner turn
+  ("runCodexTurn ignores foreign subagent turn notifications"), contradictory
+  outer aliases, launch-generation cleanup ("stale child EOF cannot clear a
+  replacement launch generation", "a deferred old close cannot clear a
+  replacement singleton"), sole-listener ownership ("refuses a foreign listener
+  before connecting", "rejects a listener replacement during connection",
+  "rejects child-to-foreign-to-child connection ABA", "accepts an unchanged
+  exact-child listener"), and the `--publish-draft-pr <remote>` opt-in with the
+  positive validator and shell-quoted repository (`pr.test.ts` 29/0/81,
+  `args.test.ts` 74/0/168).
+
+Focused commands, each `bun run test:file -- tests/loop/<file>` from
+`loop-fork` (pass / fail / assertions; no skips, no todo, no named failures):
+codex-app-server 66/0/436, ws-client 9/0/18, pr 29/0/81, args 74/0/168,
+tmux 136/0/710, single-loop 2/0/3, review 24/0/56, paired-loop 28/0/112,
+00-paired-loop.integration 1/0/12, codex-render 8/0/13, utils 7/0/10,
+review-run 17/0/62, runner 23/0/79. Total 13 files, 424 pass, 0 fail, 1,760
+assertions. `bun run check`: pass, 1,211 files. Not run: whole suite,
+`bun run build`, `scripts/verify.sh` later stages (free swap 1,336.88 MiB is
+below the 4 GiB gate). Scoped `git diff --check cca25637 <candidate>` is clean
+over `loop-fork`, `docs`, `specs`, `PLAN.md`, `status.md` and
+`runs/loop-continuation-20261015`; over the whole candidate it flags only
+trailing whitespace in preserved verbatim captures
+`runs/startup-receipts-20261015/verify.txt` (38 lines) and
+`runs/startup-receipts-20261015/baseline-tmux.txt` (1 line), left unmodified.
+
+Git state: branch `codex/startup-receipts-20261015` HEAD is unchanged at
+landing base `cca256376bcd7d89eda935618b86ebe28be2d1f1`. The candidate is a
+synthetic snapshot commit built with a temporary index (user index untouched)
+from the dirty worktree, excluding
+`runs/startup-receipts-20261015/peer-review.log` and
+`runs/loop-attribution-fix-20261016/loop.log`. The dirty worktree, including the
+user's startup-receipt changes in `loop-fork/src/loop/tmux.ts` and
+`loop-fork/tests/loop/tmux.test.ts`, is preserved; nothing was reset, stashed
+or discarded. No push, PR, merge, install, deploy, remote/hosting change,
+live provider/app-server/tmux/session intervention, or nested Loop launch
+occurred. Snapshot and reviewer identities are recorded below and in
+`runs/loop-continuation-20261015/final-review.md`.
+
+Review round S1 (superseded candidate): snapshot
+`abdc6278eea2e478faa51276b91288009cd9dc51`, tree
+`d5dc1f8ed490b1139cf1151dd09caf1a8f5b8719`, 361 paths, binary patch SHA-256
+`40fc3b2334840dc0ea4f2e65c09e37ab951267e0ddc0ef614a7954a6596ebf47`. Read-only
+worktree-isolated Claude reviewer agent `a108224d261363469` returned PASS with
+two LOW evidence findings: the records cited a foreign-turn test as the
+foreign-thread DONE control, and no committed test sent DONE under an outer
+foreign thread identity. Both were resolved (citation corrected; regression test
+added), so the candidate changed and S1 is not the accepted snapshot. A Codex
+peer-verdict request for S1 was queued as bridge message
+`9446c62c-b3ba-47b0-aa3b-db644e265661` and is superseded by the S2 request.
+
+Review round S2 (superseded candidate): snapshot
+`f8839c18795b5541a1324c3caf4ea83320f6388d`, tree
+`61b9dd1595acb6bc981449c9eb0d9500049f2080`, 361 paths, binary patch SHA-256
+`24136f60dae1ed32fc881af9d1990237d36d4aabc53d94a574710d827c1b8c4c`. Fresh
+read-only worktree-isolated Claude reviewer agent `a5babca73b80b93bd` confirmed
+the source repair, all earlier repairs and all 13 focused counts (423/0/1,753),
+but returned FAIL on one false record count: the first mutation gives 60/5 on
+the 65-test file, not 59/5. LOW coverage notes (failed `turn/completed`, depth
+limit, nested approval identity) were addressed by the new combined test; the
+pre-existing remote `handleWsServerRequest` auto-accept (unchanged from base,
+outside the local-runner claim) and the hypothetical hang if Codex ever sent
+populated `turn.items` with identity-named tool arguments (fail-closed, no false
+acceptance) remain recorded non-blocking risks. Codex peer-verdict request
+`1b38db73-9ab2-4d32-b471-dcd5dfa120c1` (S2) was queued, but bridge status showed
+`codexDeliveryMode: none` with the message pending at that time (queued, not
+delivered then). See the late Codex S1 verdict below.
+
+Review round S3 (superseded candidate): snapshot
+`b24938e9d59c67d167673124d7f712b1544fab1f`, tree
+`3ac531cbfe18477c4e67c0f89f6dd438471ca02b`, 361 paths, binary patch SHA-256
+`a1a4ca53918945995e81eef1d39d62a251b1852d10462793a23274087a467900`. Fresh
+read-only worktree-isolated Claude reviewer agent `a9bf1406bb435aa0d` confirmed
+the source repair, every count (424/0/1,760; check 1,211) and both mutation
+results (60/6, 59/7), and returned FAIL on record precision only: an
+over-broad assertion-coverage sentence, older "complete" blocks not labelled
+superseded, and no recorded scoped `git diff --check`. All three are corrected
+in records only; no source or test changed after S3.
+
+Non-blocking residual risks (recorded, not repaired in this scope):
+`ownsNestedIdentity` rejects any payload nested deeper than 32 levels, so a
+`turn/completed` carrying populated `turn.items` with deep tool-result JSON or
+identity-named tool arguments would be rejected and the owner turn would wait
+for `AGENT_TURN_TIMEOUT_MS` (42,000,069 ms, about 11.7 hours); the shipped v2
+schema declares no such fields and this fails closed (hang, never false
+acceptance). Local `handleServerRequest` now refuses unattributed approval and
+user-input requests that base auto-accepted (low risk; `thread/start` uses
+`approvalPolicy: "never"`; documented in the runbook). The remote
+`handleWsServerRequest` auto-accept is unchanged from base.
+
+## Accepted candidate and final review (October 16)
+
+ACCEPTED: synthetic snapshot S4
+`74b5db02b28b90b9054071c15c0a3249bd553366` (parent and landing base
+`cca256376bcd7d89eda935618b86ebe28be2d1f1`), tree
+`c3d0baa398da17759022e3dc12e534aab9f1a850`, 361 changed paths, binary patch
+SHA-256 `eaa0cfcdcf055bbc22241c0b4d8a1d46c4e1010587010d57ecfe43c50227e9d0`,
+local ref `refs/loop-snapshots/item-identity-s4`.
+
+- Reviewer: fresh independent read-only Claude Code subagent (Code Reviewer
+  profile, git-worktree isolation, foreground, project-scoped), agent id
+  `a41e703ffc9e40119`, spawned by this continuation's driver session
+  `bbcab76e-2a80-4447-bfcd-b5af624b952a`. The runtime exposes no separate
+  provider turn or message UUID for subagent reports; none is invented. The
+  verdict line is `VERDICT: PASS`.
+- Coverage the reviewer reported: all three identities verified; S3 to S4 is
+  records only (6 files); S1/S2/S3 identities re-verified; gate placement before
+  every sink with no bypass; all 13 focused files rerun separately at
+  424/0/1,760 and `bun run check` at 1,211 files; mutations 60/6 and 59/7 (and
+  59/5 on S1's 64-test file); every current record claim matched; no secrets.
+- Findings (none blocking): LOW, a stale history pointer in
+  `runs/loop-continuation-20261015/status.md` ("publication-boundary follow-up
+  at the top of this file controls"), corrected in this records-only follow-up;
+  LOW, `specs/loop-continuation-20261015/verify.md` has no explicit
+  notification/nested-identity criterion and no test proves an owned alias at
+  depth 32 or less is still accepted (only the over-32 rejection is tested),
+  recorded as an open gap for a later task; INFO, the remote
+  `handleWsServerRequest` auto-accept and turnId-only remote settlement are
+  unchanged from base and feed no decision sink; INFO, the
+  `loop-fork/scripts/vertical-cleanup-*.ts` changes are formatting only and were
+  not run.
+- Review chain for this continuation: S1 `abdc6278` PASS with LOW findings by
+  `a108224d261363469` (resolved, test added); S2 `f8839c18` FAIL (record count)
+  by `a5babca73b80b93bd`; S3 `b24938e9` FAIL (record precision) by
+  `a9bf1406bb435aa0d`; S4 `74b5db02` PASS by `a41e703ffc9e40119`. Codex
+  peer-verdict requests `9446c62c-b3ba-47b0-aa3b-db644e265661` and
+  `1b38db73-9ab2-4d32-b471-dcd5dfa120c1` were queued with
+  `codexDeliveryMode: none`. After the S4 PASS, Codex thread
+  `01a1440b-9be5-7e12-848f-761ee5817b66` delivered bridge decision
+  `d2e7dfad-9a0e-48c5-9567-0f527b190d93` (2026-10-16T10:08:06Z): exact-SHA
+  peer verdict PASS, no findings, for S1 `abdc6278` (identities matched). Its
+  exact-checkout test run stopped before assertions on "Cannot find module
+  'caveman-installer/skills/caveman/SKILL.md'" (no install in its disposable
+  worktree); it ran the 13 commands in the current worktree instead at
+  424/0/1,760 and `bun run check` at 1,211 files. S1 is superseded, so this
+  is corroborating evidence, not the acceptance binding; S4 remains the
+  accepted candidate. Codex then delivered bridge decision
+  `ab0d745c-9e02-4fb9-bf6e-3f6e3e88fd66` (2026-10-16T10:10:02Z), same thread:
+  PASS, no findings, for S2 `f8839c18` (identities matched). It did not
+  catch the false S2 mutation count (59/5 on a 65-test file; actual 60/5)
+  that `a5babca73b80b93bd` found, so the S2 FAIL stands and S2 stays
+  superseded. Both Codex verdicts are corroborating evidence on superseded
+  candidates. Codex then delivered bridge decision
+  `bfde130d-bf0c-4c27-9020-331952d16381` (2026-10-16T10:11:56Z), same thread:
+  S4 `74b5db02` source/test verdict PASS (identities verified; S1 to S4 is two
+  tests plus records only; current code matches S4 byte-for-byte;
+  codex-app-server 66/0/436 and `bun run check` 1,211 files rerun), and S6
+  `93ae837f` records FAIL (LOW) because S6 still called the S2 request
+  undelivered after decision `ab0d745c` arrived. That finding was already
+  corrected by records-only S7 `875ec76e` before this verdict was received;
+  this paragraph is the follow-up. The S2 request `1b38db73` itself was answered
+  by `ab0d745c`, so no Codex request remains undelivered.
+- The four reviewer worktrees were created by the harness under the original
+  checkout's `.claude/worktrees/` and were auto-removed; none remains and the
+  original checkout's own files were not modified.
+
+The only change after the S4 PASS is this records-only follow-up (PLAN.md,
+status.md, runs/loop-continuation-20261015/{status.md,eval.json,final-review.md},
+specs/loop-continuation-20261015/tasks.md). Its snapshot identity and delta
+check are reported in the external no-publication handoff because a file
+cannot contain its own commit ID.
+
+No-publication handoff: branch HEAD unchanged at `cca25637`; the accepted
+candidate exists only as the local synthetic snapshot commit and the dirty
+worktree. No push (including the `github` remote), PR, merge, install,
+deployment, remote or hosting change, live provider/app-server/tmux/session
+intervention, or nested Loop launch occurred. Any landing or publication needs
+new explicit authority.
+
+
+# Superseded October 16 session record (history; not current)
+
+Result (superseded): the bounded local source/docs scope is complete, subject to the final
+external review output binding the exact immutable candidate.
+All 13 required focused files pass 416 tests, 0 failures, and 1,579 assertions;
+`bun run check` passes over 1,211 files. Two project-scoped read-only lanes
+independently audited the source threat boundary and canonical evidence without
+editing the candidate. `/root/final_candidate_review` then inspected the full
+361-path snapshot and found no source defect; its only FAIL was the canonical
+pending state now resolved here. The external final read-only review output is
+the acceptance owner for exact object/path/patch and reviewer identifiers.
+Publication remains withheld; no push, remote
+mutation, PR, merge, installation, deployment, hosting action, live-session
+intervention, or nested Loop launch occurred.
+
+The repo-local Harness was checked from `loop-fork`: it is active for the
+unrelated `gov-3-cost-from-routing-log` owner. This session did not take over or
+mutate that task. Root-level `HARNESS.md`/`./harness` are absent; the owning
+copies live under `loop-fork/`.
+
+# Superseded October 15 acceptance repair follow-up
+
+The prior completion claim is withdrawn. A fresh whole-diff review of the
+356-path snapshot `aa2c05354a15174c76f3ac0ee2363a7a1b3a2801` found that listener
+ownership was checked only after WebSocket connection. A foreign listener can
+accept the connection, relinquish the listening port while retaining the
+socket, and allow the intended child to bind before the post-connect PID check.
+The same review found that canonical acceptance artifacts still bind the
+earlier 355-path source snapshot rather than the actual final handoff.
+
+Current authorized work is limited to repairing that race in
+`loop-fork/src/loop/codex-app-server.ts`, adding the corresponding fake controls
+in `loop-fork/tests/loop/codex-app-server.test.ts`, rerunning focused validation,
+updating the canonical handoff/eval to the resulting exact snapshot, and
+obtaining a fresh attributable read-only review over the complete landing-base
+to final-candidate diff. One isolated agent owns the source/test edits; this
+session owns canonical documentation. Other agents are read-only. No nested
+Loop, live-process intervention, push, PR, merge, publication, install, deploy,
+remote change, or hosting migration is authorized.
+
+Fifth exact review result:
+
+- Candidate `7567f3e6728ae70770a78ee50b4971e5abadff44`, tree
+  `55b9895698912df32916a102f1634914686fc6b3`, 359 changed paths, binary
+  patch SHA-256
+  `27e0264cf4c5832d30d7233f32875c026542f01b100985f4dd3434637186f89f`.
+- Reviewer thread/session `01a143a6-a84a-7de3-9388-2563f526b0fe`, final
+  message `item_75`, returned FAIL. It proved three P2 defects: stale socket
+  messages can contaminate a replacement turn; whitespace-only and repeated
+  equal scalar deltas are dropped; and an already-upgraded rejected foreign
+  socket lacks bounded forced disposal.
+- All three findings were repaired by the existing sole isolated source/test
+  writer and are covered by focused regressions. No finding was skipped. The
+  reviewer separately recorded its
+  read-only sandbox block for the supported `mktemp`-based wrapper and did not
+  misclassify its write-free diagnostic harness as certification.
+
+Open acceptance work:
+
+- Sixth exact review candidate `c677639134989e5c52d3c57052f76d76e622b73c`,
+  tree `ac0a99cdc830498d10d985ebea8ac69a75aec994`, 359 paths, patch SHA-256
+  `3bdd7bd56151194fc73d2410a7650c7cf436cc14ec870005b6d7d24213e056e1`
+  returned FAIL. Reviewer thread/session
+  `01a143b9-49c0-7623-8870-6d5a93b5e74e`, final message `item_72`, proved
+  that completed parent messages still recursively import nested foreign
+  payload text into decisions and that same-item completion suffixes are lost
+  by the renderer. Both findings are repaired with exact negative/positive
+  controls; neither was skipped.
+- snapshot and bind exact base/candidate/tree/path/patch identities, then obtain
+  a project-scoped read-only whole-diff PASS with attributable reviewer and
+  thread/session plus turn/message identifiers.
+
+Seventh exact review result:
+
+- Candidate `6a3dfe7304eab513bb5d8432b804b404d4ad11ee`, tree
+  `8a0d16444bf9fcbc01f79ddd14882f0de54c3d8e`, 361 paths, binary patch
+  SHA-256 `9c7539e5a5efc2cecd87767defb0b8058f0c0ab49bac89535571a875e54f8bef`.
+- Reviewer thread/session `01a143c7-67e2-7061-b7d3-a5c5d525cf87`, final
+  message `item_56`, returned FAIL. Immediate `content[].text` objects inside
+  an owned completed parent message can retain foreign identity yet inject
+  DONE/PASS/FAIL into decisions. Replaying the exact completed item also
+  duplicates adapter parsed/raw output after its active-item state is cleared.
+- Both findings were repaired by the existing sole isolated source/test writer.
+  The source preserves genuine direct-parent signals, repeated equal scalar
+  deltas, and distinct equal-text items while excluding foreign nested content
+  and exact completion replays. Complete focused validation passes 392 tests,
+  0 failures, and 1,511 assertions across 13 separately invoked files; the
+  1,211-file check and scoped diff check pass. A new complete exact review
+  remains required; no finding is skipped.
+
+Eighth exact review result:
+
+- Candidate `7e7337d2e50194261c72ef5d755fad6f15bdda18`, tree
+  `dd8458adcc37ec024ace84fd916f656f2351c54f`, 361 paths, binary patch
+  SHA-256 `253fc7f5d66837a9a30e932e36163a455e7853dd37c1815b7a5140cf2e50df25`.
+- Reviewer thread/session `01a143d1-de15-7771-9879-b72334f9e88e`, final
+  message `item_180`, found no actionable source defect and returned FAIL only
+  because two required per-command ledger rows still showed the prior counts.
+- Actual supported producer receipts are now recorded as app-server 58 pass,
+  0 fail, 255 assertions and renderer 8 pass, 0 fail, 13 assertions. The
+  aggregate remains 392 pass, 0 fail, 1,511 assertions. This tracked
+  evidence-only correction requires one new exact review; tests were not rerun
+  solely to publish the corrected ledger.
+
+Implemented and freshly verified in this session:
+
+- Startup waits for the exact child to become the sole listener, rechecks that
+  identity around every connection attempt, and proves that the exact client
+  descriptor's reversed established TCP tuple belongs to the exact spawned
+  child before initialization or publication. This rejects the
+  child-listener -> foreign-acceptor -> child-listener ABA control.
+- Close and release invalidate the captured generation, close only the exact
+  socket, and clear only matching state. A delayed old close cannot clear a
+  replacement singleton; release closes its client socket without signalling
+  the detached child.
+- Process-exit cleanup retains the exact child during listener wait, connect,
+  and initialization, while public process/PID state remains ready-only. A
+  successful release drops cleanup ownership without signalling the detached
+  child.
+- The WebSocket client owns its raw TCP socket from `open`, applies a five-second
+  upgrade deadline, and force-terminates that exact socket on non-101, timeout,
+  error, close-before-upgrade, connect rejection, or pre-handshake cancellation.
+- Each startup generation also owns an abort controller. Cancellation rejects
+  immediately and terminates an already-open or late-acquired raw socket; the
+  fake control proves startup settles and a replacement remains live.
+- Tool/collaboration items are excluded from completion-authoritative output.
+  All supported thread/turn aliases are normalized together and contradictions
+  fail closed; deltas must be scalar strings; canonical projection preserves
+  whitespace and item identity so matching completion is deduplicated.
+- Stale socket messages are rejected unless generation, exact child, and exact
+  socket remain current. Scalar streaming preserves whitespace-only and
+  repeated equal chunks, and same-item completion dedup uses the aggregate.
+  Rejected upgraded sockets terminate exactly; graceful close has a bounded
+  forced-disposal fallback.
+- Completed parent-message projection now reads only schema-declared parent
+  text/content and cannot recurse into foreign nested payloads. The renderer
+  tracks each item's streamed aggregate and appends only a missing completion
+  suffix while retaining exact-match deduplication.
+- Thirteen focused files pass: 392 tests, 0 failures, 1,511 assertions.
+  `bun run check` inspected 1,211 files with no diagnostics. Exact per-file
+  results and named skips are recorded in the run status.
+
+Publication remains withheld pending concrete release authority.
+
+---
+
+# Superseded completion record: loop continuation acceptance repairs, 2026-10-15
+
+Authorized scope is the local source/docs task in
+`specs/loop-continuation-20261015/`; no push, merge, install, deploy, hosting
+migration, live-session interruption, hook trust/policy change, or nested Loop
+launch is authorized. Base and current committed source are both
+`cca256376bcd7d89eda935618b86ebe28be2d1f1` on
+`codex/startup-receipts-20261015`. Existing dirty startup-receipt source/test
+changes are retained and in scope.
+
+Fresh controls:
+
+- `bun .../loop-notification-diagnostic.ts` reproduced the defect: the no-marker
+  negative was false, owned marker positive was true, and foreign explicit
+  thread/turn `DONE` incorrectly returned true.
+- `bun .../loop-stale-exit-diagnostic.ts` reproduced the defect: delayed child-A
+  EOF cleared child-B ownership and closed B's socket; normal cleanup signalled
+  its owned child as the positive control.
+- `sysctl vm.swapusage` reported 1336.88 MiB free. Broad suites and heavyweight
+  builds are skipped under the spec's 4 GiB gate; focused tests remain allowed.
+- Pickbrain returned one low-relevance August result and unknown freshness.
+  Current canonical specs, source, and controlled execution are authoritative.
+
+Implemented: exact app-server turn attribution before every acceptance-bearing
+sink; generation/handle-scoped child and socket cleanup; sole-listener PID
+verification; explicit named-remote draft-publication opt-in with local handoff
+by default; retained startup timing repair; stale tmux expectation repairs; and
+the ten required-check diagnostics in the two tracked operational helper
+scripts. Canonical contracts are in `docs/RUNBOOK-LOOP.md`.
+
+Focused result: 360 tests and 1,357 assertions pass across twelve exact files;
+the complete 136-test tmux file passes; `bun run check` checks 1,211 files with
+no diagnostics. Candidate whitespace checking passes for authored/structured
+paths; verbatim startup text captures retain their captured whitespace and are
+explicitly excluded. No broad suite/build rerun is claimed because free swap
+remains below 4 GiB. No live provider/session was touched and no publication,
+push, merge, install, deploy, or hosting mutation occurred.
+
+Independent final source review PASS is bound to candidate
+`fed9a5685cf64389fd8c5378a45cf8afcb824d24`, tree
+`fa67b9f97967e548a103c71f3c695544c9b615ef`, reviewer session
+`58D839E5-7492-4660-A211-F871002A707F`, message
+`F011C2F1-D879-44C1-9AC4-EE7E6E321032`; no findings remain. The exact
+handoff-only snapshot is checked by the same read-only reviewer and reported
+externally to avoid self-referential tree metadata. This local source/docs task
+is complete. Any push, merge, install, deploy, hosting migration, or live
+runtime activation requires separate explicit authority.
+
+---
+
 # Accepted and installed: helper observability and routing, 2026-10-04
 
 Installed source 5eeaa48538a9e154b00649dd3898dc5bebbd42c1, tree

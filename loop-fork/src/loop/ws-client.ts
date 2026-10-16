@@ -3,10 +3,14 @@
  * Works around Bun's built-in WebSocket client incompatibility
  * with the codex app-server.
  */
-import { connect } from "bun";
+import { connect, spawnSync } from "bun";
 
 type MessageHandler = (data: string) => void;
 type CloseHandler = () => void;
+export interface ConnectWsOptions {
+  handshakeTimeoutMs?: number;
+  signal?: AbortSignal;
+}
 
 const WS_OPCODE_TEXT = 0x01;
 const WS_OPCODE_CONTINUATION = 0x00;
@@ -16,12 +20,72 @@ const WS_OPCODE_PING = 0x09;
 const WS_OPCODE_PONG = 0x0a;
 const WS_FIN_BIT = 0x80;
 const WS_MASK_BIT = 0x80;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5000;
+const CLOSE_GRACE_MS = 50;
 export interface WsClient {
+  acceptedByPid(pid: number): boolean;
   close(): void;
+  nativeSocketFd: number | undefined;
   onclose: CloseHandler | undefined;
   onmessage: MessageHandler | undefined;
   send(data: string): void;
+  terminate(): void;
 }
+
+const ESTABLISHED_SUFFIX_RE = / \(ESTABLISHED\)$/;
+
+const establishedTcpNames = (args: string[]): string[] => {
+  const result = spawnSync(
+    ["lsof", "-nP", "-a", ...args, "-iTCP", "-sTCP:ESTABLISHED", "-Fn"],
+    { stderr: "ignore", stdout: "pipe" }
+  );
+  if (result.exitCode !== 0) {
+    return [];
+  }
+  return new TextDecoder()
+    .decode(result.stdout)
+    .split("\n")
+    .filter((line) => line.startsWith("n"))
+    .map((line) => line.slice(1).replace(ESTABLISHED_SUFFIX_RE, ""));
+};
+
+const reverseTcpTuple = (tuple: string): string | undefined => {
+  const separator = tuple.indexOf("->");
+  if (separator === -1) {
+    return undefined;
+  }
+  return `${tuple.slice(separator + 2)}->${tuple.slice(0, separator)}`;
+};
+
+const connectionAcceptedByPid = (
+  clientFd: number,
+  serverPid: number
+): boolean => {
+  if (
+    !(
+      Number.isInteger(clientFd) &&
+      clientFd >= 0 &&
+      Number.isInteger(serverPid) &&
+      serverPid > 0
+    )
+  ) {
+    return false;
+  }
+  const clientTuples = establishedTcpNames([
+    "-p",
+    String(process.pid),
+    "-d",
+    String(clientFd),
+  ]);
+  if (clientTuples.length !== 1) {
+    return false;
+  }
+  const reversedTuple = reverseTcpTuple(clientTuples[0]);
+  if (!reversedTuple) {
+    return false;
+  }
+  return establishedTcpNames(["-p", String(serverPid)]).includes(reversedTuple);
+};
 
 const encodeFrame = (text: string): Uint8Array => {
   const payload = new TextEncoder().encode(text);
@@ -85,7 +149,10 @@ const encodePongFrame = (payload: Uint8Array): Uint8Array => {
   return frame;
 };
 
-export const connectWs = (url: string): Promise<WsClient> => {
+export const connectWs = (
+  url: string,
+  options: ConnectWsOptions = {}
+): Promise<WsClient> => {
   const parsed = new URL(url);
   const hostname = parsed.hostname;
   const port = Number(parsed.port) || 80;
@@ -99,15 +166,71 @@ export const connectWs = (url: string): Promise<WsClient> => {
     let fragmentedPayloads: Uint8Array[] = [];
     let fragmentedPayloadLength = 0;
     let closed = false;
+    let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    let terminated = false;
+    const handshakeTimeoutMs =
+      options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
+    const { signal } = options;
+    let abortHandler: (() => void) | undefined;
+    let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
+
+    const clearHandshakeLifetime = (): void => {
+      if (handshakeTimer) {
+        clearTimeout(handshakeTimer);
+        handshakeTimer = undefined;
+      }
+      if (signal && abortHandler) {
+        signal.removeEventListener("abort", abortHandler);
+        abortHandler = undefined;
+      }
+    };
+
+    const forceTerminate = (): void => {
+      if (!(socket && !terminated)) {
+        return;
+      }
+      terminated = true;
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+        closeTimer = undefined;
+      }
+      socket.terminate();
+    };
+
+    const scheduleTermination = (): void => {
+      if (terminated || closeTimer) {
+        return;
+      }
+      closeTimer = setTimeout(forceTerminate, CLOSE_GRACE_MS);
+      closeTimer.unref?.();
+    };
 
     const client: WsClient = {
+      acceptedByPid: (pid) => {
+        const clientFd = client.nativeSocketFd;
+        return (
+          typeof clientFd === "number" && connectionAcceptedByPid(clientFd, pid)
+        );
+      },
+      nativeSocketFd: undefined,
       onmessage: undefined,
       onclose: undefined,
       send: () => {
         // no-op until handshake completes
       },
       close: () => {
-        // no-op until handshake completes
+        if (closed) {
+          return;
+        }
+        closed = true;
+        clearHandshakeLifetime();
+        forceTerminate();
+      },
+      terminate: () => {
+        closed = true;
+        clearHandshakeLifetime();
+        forceTerminate();
       },
     };
 
@@ -136,6 +259,25 @@ export const connectWs = (url: string): Promise<WsClient> => {
       return -1;
     };
 
+    const rejectHandshake = (error: Error): void => {
+      if (handshakeDone || closed) {
+        return;
+      }
+      closed = true;
+      clearHandshakeLifetime();
+      forceTerminate();
+      reject(error);
+    };
+
+    abortHandler = () => {
+      rejectHandshake(new Error("WebSocket upgrade cancelled"));
+    };
+    if (signal?.aborted) {
+      abortHandler();
+    } else {
+      signal?.addEventListener("abort", abortHandler, { once: true });
+    }
+
     const closeForProtocolError = (detail: string): void => {
       if (closed) {
         return;
@@ -143,6 +285,7 @@ export const connectWs = (url: string): Promise<WsClient> => {
       closed = true;
       process.stderr.write(`[loop] ws-client: ${detail}\n`);
       socket?.end(encodeCloseFrame());
+      scheduleTermination();
     };
 
     const emitText = (payload: Uint8Array): void => {
@@ -218,6 +361,7 @@ export const connectWs = (url: string): Promise<WsClient> => {
           if (opcode === WS_OPCODE_CLOSE) {
             closed = true;
             socket?.end(encodeCloseFrame());
+            scheduleTermination();
           } else if (opcode === WS_OPCODE_PING) {
             socket?.write(encodePongFrame(payload));
           }
@@ -259,14 +403,20 @@ export const connectWs = (url: string): Promise<WsClient> => {
       }
     };
 
-    let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
-
     connect({
       hostname,
       port,
       socket: {
         open(sock) {
           socket = sock;
+          client.nativeSocketFd = sock.fd;
+          if (closed) {
+            sock.terminate();
+            return;
+          }
+          handshakeTimer = setTimeout(() => {
+            rejectHandshake(new Error("WebSocket upgrade timed out"));
+          }, handshakeTimeoutMs);
           sock.write(
             `GET ${path} HTTP/1.1\r\nHost: ${hostname}:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`
           );
@@ -285,10 +435,13 @@ export const connectWs = (url: string): Promise<WsClient> => {
               httpBuffer.slice(0, endIdx + 4)
             );
             if (!headerText.startsWith("HTTP/1.1 101")) {
-              reject(new Error(`WebSocket upgrade failed: ${headerText}`));
+              rejectHandshake(
+                new Error(`WebSocket upgrade failed: ${headerText}`)
+              );
               return;
             }
             handshakeDone = true;
+            clearHandshakeLifetime();
 
             client.send = (text: string) => {
               if (!closed) {
@@ -301,6 +454,7 @@ export const connectWs = (url: string): Promise<WsClient> => {
               }
               closed = true;
               socket.end(encodeCloseFrame());
+              scheduleTermination();
             };
 
             const remaining = httpBuffer.slice(endIdx + 4);
@@ -319,8 +473,14 @@ export const connectWs = (url: string): Promise<WsClient> => {
           processFrames();
         },
         close() {
+          if (closeTimer) {
+            clearTimeout(closeTimer);
+            closeTimer = undefined;
+          }
           if (!handshakeDone) {
-            reject(new Error("WebSocket connection closed before handshake"));
+            rejectHandshake(
+              new Error("WebSocket connection closed before handshake")
+            );
             return;
           }
           closed = true;
@@ -328,10 +488,10 @@ export const connectWs = (url: string): Promise<WsClient> => {
         },
         error(_sock, err) {
           if (!handshakeDone) {
-            reject(err);
+            rejectHandshake(err);
           }
         },
       },
-    }).catch(reject);
+    }).catch((error) => rejectHandshake(error));
   });
 };

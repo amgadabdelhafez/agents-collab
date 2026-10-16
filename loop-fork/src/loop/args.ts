@@ -48,6 +48,7 @@ import type {
 const EMPTY_DONE_SIGNAL_ERROR = "Invalid --done value: cannot be empty";
 const ONLY_MODE_CONFLICT_ERROR = "Cannot combine multiple --*-only flags.";
 const INVALID_RUN_ID_ERROR = "Invalid --run-id value: cannot be empty";
+const GIT_REMOTE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const INVALID_WORKSPACE_ERROR = "Invalid --workspace value: cannot be empty";
 
 export type ImmediateInfoRequest = "help" | "version";
@@ -212,6 +213,17 @@ const applyValueFlag = (
         "Invalid --proof value: cannot be empty"
       );
       return;
+    case "publishDraftPrRemote": {
+      const remote = requireTrimmedValue(
+        value,
+        "Invalid --publish-draft-pr value: cannot be empty"
+      );
+      if (!GIT_REMOTE_NAME_RE.test(remote)) {
+        throw new Error(`Invalid --publish-draft-pr remote: ${remote}`);
+      }
+      opts.publishDraftPrRemote = remote;
+      return;
+    }
     case "pairWith":
       opts.pairWith = parseAgent(value);
       return;
@@ -615,6 +627,7 @@ const parseValueArg = (
     ["--effort=", "effort"],
     ["--effort-driver=", "driverEffort"],
     ["--effort-reviewer=", "reviewerEffort"],
+    ["--publish-draft-pr=", "publishDraftPrRemote"],
   ].find(([prefix]) => arg.startsWith(prefix)) as
     | [
         string,
@@ -623,6 +636,7 @@ const parseValueArg = (
           | "driverEffort"
           | "effort"
           | "helperCavemanMode"
+          | "publishDraftPrRemote"
           | "reviewerEffort"
         ),
       ]

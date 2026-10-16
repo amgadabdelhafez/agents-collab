@@ -64,22 +64,10 @@ const parseSignal = (line: string): ReviewStatus | undefined => {
 
 const splitOutputLines = (output: string): string[] => output.split(NEWLINE_RE);
 
-const hasExplicitSignal = (output: string): boolean =>
-  splitOutputLines(output).some((line) => parseSignal(line) !== undefined);
-
 const cleanOutput = (result: RunResult): string => {
   const parsed = cleanOutputText(result.parsed);
   const combined = cleanOutputText(result.combined);
   if (!parsed) {
-    return combined;
-  }
-  if (!combined) {
-    return parsed;
-  }
-  if (hasExplicitSignal(parsed)) {
-    return parsed;
-  }
-  if (hasExplicitSignal(combined)) {
     return combined;
   }
   return parsed;

@@ -46,7 +46,7 @@ const runIterations = async (
       continue;
     }
 
-    const output = `${result.parsed}\n${result.combined}`;
+    const output = result.parsed.trim() ? result.parsed : result.combined;
     if (!hasSignal(output, doneSignal)) {
       continue;
     }
